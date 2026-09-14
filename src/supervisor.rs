@@ -107,6 +107,10 @@ impl Supervisor {
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--headless=new",
+                // A single explicit page; without it Chromium opens a new-tab
+                // page alongside about:blank and the drivers disagree on which
+                // tab is "the" browser.
+                "about:blank",
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::null())

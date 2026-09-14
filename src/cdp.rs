@@ -51,13 +51,39 @@ impl CdpSession {
             }
         });
 
-        let page = match browser.pages().await?.into_iter().next() {
-            Some(page) => page,
-            None => browser
-                .new_page("about:blank")
-                .await
-                .context("opening the agent page")?,
-        };
+        // Keep exactly one page so the viewer, the agent's `playwright-cli`,
+        // and Lumen's own CDP calls all target the same tab. Chromium opens
+        // startup pages asynchronously, so reap extras until the set is stable.
+        let mut pages = browser.pages().await?;
+        if pages.is_empty() {
+            pages.push(
+                browser
+                    .new_page("about:blank")
+                    .await
+                    .context("opening the agent page")?,
+            );
+        }
+        let page = pages.remove(0);
+        let keep = page.target_id().inner().clone();
+        for other in pages {
+            let _ = other.close().await;
+        }
+        for _ in 0..12 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let extras: Vec<Page> = browser
+                .pages()
+                .await?
+                .into_iter()
+                .filter(|candidate| candidate.target_id().inner() != &keep)
+                .collect();
+            if extras.is_empty() {
+                break;
+            }
+            for extra in extras {
+                let _ = extra.close().await;
+            }
+        }
+
         page.execute(EnableParams::builder().build())
             .await
             .context("Page.enable")?;
