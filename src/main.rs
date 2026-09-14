@@ -29,7 +29,12 @@ enum Command {
     /// Run the service (default when no subcommand is given).
     Serve,
     /// Ensure a session's browser exists and print its CDP endpoint.
-    Ensure { name: String },
+    Ensure {
+        name: String,
+        /// Human-readable label for the agent owning this session.
+        #[arg(long)]
+        owner: Option<String>,
+    },
     /// List active sessions.
     Status,
     /// Stop a session's browser.
@@ -47,8 +52,8 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command.unwrap_or(Command::Serve) {
         Command::Serve => serve(),
-        Command::Ensure { name } => {
-            let info = client::ensure(&cli.url, &name)?;
+        Command::Ensure { name, owner } => {
+            let info = client::ensure(&cli.url, &name, owner.as_deref())?;
             println!("{}", info.cdp_endpoint);
             Ok(())
         }

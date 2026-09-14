@@ -1,7 +1,7 @@
 use crate::cdp::{CdpSession, TabInfo};
 use crate::config::{Config, Viewport};
 use crate::feedback::{AuditEntry, Feedback, FeedbackStore, Region};
-use crate::supervisor::{is_valid_agent_name, AgentInfo, Supervisor};
+use crate::supervisor::{is_valid_agent_name, AgentInfo, Origin, Supervisor};
 use crate::view::{Control, ViewHub};
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -117,13 +117,30 @@ async fn list_sessions(State(state): State<AppState>) -> Json<Vec<AgentInfo>> {
 #[derive(Deserialize)]
 struct CreateSession {
     name: String,
+    /// Who is registering the session. Omitted means a human created it from
+    /// the viewer; agents send `agent` (optionally with an owner label).
+    #[serde(default)]
+    origin: Option<Origin>,
+    #[serde(default)]
+    owner: Option<String>,
 }
 
 async fn create_session(
     State(state): State<AppState>,
     Json(body): Json<CreateSession>,
 ) -> Result<Json<AgentInfo>, ApiError> {
-    Ok(Json(ensure(&state, &body.name).await?))
+    if !is_valid_agent_name(&body.name) {
+        return Err(ApiError::bad_request(
+            "invalid agent name (use [A-Za-z0-9._-], 1-32 chars)",
+        ));
+    }
+    let origin = body.origin.unwrap_or(Origin::Manual);
+    let owner = body.owner.filter(|value| !value.trim().is_empty());
+    let agent = state
+        .supervisor
+        .ensure_as(&body.name, Some((origin, owner)))
+        .await?;
+    Ok(Json(agent.info().await))
 }
 
 async fn get_session(
@@ -200,10 +217,7 @@ async fn ensure(state: &AppState, name: &str) -> Result<AgentInfo, ApiError> {
         ));
     }
     let agent = state.supervisor.ensure(name).await?;
-    Ok(AgentInfo {
-        name: agent.name.clone(),
-        cdp_endpoint: agent.cdp_endpoint.clone(),
-    })
+    Ok(agent.info().await)
 }
 
 async fn list_tabs(

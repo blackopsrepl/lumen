@@ -47,6 +47,11 @@ between steps and adjust.
 
 Never block waiting for a human unless you are explicitly asked to.
 
+Running `pw.sh` registers your session as **agent-owned**, so the human sees it
+under “Agent sessions” and knows its notes will be read. A browser the human
+creates from the viewer has no agent and its feedback goes unread — use
+`--owner` (or `AGENT_NAME`) to label a session when your handle is not enough.
+
 ## 3. Finish
 
     $PW/pw.sh -s=<your-agent-name> close

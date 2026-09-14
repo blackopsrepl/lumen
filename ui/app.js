@@ -25,6 +25,8 @@ const state = {
   drawEnd: null,
   highlight: null,
   feedbackSig: null,
+  sessionsSig: null,
+  sessionOrigin: null,
   reconnectTimer: null,
   intentionalClose: false,
 };
@@ -286,12 +288,19 @@ async function loadFeedback() {
   }
   el("feedback-count").textContent = items.length;
 
-  const signature = items.map((item) => item.id).join(",");
+  const signature = `${state.sessionOrigin}:${items.map((item) => item.id).join(",")}`;
   if (signature === state.feedbackSig) return;
   state.feedbackSig = signature;
 
   const list = el("feedback-list");
   list.replaceChildren();
+
+  if (state.sessionOrigin !== "agent") {
+    const hint = document.createElement("li");
+    hint.className = "hint";
+    hint.textContent = "No agent is attached to this session — notes stay unread.";
+    list.append(hint);
+  }
 
   if (!items.length) {
     const li = document.createElement("li");
@@ -340,17 +349,38 @@ async function loadFeedback() {
 function sessionItem(session) {
   const li = document.createElement("li");
   li.dataset.name = session.name;
+  li.dataset.origin = session.origin;
+
+  const row = document.createElement("span");
+  row.className = "row";
 
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = session.name;
 
+  const attended = session.origin === "agent";
+  const chip = document.createElement("span");
+  chip.className = `chip ${attended ? "agent" : "manual"}`;
+  chip.textContent = attended ? session.owner || "agent" : "no agent";
+  chip.title = attended
+    ? "An agent registered this session and will read its feedback"
+    : "Created by hand; no agent will read feedback here";
+  row.append(name, chip);
+
   const sub = document.createElement("span");
   sub.className = "sub";
   sub.textContent = session.cdp_endpoint.replace(/^https?:\/\//, "");
 
-  li.append(name, sub);
+  li.append(row, sub);
   li.onclick = () => connect(session.name);
+  return li;
+}
+
+function groupLabel(text) {
+  const li = document.createElement("li");
+  li.className = "group";
+  li.setAttribute("aria-hidden", "true");
+  li.textContent = text;
   return li;
 }
 
@@ -368,18 +398,30 @@ async function loadSessions() {
     return;
   }
   const list = el("sessions");
-  const desired = sessions.map((session) => session.name).join("\n");
-  const current = [...list.children].map((li) => li.dataset.name).join("\n");
+  const signature = sessions
+    .map((session) => `${session.name}:${session.origin}:${session.owner || ""}`)
+    .join("\n");
 
-  if (desired !== current) {
+  if (signature !== state.sessionsSig) {
+    state.sessionsSig = signature;
     list.replaceChildren();
+
     if (!sessions.length) {
       const li = document.createElement("li");
       li.className = "placeholder";
       li.textContent = "No sessions yet";
       list.append(li);
     } else {
-      list.append(...sessions.map(sessionItem));
+      const agents = sessions.filter((session) => session.origin === "agent");
+      const manual = sessions.filter((session) => session.origin !== "agent");
+      if (agents.length) {
+        list.append(groupLabel(`Agent sessions · ${agents.length}`));
+        list.append(...agents.map(sessionItem));
+      }
+      if (manual.length) {
+        list.append(groupLabel(`Manual · no agent · ${manual.length}`));
+        list.append(...manual.map(sessionItem));
+      }
     }
   }
   markActive(state.session);
@@ -419,6 +461,7 @@ function connect(name) {
   state.highlight = null;
   state.feedbackSig = null;
   el("cdp").textContent = "connecting…";
+  el("attach").hidden = true;
   el("empty").hidden = true;
   el("spinner").hidden = false;
   setAnnotating(false);
@@ -432,6 +475,11 @@ function connect(name) {
     .then((info) => {
       el("cdp").textContent = info.cdp_endpoint;
       el("cdp").title = info.cdp_endpoint;
+      el("attach").textContent = `attach: bin/pw.sh -s=${name}`;
+      el("attach").hidden = false;
+      state.sessionOrigin = info.origin;
+      state.feedbackSig = null;
+      loadFeedback();
     })
     .catch(() => {});
 

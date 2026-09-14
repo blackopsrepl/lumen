@@ -37,7 +37,9 @@ case "${cmd}" in
     pw "$@"
     ;;
   *)
-    endpoint="$(lumen ensure "${name}")" || die "could not ensure session '${name}' (bin/status.sh)"
+    owner_args=()
+    [ -n "${AGENT_NAME:-}" ] && owner_args=(--owner "${AGENT_NAME}")
+    endpoint="$(lumen ensure "${name}" "${owner_args[@]}")" || die "could not ensure session '${name}' (bin/status.sh)"
     if ! pw list 2>/dev/null | grep -qE "^- ${name}:"; then
       pw attach --cdp="${endpoint}" --session="${name}" >/dev/null
     fi

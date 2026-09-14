@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -26,13 +26,44 @@ pub struct AgentBrowser {
     pub cdp_endpoint: String,
     pub session: Arc<CdpSession>,
     pub view: Arc<ViewHub>,
+    meta: Mutex<SessionMeta>,
     child: Mutex<Child>,
+}
+
+/// Where a session came from, so the human can tell an attended browser from a
+/// stray one: `Agent` means an agent registered it (and will read its feedback),
+/// `Manual` means a human created it from the viewer with nobody attached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+    Manual,
+    Agent,
+}
+
+#[derive(Debug, Clone)]
+struct SessionMeta {
+    origin: Origin,
+    owner: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentInfo {
     pub name: String,
     pub cdp_endpoint: String,
+    pub origin: Origin,
+    pub owner: Option<String>,
+}
+
+impl AgentBrowser {
+    pub async fn info(&self) -> AgentInfo {
+        let meta = self.meta.lock().await;
+        AgentInfo {
+            name: self.name.clone(),
+            cdp_endpoint: self.cdp_endpoint.clone(),
+            origin: meta.origin,
+            owner: meta.owner.clone(),
+        }
+    }
 }
 
 impl Supervisor {
@@ -43,14 +74,38 @@ impl Supervisor {
         }
     }
 
-    /// Return the agent's browser, launching it on first use.
+    /// Return the agent's browser, launching it on first use. Provenance is
+    /// left unchanged.
     pub async fn ensure(&self, name: &str) -> Result<Arc<AgentBrowser>> {
+        self.ensure_as(name, None).await
+    }
+
+    /// Return the agent's browser, recording who registered it.
+    ///
+    /// A new session takes the given provenance (defaulting to `Manual`). An
+    /// existing one is only upgraded toward `Agent`, so an agent that later
+    /// adopts a human-created session claims it without the reverse ever
+    /// happening.
+    pub async fn ensure_as(
+        &self,
+        name: &str,
+        provenance: Option<(Origin, Option<String>)>,
+    ) -> Result<Arc<AgentBrowser>> {
         if !is_valid_agent_name(name) {
             bail!("invalid agent name '{name}' (use [A-Za-z0-9._-], 1-32 chars)");
         }
 
         let mut agents = self.agents.lock().await;
         if let Some(existing) = agents.get(name).cloned() {
+            if let Some((origin, owner)) = provenance {
+                if origin == Origin::Agent {
+                    let mut meta = existing.meta.lock().await;
+                    meta.origin = Origin::Agent;
+                    if owner.is_some() {
+                        meta.owner = owner;
+                    }
+                }
+            }
             return Ok(existing);
         }
         if agents.len() >= self.config.max_agents {
@@ -58,20 +113,22 @@ impl Supervisor {
         }
 
         let agent = self.launch(name).await?;
+        if let Some((origin, owner)) = provenance {
+            let mut meta = agent.meta.lock().await;
+            meta.origin = origin;
+            meta.owner = owner;
+        }
         agents.insert(name.to_string(), agent.clone());
         Ok(agent)
     }
 
     pub async fn list(&self) -> Vec<AgentInfo> {
-        self.agents
-            .lock()
-            .await
-            .values()
-            .map(|agent| AgentInfo {
-                name: agent.name.clone(),
-                cdp_endpoint: agent.cdp_endpoint.clone(),
-            })
-            .collect()
+        let agents: Vec<Arc<AgentBrowser>> = self.agents.lock().await.values().cloned().collect();
+        let mut out = Vec::with_capacity(agents.len());
+        for agent in agents {
+            out.push(agent.info().await);
+        }
+        out
     }
 
     /// Stop and forget a session's browser. Returns whether it existed.
@@ -135,6 +192,10 @@ impl Supervisor {
             cdp_endpoint,
             session,
             view,
+            meta: Mutex::new(SessionMeta {
+                origin: Origin::Manual,
+                owner: None,
+            }),
             child: Mutex::new(child),
         }))
     }

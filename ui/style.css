@@ -235,12 +235,60 @@ button:disabled:hover {
   margin-bottom: 4px;
 }
 
+.sessions li .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .sessions li .name {
-  display: block;
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chip {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.chip.agent {
+  color: var(--accent);
+  background: rgba(94, 234, 212, 0.12);
+  border-color: rgba(94, 234, 212, 0.35);
+}
+
+.chip.manual {
+  color: var(--human);
+  background: rgba(245, 184, 61, 0.1);
+  border-color: rgba(245, 184, 61, 0.35);
+}
+
+.sessions li.group {
+  cursor: default;
+  padding: 10px 12px 4px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.sessions li.group:hover {
+  background: none;
+}
+
+.feedback li.hint {
+  background: rgba(245, 184, 61, 0.08);
+  border-color: rgba(245, 184, 61, 0.3);
+  color: var(--human);
 }
 
 .sessions li .sub {
@@ -309,13 +357,32 @@ button:disabled:hover {
 }
 
 .endpoint {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   padding: 10px 16px;
   border-top: 1px solid var(--line);
   color: var(--faint);
   font: 11px ui-monospace, monospace;
+}
+
+.endpoint .line {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.endpoint .attach {
+  color: var(--muted);
+}
+
+.empty-card code {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
 }
 
 /* ------------------------------------------------------------------- main */

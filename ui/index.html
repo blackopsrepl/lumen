@@ -21,7 +21,7 @@
       <form id="new-session" class="new" autocomplete="off">
         <input
           id="new-name"
-          placeholder="new agent session"
+          placeholder="new browser session"
           spellcheck="false"
           aria-label="new session name"
         />
@@ -36,7 +36,10 @@
       </div>
       <ul id="feedback-list" class="feedback"></ul>
 
-      <footer id="cdp" class="endpoint">not connected</footer>
+      <footer class="endpoint">
+        <span id="cdp" class="line">not connected</span>
+        <span id="attach" class="line attach" hidden></span>
+      </footer>
     </aside>
 
     <main>
@@ -80,7 +83,10 @@
         <div id="empty" class="empty">
           <div class="empty-card">
             <h2>No session selected</h2>
-            <p>Create a session or pick one from the list to watch and drive a browser.</p>
+            <p>
+              A session is an isolated browser, not an agent. Create one, then an
+              agent attaches to it by name with <code>bin/pw.sh -s=&lt;name&gt;</code>.
+            </p>
           </div>
         </div>
 

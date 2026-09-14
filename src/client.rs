@@ -41,10 +41,13 @@ fn check(response: reqwest::blocking::Response) -> Result<reqwest::blocking::Res
 }
 
 /// Ensure a session's browser exists and return its CDP endpoint.
-pub fn ensure(base: &str, name: &str) -> Result<AgentInfo> {
+///
+/// This registers the session as agent-owned, so the viewer can tell it apart
+/// from a browser a human created with nobody attached.
+pub fn ensure(base: &str, name: &str, owner: Option<&str>) -> Result<AgentInfo> {
     let response = client()?
         .post(format!("{base}/v1/sessions"))
-        .json(&serde_json::json!({ "name": name }))
+        .json(&serde_json::json!({ "name": name, "origin": "agent", "owner": owner }))
         .send()
         .context("connecting to lumen")?;
     check(response)?.json().context("parsing session")

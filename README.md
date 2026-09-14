@@ -69,6 +69,13 @@ lumen feedback <name> [--consume]  # print a session's pending notes
 Inside the container the binary is `lumen`; from the host, use
 `podman exec lumen lumen …` or `bin/*.sh`.
 
+Sessions carry provenance. `lumen ensure` / `bin/pw.sh` register a session as
+**agent-owned** (optionally labelled with `--owner`), so the viewer groups it
+under “Agent sessions” and its feedback has a reader. A browser the human
+creates from the viewer is **manual** — it is clearly marked “no agent”, and
+notes left on it are not read by anyone. An agent that later uses the same name
+adopts a manual session.
+
 ## Layout
 
 ```
