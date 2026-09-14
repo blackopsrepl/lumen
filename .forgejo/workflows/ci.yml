@@ -12,10 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The runner image ships an old default toolchain without clippy; install a
+      # current stable one with the components the gate needs.
       - name: Toolchain
         run: |
-          rustup show
-          rustup component add rustfmt clippy
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
 
       - name: Format
         run: cargo fmt --all -- --check
