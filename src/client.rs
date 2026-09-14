@@ -64,6 +64,17 @@ pub fn status(base: &str) -> Result<()> {
     Ok(())
 }
 
+/// Stop and forget a session's browser.
+pub fn stop(base: &str, name: &str) -> Result<()> {
+    check(
+        client()?
+            .delete(format!("{base}/v1/sessions/{name}"))
+            .send()?,
+    )?;
+    println!("stopped {name}");
+    Ok(())
+}
+
 /// Print a session's pending human feedback, optionally consuming it.
 pub fn feedback(base: &str, name: &str, consume: bool) -> Result<()> {
     let items: Vec<Feedback> = check(

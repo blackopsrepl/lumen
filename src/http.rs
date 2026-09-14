@@ -50,7 +50,10 @@ pub fn router(state: AppState) -> Router {
         .route("/style.css", get(style_css))
         .route("/healthz", get(healthz))
         .route("/v1/sessions", get(list_sessions).post(create_session))
-        .route("/v1/sessions/{name}", get(get_session))
+        .route(
+            "/v1/sessions/{name}",
+            get(get_session).delete(delete_session),
+        )
         .route("/v1/sessions/{name}/navigate", post(navigate))
         .route(
             "/v1/sessions/{name}/viewport",
@@ -126,6 +129,14 @@ async fn get_session(
     Path(name): Path<String>,
 ) -> Result<Json<AgentInfo>, ApiError> {
     Ok(Json(ensure(&state, &name).await?))
+}
+
+async fn delete_session(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    state.supervisor.remove(&name).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]

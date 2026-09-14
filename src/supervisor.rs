@@ -74,6 +74,18 @@ impl Supervisor {
             .collect()
     }
 
+    /// Stop and forget a session's browser. Returns whether it existed.
+    pub async fn remove(&self, name: &str) -> bool {
+        let agent = self.agents.lock().await.remove(name);
+        match agent {
+            Some(agent) => {
+                agent.shutdown().await;
+                true
+            }
+            None => false,
+        }
+    }
+
     async fn launch(&self, name: &str) -> Result<Arc<AgentBrowser>> {
         let profile = self.config.data_dir.join(name);
         std::fs::create_dir_all(&profile)
