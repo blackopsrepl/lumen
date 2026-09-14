@@ -1,16 +1,28 @@
 use anyhow::{anyhow, Context, Result};
-use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
+use base64::Engine as _;
+use chromiumoxide::cdp::browser_protocol::emulation::{
+    SetDeviceMetricsOverrideParams, SetPageScaleFactorParams,
+};
 use chromiumoxide::cdp::browser_protocol::input::{
     DispatchMouseEventParams, DispatchMouseEventType, InsertTextParams, MouseButton,
 };
 use chromiumoxide::cdp::browser_protocol::page::{
-    EnableParams, ScreencastFrameAckParams, StartScreencastFormat, StartScreencastParams,
-    StopScreencastParams,
+    CaptureScreenshotFormat, CaptureScreenshotParams, EnableParams, ScreencastFrameAckParams,
+    StartScreencastFormat, StartScreencastParams, StopScreencastParams,
 };
 use chromiumoxide::{Browser, Page};
 use futures::StreamExt;
+use serde::Serialize;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
+
+/// One open tab in an agent's browser, addressed by its position.
+#[derive(Debug, Clone, Serialize)]
+pub struct TabInfo {
+    pub index: usize,
+    pub url: String,
+    pub title: String,
+}
 
 /// A live CDP connection to one agent's Chromium, bound to a single shared page.
 ///
@@ -177,6 +189,73 @@ impl CdpSession {
             .execute(params)
             .await
             .context("Input.insertText")?;
+        Ok(())
+    }
+
+    /// Multiply the visual page scale (pinch-zoom semantics; layout untouched).
+    pub async fn set_page_scale(&self, scale: f64) -> Result<()> {
+        let params = SetPageScaleFactorParams::builder()
+            .page_scale_factor(scale)
+            .build()
+            .map_err(|err| anyhow!(err))?;
+        self.page
+            .execute(params)
+            .await
+            .context("Emulation.setPageScaleFactor")?;
+        Ok(())
+    }
+
+    /// Capture the page as PNG, optionally beyond the visible viewport.
+    pub async fn screenshot(&self, full_page: bool) -> Result<Vec<u8>> {
+        let mut builder = CaptureScreenshotParams::builder()
+            .format(CaptureScreenshotFormat::Png)
+            .from_surface(true);
+        if full_page {
+            builder = builder.capture_beyond_viewport(true);
+        }
+        let params = builder.build();
+        let response = self
+            .page
+            .execute(params)
+            .await
+            .context("Page.captureScreenshot")?;
+        let encoded: &str = response.result.data.as_ref();
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .context("decode screenshot")
+    }
+
+    /// Every open tab, in browser order.
+    pub async fn tabs(&self) -> Result<Vec<TabInfo>> {
+        let pages = self.browser.pages().await?;
+        let mut tabs = Vec::with_capacity(pages.len());
+        for (index, page) in pages.iter().enumerate() {
+            tabs.push(TabInfo {
+                index,
+                url: page.url().await?.unwrap_or_default(),
+                title: page.get_title().await?.unwrap_or_default(),
+            });
+        }
+        Ok(tabs)
+    }
+
+    pub async fn open_tab(&self, url: &str) -> Result<()> {
+        let page = self.browser.new_page(url).await?;
+        page.bring_to_front().await?;
+        Ok(())
+    }
+
+    pub async fn activate_tab(&self, index: usize) -> Result<()> {
+        if let Some(page) = self.browser.pages().await?.into_iter().nth(index) {
+            page.bring_to_front().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn close_tab(&self, index: usize) -> Result<()> {
+        if let Some(page) = self.browser.pages().await?.into_iter().nth(index) {
+            page.close().await?;
+        }
         Ok(())
     }
 }

@@ -1,13 +1,13 @@
-use crate::cdp::CdpSession;
+use crate::cdp::{CdpSession, TabInfo};
 use crate::config::{Config, Viewport};
 use crate::supervisor::{is_valid_agent_name, AgentInfo, Supervisor};
 use crate::view::{Control, ViewHub};
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use chromiumoxide::cdp::browser_protocol::input::{DispatchMouseEventType, MouseButton};
 use futures::{SinkExt, StreamExt};
@@ -53,6 +53,15 @@ pub fn router(state: AppState) -> Router {
             put(set_viewport).delete(reset_viewport),
         )
         .route("/v1/sessions/{name}/stream", get(stream))
+        .route("/v1/sessions/{name}/tabs", get(list_tabs).post(open_tab))
+        .route(
+            "/v1/sessions/{name}/tabs/{index}/activate",
+            post(activate_tab),
+        )
+        .route("/v1/sessions/{name}/tabs/{index}", delete(close_tab))
+        .route("/v1/sessions/{name}/screenshot", post(screenshot))
+        .route("/v1/sessions/{name}/visibility", put(set_visibility))
+        .route("/v1/sessions/{name}/page-scale", put(set_page_scale))
         .with_state(state)
 }
 
@@ -161,6 +170,101 @@ async fn ensure(state: &AppState, name: &str) -> Result<AgentInfo, ApiError> {
         name: agent.name.clone(),
         cdp_endpoint: agent.cdp_endpoint.clone(),
     })
+}
+
+async fn list_tabs(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Vec<TabInfo>>, ApiError> {
+    let agent = state.supervisor.ensure(&name).await?;
+    Ok(Json(agent.session.tabs().await?))
+}
+
+#[derive(Deserialize)]
+struct OpenTabBody {
+    #[serde(default = "about_blank")]
+    url: String,
+}
+
+fn about_blank() -> String {
+    "about:blank".to_string()
+}
+
+async fn open_tab(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<OpenTabBody>,
+) -> Result<StatusCode, ApiError> {
+    let agent = state.supervisor.ensure(&name).await?;
+    agent.session.open_tab(&body.url).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn activate_tab(
+    State(state): State<AppState>,
+    Path((name, index)): Path<(String, usize)>,
+) -> Result<StatusCode, ApiError> {
+    let agent = state.supervisor.ensure(&name).await?;
+    agent.session.activate_tab(index).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn close_tab(
+    State(state): State<AppState>,
+    Path((name, index)): Path<(String, usize)>,
+) -> Result<StatusCode, ApiError> {
+    let agent = state.supervisor.ensure(&name).await?;
+    agent.session.close_tab(index).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ScreenshotQuery {
+    #[serde(default)]
+    full: bool,
+}
+
+async fn screenshot(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(query): Query<ScreenshotQuery>,
+) -> Result<Response, ApiError> {
+    let agent = state.supervisor.ensure(&name).await?;
+    let png = agent.session.screenshot(query.full).await?;
+    Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response())
+}
+
+#[derive(Deserialize)]
+struct VisibilityBody {
+    visible: bool,
+}
+
+async fn set_visibility(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<VisibilityBody>,
+) -> Result<StatusCode, ApiError> {
+    let agent = state.supervisor.ensure(&name).await?;
+    agent.view.set_visible(body.visible).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct PageScaleBody {
+    scale: f64,
+}
+
+async fn set_page_scale(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<PageScaleBody>,
+) -> Result<StatusCode, ApiError> {
+    if !(0.0..=10.0).contains(&body.scale) || body.scale == 0.0 {
+        return Err(ApiError::bad_request("scale must be within (0, 10]"));
+    }
+    let agent = state.supervisor.ensure(&name).await?;
+    agent.session.set_page_scale(body.scale).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn stream(

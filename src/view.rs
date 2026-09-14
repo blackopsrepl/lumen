@@ -6,6 +6,7 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
+use tokio::task::JoinHandle;
 
 /// Who currently owns the input path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -24,6 +25,7 @@ pub struct ViewHub {
     session: Arc<CdpSession>,
     frames: broadcast::Sender<Arc<Vec<u8>>>,
     started: AtomicBool,
+    pump: Mutex<Option<JoinHandle<()>>>,
     control: Mutex<Control>,
 }
 
@@ -34,6 +36,7 @@ impl ViewHub {
             session,
             frames,
             started: AtomicBool::new(false),
+            pump: Mutex::new(None),
             control: Mutex::new(Control::Agent),
         }
     }
@@ -42,6 +45,20 @@ impl ViewHub {
     pub async fn subscribe(&self) -> broadcast::Receiver<Arc<Vec<u8>>> {
         self.ensure_started().await;
         self.frames.subscribe()
+    }
+
+    /// Turn the screencast on or off. Off frees the browser from encoding frames
+    /// nobody is watching.
+    pub async fn set_visible(&self, visible: bool) {
+        if visible {
+            self.ensure_started().await;
+        } else {
+            self.started.store(false, Ordering::SeqCst);
+            if let Some(pump) = self.pump.lock().await.take() {
+                pump.abort();
+            }
+            let _ = self.session.stop_screencast().await;
+        }
     }
 
     pub async fn control(&self) -> Control {
@@ -76,7 +93,7 @@ impl ViewHub {
 
         let session = self.session.clone();
         let frames = self.frames.clone();
-        tokio::spawn(async move {
+        let pump = tokio::spawn(async move {
             while let Some(frame) = stream.next().await {
                 let encoded: &str = frame.data.as_ref();
                 match base64::engine::general_purpose::STANDARD.decode(encoded) {
@@ -88,5 +105,6 @@ impl ViewHub {
                 let _ = session.ack_frame(frame.session_id).await;
             }
         });
+        *self.pump.lock().await = Some(pump);
     }
 }
