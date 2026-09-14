@@ -1,5 +1,6 @@
 use anyhow::Context;
-use lumen::{config::Config, http};
+use lumen::config::Config;
+use lumen::http::{self, AppState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -13,16 +14,17 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let addr = config.bind_addr();
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("failed to bind {addr}"))?;
     tracing::info!(
         "lumen listening on http://{addr} (default viewport {}x{})",
         config.default_viewport.width,
         config.default_viewport.height
     );
 
-    axum::serve(listener, http::router(config))
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("failed to bind {addr}"))?;
+
+    axum::serve(listener, http::router(AppState::new(config)))
         .await
         .context("http server failed")?;
     Ok(())

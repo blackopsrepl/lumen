@@ -43,7 +43,7 @@ impl Supervisor {
 
     /// Return the agent's browser, launching it on first use.
     pub async fn ensure(&self, name: &str) -> Result<Arc<AgentBrowser>> {
-        if !valid_name(name) {
+        if !is_valid_agent_name(name) {
             bail!("invalid agent name '{name}' (use [A-Za-z0-9._-], 1-32 chars)");
         }
 
@@ -156,7 +156,8 @@ fn parse_devtools_port(line: &str) -> Option<u16> {
     digits.parse().ok()
 }
 
-fn valid_name(name: &str) -> bool {
+/// Whether a session name is safe to use as a profile directory and URL path.
+pub fn is_valid_agent_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 32
         && name
@@ -178,11 +179,11 @@ mod tests {
 
     #[test]
     fn rejects_unsafe_names() {
-        assert!(valid_name("alice"));
-        assert!(valid_name("agent.1_x-y"));
-        assert!(!valid_name(""));
-        assert!(!valid_name("has space"));
-        assert!(!valid_name("slash/name"));
-        assert!(!valid_name(&"a".repeat(33)));
+        assert!(is_valid_agent_name("alice"));
+        assert!(is_valid_agent_name("agent.1_x-y"));
+        assert!(!is_valid_agent_name(""));
+        assert!(!is_valid_agent_name("has space"));
+        assert!(!is_valid_agent_name("slash/name"));
+        assert!(!is_valid_agent_name(&"a".repeat(33)));
     }
 }
