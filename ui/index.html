@@ -7,51 +7,99 @@
     <title>Lumen</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
-  <body>
+  <body data-state="empty">
     <aside id="sidebar">
-      <header>
-        <h1>Lumen</h1>
+      <header class="brand">
+        <span class="logo">L</span>
+        <span class="brand-text">
+          <strong>Lumen</strong>
+          <span id="conn-status" class="status">idle</span>
+        </span>
         <span id="conn" class="dot" title="disconnected"></span>
       </header>
-      <form id="new-session" autocomplete="off">
-        <input id="new-name" placeholder="agent name" spellcheck="false" />
-        <button type="submit">Add</button>
+
+      <form id="new-session" class="new" autocomplete="off">
+        <input
+          id="new-name"
+          placeholder="new agent session"
+          spellcheck="false"
+          aria-label="new session name"
+        />
+        <button type="submit" title="Create session" aria-label="Create session">+</button>
       </form>
-      <ul id="sessions"></ul>
-      <section id="feedback">
-        <header>Feedback <span id="feedback-count">0</span></header>
-        <ul id="feedback-list"></ul>
-      </section>
-      <footer id="cdp"></footer>
+
+      <div class="section">Sessions</div>
+      <ul id="sessions" class="sessions"></ul>
+
+      <div class="section">
+        Feedback <span id="feedback-count" class="badge">0</span>
+      </div>
+      <ul id="feedback-list" class="feedback"></ul>
+
+      <footer id="cdp" class="endpoint">not connected</footer>
     </aside>
 
     <main>
-      <div id="toolbar">
-        <input id="url" placeholder="https://…" spellcheck="false" />
-        <button id="go">Go</button>
-        <span class="spacer"></span>
-        <button id="zoom-out" title="Zoom out">−</button>
-        <span id="zoom-label">100%</span>
-        <button id="zoom-in" title="Zoom in">+</button>
-        <button id="fit" title="Fit to window">Fit</button>
-        <button id="one" title="Actual size">1:1</button>
-        <button id="fullscreen" title="Fullscreen">⛶</button>
-        <button id="comment" title="Annotate a region">Comment</button>
-        <button id="control" class="primary">Take control</button>
+      <div id="toolbar" class="toolbar">
+        <input
+          id="url"
+          class="address"
+          placeholder="Enter a URL"
+          spellcheck="false"
+          aria-label="address"
+        />
+        <button id="go" class="ghost">Go</button>
+
+        <div class="divider"></div>
+
+        <div class="group">
+          <button id="zoom-out" class="icon" title="Zoom out">−</button>
+          <button id="zoom-label" class="zoom" title="Reset to 100%">100%</button>
+          <button id="zoom-in" class="icon" title="Zoom in">+</button>
+          <button id="fit" class="ghost" title="Fit to window">Fit</button>
+          <button id="fullscreen" class="icon" title="Fullscreen">⤢</button>
+        </div>
+
+        <div class="group">
+          <button id="comment" class="ghost" title="Annotate a region">Comment</button>
+          <button id="control" class="primary" title="Take over input">Take control</button>
+        </div>
       </div>
+
       <div id="stage">
         <canvas id="screen"></canvas>
         <canvas id="overlay"></canvas>
-        <div id="empty">Select or create a session</div>
-        <div id="composer" hidden>
-          <textarea id="comment-text" placeholder="Leave a note for the agent…"></textarea>
+
+        <div id="banner" class="banner" hidden>
+          <span class="banner-dot"></span>
+          You have control — press <kbd>Esc</kbd> to release
+        </div>
+
+        <div id="spinner" class="spinner" hidden><span></span></div>
+
+        <div id="empty" class="empty">
+          <div class="empty-card">
+            <h2>No session selected</h2>
+            <p>Create a session or pick one from the list to watch and drive a browser.</p>
+          </div>
+        </div>
+
+        <div id="composer" class="composer" hidden>
+          <label for="comment-text">Note for the agent</label>
+          <textarea
+            id="comment-text"
+            placeholder="Describe what should change…"
+          ></textarea>
           <div class="composer-actions">
-            <button id="comment-send" class="primary">Send</button>
-            <button id="comment-cancel">Cancel</button>
+            <span class="hint">⌘/Ctrl + Enter to send</span>
+            <button id="comment-cancel" class="ghost">Cancel</button>
+            <button id="comment-send" class="primary">Send note</button>
           </div>
         </div>
       </div>
     </main>
+
+    <div id="toasts" class="toasts"></div>
 
     <script type="module" src="/app.js"></script>
   </body>

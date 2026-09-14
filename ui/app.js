@@ -23,14 +23,59 @@ const state = {
   annotating: false,
   drawStart: null,
   drawEnd: null,
+  highlight: null,
   feedbackSig: null,
+  reconnectTimer: null,
+  intentionalClose: false,
 };
 
-function send(message) {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify(message));
-  }
+// --------------------------------------------------------------- utilities
+
+function toast(message, kind = "info") {
+  const node = document.createElement("div");
+  node.className = `toast ${kind}`;
+  node.textContent = message;
+  el("toasts").append(node);
+  setTimeout(() => node.remove(), 4200);
 }
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    let detail = `${response.status}`;
+    try {
+      const body = await response.json();
+      if (body && body.error) detail = body.error;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(detail);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+const sessionPath = (name) => `/v1/sessions/${encodeURIComponent(name)}`;
+
+function setState(next) {
+  document.body.dataset.state = next;
+}
+
+function setStatus(text, dot) {
+  el("conn-status").textContent = text;
+  el("conn").classList.toggle("on", dot === "on");
+  el("conn").classList.toggle("warn", dot === "warn");
+  el("conn").title = text;
+}
+
+function setControlsEnabled(enabled) {
+  for (const id of ["go", "url", "zoom-in", "zoom-out", "zoom-label", "fit", "fullscreen", "comment"]) {
+    el(id).disabled = !enabled;
+  }
+  el("control").disabled = !enabled;
+}
+
+// ------------------------------------------------------------------- view
 
 function stageSize() {
   return { w: stage.clientWidth, h: stage.clientHeight };
@@ -51,14 +96,15 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   if (!state.frame) return;
+  const width = state.frameW * state.scale;
+  const height = state.frameH * state.scale;
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.55)";
+  ctx.shadowBlur = 28;
+  ctx.shadowOffsetY = 6;
   ctx.imageSmoothingEnabled = state.scale < 1;
-  ctx.drawImage(
-    state.frame,
-    state.ox,
-    state.oy,
-    state.frameW * state.scale,
-    state.frameH * state.scale,
-  );
+  ctx.drawImage(state.frame, state.ox, state.oy, width, height);
+  ctx.restore();
 }
 
 function center() {
@@ -67,10 +113,14 @@ function center() {
   state.oy = (h - state.frameH * state.scale) / 2;
 }
 
+function zoomLabel() {
+  el("zoom-label").textContent = `${Math.round(state.scale * 100)}%`;
+}
+
 function fitView() {
   if (!state.frame) return;
   const { w, h } = stageSize();
-  state.scale = Math.min(w / state.frameW, h / state.frameH);
+  state.scale = Math.min(w / state.frameW, h / state.frameH, 1);
   state.fit = true;
   center();
   draw();
@@ -99,8 +149,9 @@ function zoomAt(px, py, factor) {
   zoomLabel();
 }
 
-function zoomLabel() {
-  el("zoom-label").textContent = `${Math.round(state.scale * 100)}%`;
+function zoomCenter(factor) {
+  const { w, h } = stageSize();
+  zoomAt(w / 2, h / 2, factor);
 }
 
 function toPage(clientX, clientY) {
@@ -111,19 +162,38 @@ function toPage(clientX, clientY) {
   };
 }
 
+// ------------------------------------------------------------------- input
+
 function setControl(owner) {
   state.control = owner;
   const controlling = owner === "human";
   document.body.classList.toggle("controlling", controlling);
+  el("banner").hidden = !controlling;
   const button = el("control");
   button.textContent = controlling ? "Release control" : "Take control";
   button.classList.toggle("human", controlling);
 }
 
+function send(message) {
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify(message));
+  }
+}
+
+// -------------------------------------------------------------- annotation
+
 function drawOverlay() {
   const { w, h } = stageSize();
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
   octx.clearRect(0, 0, w, h);
+  if (state.highlight) {
+    const { x, y, width, height } = state.highlight;
+    octx.fillStyle = "rgba(245, 184, 61, 0.12)";
+    octx.strokeStyle = "rgba(245, 184, 61, 0.9)";
+    octx.lineWidth = 1.5;
+    octx.fillRect(x, y, width, height);
+    octx.strokeRect(x, y, width, height);
+  }
   if (!state.drawStart || !state.drawEnd) return;
   const x = Math.min(state.drawStart.x, state.drawEnd.x);
   const y = Math.min(state.drawStart.y, state.drawEnd.y);
@@ -173,23 +243,47 @@ function currentRegion() {
 async function sendComment() {
   const comment = el("comment-text").value.trim();
   if (!comment || !state.session) return;
-  await fetch(`/v1/sessions/${encodeURIComponent(state.session)}/feedback`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ comment, region: currentRegion() }),
-  });
-  el("comment-text").value = "";
-  setAnnotating(false);
-  loadFeedback();
+  try {
+    await api(sessionPath(state.session) + "/feedback", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ comment, region: currentRegion() }),
+    });
+    el("comment-text").value = "";
+    setAnnotating(false);
+    state.feedbackSig = null;
+    toast("Note sent to the agent");
+    loadFeedback();
+  } catch (error) {
+    toast(`Could not send note: ${error.message}`, "error");
+  }
 }
+
+function highlightRegion(region) {
+  if (!region) {
+    state.highlight = null;
+    drawOverlay();
+    return;
+  }
+  state.highlight = {
+    x: region.x * region.scale + state.ox,
+    y: region.y * region.scale + state.oy,
+    width: region.width * region.scale,
+    height: region.height * region.scale,
+  };
+  drawOverlay();
+}
+
+// --------------------------------------------------------------- feedback
 
 async function loadFeedback() {
   if (!state.session) return;
-  const items = await fetch(
-    `/v1/sessions/${encodeURIComponent(state.session)}/feedback?pending=true`,
-  )
-    .then((r) => r.json())
-    .catch(() => []);
+  let items = [];
+  try {
+    items = await api(sessionPath(state.session) + "/feedback?pending=true");
+  } catch {
+    return;
+  }
   el("feedback-count").textContent = items.length;
 
   const signature = items.map((item) => item.id).join(",");
@@ -198,43 +292,166 @@ async function loadFeedback() {
 
   const list = el("feedback-list");
   list.replaceChildren();
+
   if (!items.length) {
     const li = document.createElement("li");
-    li.className = "empty";
+    li.className = "placeholder";
     li.textContent = "No pending notes";
     list.append(li);
     return;
   }
+
   for (const item of items) {
     const li = document.createElement("li");
     const comment = document.createElement("span");
     comment.className = "comment";
     comment.textContent = item.comment;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `#${item.id}`;
+
     const resolve = document.createElement("button");
+    resolve.className = "ghost";
     resolve.textContent = "Resolve";
-    resolve.onclick = async () => {
-      await fetch(
-        `/v1/sessions/${encodeURIComponent(state.session)}/feedback/${item.id}/ack`,
-        { method: "POST" },
-      );
-      state.feedbackSig = null;
-      loadFeedback();
+    resolve.onclick = async (event) => {
+      event.stopPropagation();
+      try {
+        await api(sessionPath(state.session) + `/feedback/${item.id}/ack`, { method: "POST" });
+        state.feedbackSig = null;
+        state.highlight = null;
+        drawOverlay();
+        loadFeedback();
+      } catch (error) {
+        toast(`Could not resolve: ${error.message}`, "error");
+      }
     };
-    li.append(comment, resolve);
+    meta.append(resolve);
+
+    li.append(comment, meta);
+    li.onmouseenter = () => highlightRegion(item.region);
+    li.onmouseleave = () => highlightRegion(null);
     list.append(li);
   }
 }
 
-function onFrame(buffer) {
-  createImageBitmap(new Blob([buffer], { type: "image/jpeg" })).then((bitmap) => {
-    if (state.frame) state.frame.close();
-    state.frame = bitmap;
-    state.frameW = bitmap.width;
-    state.frameH = bitmap.height;
-    if (state.fit) fitView();
-    else draw();
-  });
+// --------------------------------------------------------------- sessions
+
+function sessionItem(session) {
+  const li = document.createElement("li");
+  li.dataset.name = session.name;
+
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = session.name;
+
+  const sub = document.createElement("span");
+  sub.className = "sub";
+  sub.textContent = session.cdp_endpoint.replace(/^https?:\/\//, "");
+
+  li.append(name, sub);
+  li.onclick = () => connect(session.name);
+  return li;
 }
+
+function markActive(name) {
+  for (const li of el("sessions").children) {
+    li.classList.toggle("active", li.dataset.name === name);
+  }
+}
+
+async function loadSessions() {
+  let sessions;
+  try {
+    sessions = await api("/v1/sessions");
+  } catch {
+    return;
+  }
+  const list = el("sessions");
+  const desired = sessions.map((session) => session.name).join("\n");
+  const current = [...list.children].map((li) => li.dataset.name).join("\n");
+
+  if (desired !== current) {
+    list.replaceChildren();
+    if (!sessions.length) {
+      const li = document.createElement("li");
+      li.className = "placeholder";
+      li.textContent = "No sessions yet";
+      list.append(li);
+    } else {
+      list.append(...sessions.map(sessionItem));
+    }
+  }
+  markActive(state.session);
+}
+
+function normalizeUrl(raw) {
+  if (/^(data|about|blob):/.test(raw) || raw.includes("://")) return raw;
+  return `https://${raw}`;
+}
+
+function clearReconnect() {
+  if (state.reconnectTimer) {
+    clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+  }
+}
+
+function scheduleReconnect(name) {
+  clearReconnect();
+  setStatus("reconnecting…", "warn");
+  state.reconnectTimer = setTimeout(() => {
+    if (state.session === name) connect(name);
+  }, 1500);
+}
+
+function connect(name) {
+  clearReconnect();
+  if (state.ws) {
+    state.intentionalClose = true;
+    state.ws.onclose = null;
+    state.ws.close();
+  }
+  state.session = name;
+  state.frame?.close();
+  state.frame = null;
+  state.fit = true;
+  state.highlight = null;
+  state.feedbackSig = null;
+  el("cdp").textContent = "connecting…";
+  el("empty").hidden = true;
+  el("spinner").hidden = false;
+  setAnnotating(false);
+  setControlsEnabled(false);
+  setState("connecting");
+  setStatus(`connecting to ${name}…`, "warn");
+  markActive(name);
+  loadFeedback();
+
+  api(sessionPath(name))
+    .then((info) => {
+      el("cdp").textContent = info.cdp_endpoint;
+      el("cdp").title = info.cdp_endpoint;
+    })
+    .catch(() => {});
+
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}${sessionPath(name)}/stream`);
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = onServerMessage;
+  ws.onopen = () => setControl("agent");
+  ws.onerror = () => {};
+  ws.onclose = () => {
+    el("spinner").hidden = true;
+    setControlsEnabled(false);
+    setStatus(state.intentionalClose ? "idle" : "disconnected", "off");
+    state.intentionalClose = false;
+    if (state.session === name) scheduleReconnect(name);
+  };
+  state.ws = ws;
+}
+
+// --------------------------------------------------------------- messages
 
 function onServerMessage(event) {
   if (typeof event.data === "string") {
@@ -244,140 +461,139 @@ function onServerMessage(event) {
     } catch {
       return;
     }
-    if (message.type === "control") setControl(message.owner);
+    if (message.type === "control") {
+      setControl(message.owner);
+      setControlsEnabled(true);
+      setState("live");
+      setStatus(`live · ${state.session}`, "on");
+    } else if (message.type === "error") {
+      toast(message.message, "error");
+    }
     return;
   }
   onFrame(event.data);
 }
 
-function connect(name) {
-  if (state.ws) {
-    state.ws.onclose = null;
-    state.ws.close();
-  }
-  state.session = name;
-  state.frame?.close();
-  state.frame = null;
-  state.fit = true;
-  el("empty").hidden = true;
-  el("cdp").textContent = "";
-  setAnnotating(false);
-  state.feedbackSig = null;
-  markActive(name);
-  loadFeedback();
-
-  fetch(`/v1/sessions/${encodeURIComponent(name)}`)
-    .then((r) => (r.ok ? r.json() : null))
-    .then((info) => {
-      if (info) el("cdp").textContent = info.cdp_endpoint;
+function onFrame(buffer) {
+  createImageBitmap(new Blob([buffer], { type: "image/jpeg" }))
+    .then((bitmap) => {
+      if (state.frame) state.frame.close();
+      state.frame = bitmap;
+      state.frameW = bitmap.width;
+      state.frameH = bitmap.height;
+      if (!el("spinner").hidden) {
+        el("spinner").hidden = true;
+        el("empty").hidden = true;
+        setControlsEnabled(true);
+        setState("live");
+        setStatus(`live · ${state.session}`, "on");
+      }
+      if (state.fit) fitView();
+      else draw();
+      pollInfo();
     })
     .catch(() => {});
-
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(
-    `${proto}://${location.host}/v1/sessions/${encodeURIComponent(name)}/stream`,
-  );
-  ws.binaryType = "arraybuffer";
-  ws.onmessage = onServerMessage;
-  ws.onopen = () => {
-    el("conn").classList.add("on");
-    el("conn").title = `connected to ${name}`;
-    setControl("agent");
-  };
-  ws.onclose = () => {
-    el("conn").classList.remove("on");
-    el("conn").title = "disconnected";
-  };
-  state.ws = ws;
 }
 
-function markActive(name) {
-  for (const li of el("sessions").children) {
-    li.classList.toggle("active", li.dataset.name === name);
+async function pollInfo() {
+  if (!state.session) return;
+  try {
+    const tabs = await api(sessionPath(state.session) + "/tabs");
+    const active = tabs.find((tab) => tab.active) || tabs[0];
+    if (!active) return;
+    if (document.activeElement !== el("url")) el("url").value = active.url || "";
+    el("url").title = active.url || "";
+    document.title = active.title ? `${active.title} · Lumen` : "Lumen";
+  } catch {
+    /* ignore transient tab errors */
   }
 }
 
-function sessionItem(session) {
-  const li = document.createElement("li");
-  li.textContent = session.name;
-  li.dataset.name = session.name;
-  li.title = session.cdp_endpoint;
-  li.onclick = () => connect(session.name);
-  return li;
-}
+// ---------------------------------------------------------------- actions
 
-async function loadSessions() {
-  const sessions = await fetch("/v1/sessions").then((r) => r.json());
-  const list = el("sessions");
-  const desired = sessions.map((session) => session.name).join("\n");
-  const current = [...list.children].map((li) => li.dataset.name).join("\n");
-
-  if (desired !== current) {
-    list.replaceChildren(...sessions.map(sessionItem));
+async function navigate() {
+  const raw = el("url").value.trim();
+  if (!raw || !state.session) return;
+  try {
+    await api(sessionPath(state.session) + "/navigate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: normalizeUrl(raw) }),
+    });
+    el("url").blur();
+    setTimeout(pollInfo, 400);
+  } catch (error) {
+    toast(`Navigation blocked: ${error.message}`, "error");
   }
-  for (const li of list.children) {
-    const session = sessions.find((s) => s.name === li.dataset.name);
-    if (session) li.title = session.cdp_endpoint;
-  }
-  markActive(state.session);
 }
 
 el("new-session").onsubmit = async (event) => {
   event.preventDefault();
   const name = el("new-name").value.trim();
   if (!name) return;
-  const response = await fetch("/v1/sessions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  if (!response.ok) {
-    alert((await response.json()).error || "could not create session");
-    return;
+  try {
+    await api("/v1/sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    el("new-name").value = "";
+    await loadSessions();
+    connect(name);
+  } catch (error) {
+    toast(`Could not create session: ${error.message}`, "error");
   }
-  el("new-name").value = "";
-  await loadSessions();
-  connect(name);
 };
 
-el("go").onclick = () => {
-  const url = el("url").value.trim();
-  if (!url || !state.session) return;
-  fetch(`/v1/sessions/${encodeURIComponent(state.session)}/navigate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ url }),
-  });
-};
-
+el("go").onclick = navigate;
 el("url").addEventListener("keydown", (event) => {
-  if (event.key === "Enter") el("go").click();
+  if (event.key === "Enter") navigate();
 });
 
-el("control").onclick = () => {
+el("control").onclick = () =>
   send({ type: "control", action: state.control === "human" ? "release" : "claim" });
-};
 
-el("zoom-in").onclick = () => {
-  const { w, h } = stageSize();
-  zoomAt(w / 2, h / 2, 1.2);
-};
-el("zoom-out").onclick = () => {
-  const { w, h } = stageSize();
-  zoomAt(w / 2, h / 2, 1 / 1.2);
-};
+el("zoom-in").onclick = () => zoomCenter(1.2);
+el("zoom-out").onclick = () => zoomCenter(1 / 1.2);
+el("zoom-label").onclick = actualSize;
 el("fit").onclick = fitView;
-el("one").onclick = actualSize;
 el("fullscreen").onclick = () => {
   if (document.fullscreenElement) document.exitFullscreen();
   else document.documentElement.requestFullscreen();
 };
 
+el("comment").onclick = () => setAnnotating(!state.annotating);
+el("comment-send").onclick = sendComment;
+el("comment-cancel").onclick = () => setAnnotating(false);
+el("comment-text").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) sendComment();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA") return;
+  if (event.key === "Escape") {
+    if (state.annotating) setAnnotating(false);
+    else if (state.control === "human") send({ type: "control", action: "release" });
+  } else if (event.key === "+" || event.key === "=") {
+    zoomCenter(1.2);
+  } else if (event.key === "-" || event.key === "_") {
+    zoomCenter(1 / 1.2);
+  }
+});
+
+canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
 canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture(event.pointerId);
   if (state.control === "human") {
     const { x, y } = toPage(event.clientX, event.clientY);
-    send({ type: "mouse", action: "down", x, y, button: "left" });
+    send({
+      type: "mouse",
+      action: "down",
+      x,
+      y,
+      button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left",
+    });
   } else if (state.scale > 1) {
     state.panning = true;
     state.last = { x: event.clientX, y: event.clientY };
@@ -409,7 +625,7 @@ canvas.addEventListener(
   "wheel",
   (event) => {
     event.preventDefault();
-    if (state.control === "human" && !event.ctrlKey) {
+    if (state.control === "human" && !event.ctrlKey && !event.metaKey) {
       const { x, y } = toPage(event.clientX, event.clientY);
       send({ type: "wheel", x, y, dx: event.deltaX, dy: event.deltaY });
       return;
@@ -419,11 +635,6 @@ canvas.addEventListener(
   },
   { passive: false },
 );
-
-window.addEventListener("resize", () => {
-  resizeCanvas();
-  if (state.fit) fitView();
-});
 
 overlay.addEventListener("pointerdown", (event) => {
   if (!state.annotating) return;
@@ -450,16 +661,20 @@ overlay.addEventListener("pointerup", (event) => {
   }
 });
 
-el("comment").onclick = () => setAnnotating(!state.annotating);
-el("comment-send").onclick = sendComment;
-el("comment-cancel").onclick = () => setAnnotating(false);
-el("comment-text").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) sendComment();
+window.addEventListener("resize", () => {
+  resizeCanvas();
+  if (state.fit) fitView();
 });
 
+// ------------------------------------------------------------------- boot
+
 resizeCanvas();
+setControlsEnabled(false);
 loadSessions();
 setInterval(loadSessions, 5000);
 setInterval(() => {
-  if (state.session) loadFeedback();
-}, 4000);
+  if (state.session) {
+    loadFeedback();
+    pollInfo();
+  }
+}, 3000);
