@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 
 use crate::cdp::CdpSession;
 use crate::config::Config;
+use crate::view::ViewHub;
 
 /// Owns every agent browser: launch, isolation, discovery, and teardown.
 pub struct Supervisor {
@@ -24,6 +25,7 @@ pub struct AgentBrowser {
     /// `playwright-cli` and Lumen's own CDP session attach to.
     pub cdp_endpoint: String,
     pub session: Arc<CdpSession>,
+    pub view: Arc<ViewHub>,
     child: Mutex<Child>,
 }
 
@@ -109,12 +111,14 @@ impl Supervisor {
         session
             .set_viewport(viewport.width, viewport.height)
             .await?;
+        let view = Arc::new(ViewHub::new(session.clone()));
 
         tracing::info!(agent = name, %cdp_endpoint, "agent browser ready");
         Ok(Arc::new(AgentBrowser {
             name: name.to_string(),
             cdp_endpoint,
             session,
+            view,
             child: Mutex::new(child),
         }))
     }

@@ -1,0 +1,217 @@
+:root {
+  --bg: #0b0e13;
+  --panel: #121722;
+  --panel-2: #0e131c;
+  --line: #232c3d;
+  --text: #e6ebf5;
+  --muted: #8a94a7;
+  --accent: #5eead4;
+  --accent-ink: #04211d;
+  --human: #fbbf24;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  display: flex;
+}
+
+#sidebar {
+  width: 260px;
+  flex: 0 0 260px;
+  background: var(--panel-2);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#sidebar header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+#sidebar h1 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  transition: background 0.2s;
+}
+
+.dot.on {
+  background: var(--accent);
+}
+
+#new-session {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+input,
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+}
+
+input:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+button.human {
+  background: var(--human);
+  border-color: var(--human);
+  color: #221600;
+}
+
+#sessions {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  flex: 1;
+}
+
+#sessions li {
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#sessions li:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+
+#sessions li.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+#cdp {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+#toolbar #url {
+  flex: 1;
+  min-width: 120px;
+}
+
+.spacer {
+  flex: 0 0 8px;
+}
+
+#zoom-label {
+  min-width: 46px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+#stage {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  background: repeating-conic-gradient(#0f131b 0% 25%, #0c1017 0% 50%) 50% / 24px
+    24px;
+}
+
+#screen {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+#empty[hidden] {
+  display: none;
+}
+
+body.controlling #stage {
+  cursor: crosshair;
+}

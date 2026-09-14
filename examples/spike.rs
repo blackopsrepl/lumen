@@ -69,18 +69,16 @@ async fn main() -> Result<()> {
     );
     std::fs::create_dir_all(&out_dir).context("create output dir")?;
 
-    let (width, height) = (
-        config.default_viewport.width,
-        config.default_viewport.height,
-    );
+    let viewport = config.default_viewport;
     let supervisor = Supervisor::new(Arc::new(config));
+    println!("default viewport: {}x{}", viewport.width, viewport.height);
 
     let agent = supervisor.ensure("spike").await?;
     println!("agent 'spike' CDP endpoint: {}", agent.cdp_endpoint);
 
     agent.session.goto(PAGE).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
-    agent.session.start_screencast(width, height).await?;
+    agent.session.start_screencast().await?;
 
     let mut frames = agent
         .session

@@ -1,13 +1,25 @@
+use crate::cdp::CdpSession;
 use crate::config::{Config, Viewport};
 use crate::supervisor::{is_valid_agent_name, AgentInfo, Supervisor};
+use crate::view::{Control, ViewHub};
+use axum::body::Bytes;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use chromiumoxide::cdp::browser_protocol::input::{DispatchMouseEventType, MouseButton};
+use futures::{SinkExt, StreamExt};
+use rust_embed::RustEmbed;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tokio::sync::{broadcast, mpsc};
+
+#[derive(RustEmbed)]
+#[folder = "ui/"]
+struct UiAssets;
 
 /// Shared control-plane state.
 #[derive(Clone)]
@@ -29,14 +41,42 @@ impl AppState {
 /// Build the HTTP control/view plane.
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(index))
+        .route("/app.js", get(app_js))
+        .route("/style.css", get(style_css))
         .route("/healthz", get(healthz))
         .route("/v1/sessions", get(list_sessions).post(create_session))
         .route("/v1/sessions/{name}", get(get_session))
+        .route("/v1/sessions/{name}/navigate", post(navigate))
         .route(
             "/v1/sessions/{name}/viewport",
             put(set_viewport).delete(reset_viewport),
         )
+        .route("/v1/sessions/{name}/stream", get(stream))
         .with_state(state)
+}
+
+fn asset(path: &str, content_type: &str) -> Response {
+    match UiAssets::get(path) {
+        Some(file) => (
+            [(header::CONTENT_TYPE, content_type)],
+            file.data.into_owned(),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn index() -> Response {
+    asset("index.html", "text/html; charset=utf-8")
+}
+
+async fn app_js() -> Response {
+    asset("app.js", "text/javascript; charset=utf-8")
+}
+
+async fn style_css() -> Response {
+    asset("style.css", "text/css; charset=utf-8")
 }
 
 async fn healthz() -> Json<Value> {
@@ -56,8 +96,7 @@ async fn create_session(
     State(state): State<AppState>,
     Json(body): Json<CreateSession>,
 ) -> Result<Json<AgentInfo>, ApiError> {
-    let info = ensure(&state, &body.name).await?;
-    Ok(Json(info))
+    Ok(Json(ensure(&state, &body.name).await?))
 }
 
 async fn get_session(
@@ -65,6 +104,21 @@ async fn get_session(
     Path(name): Path<String>,
 ) -> Result<Json<AgentInfo>, ApiError> {
     Ok(Json(ensure(&state, &name).await?))
+}
+
+#[derive(Deserialize)]
+struct NavigateBody {
+    url: String,
+}
+
+async fn navigate(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<NavigateBody>,
+) -> Result<StatusCode, ApiError> {
+    let agent = state.supervisor.ensure(&name).await?;
+    agent.session.goto(&body.url).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
@@ -107,6 +161,176 @@ async fn ensure(state: &AppState, name: &str) -> Result<AgentInfo, ApiError> {
         name: agent.name.clone(),
         cdp_endpoint: agent.cdp_endpoint.clone(),
     })
+}
+
+async fn stream(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| stream_session(socket, state, name))
+}
+
+async fn stream_session(socket: WebSocket, state: AppState, name: String) {
+    let agent = match state.supervisor.ensure(&name).await {
+        Ok(agent) => agent,
+        Err(err) => {
+            tracing::warn!("stream for '{name}' failed: {err:#}");
+            return;
+        }
+    };
+    let hub: Arc<ViewHub> = agent.view.clone();
+    let session: Arc<CdpSession> = agent.session.clone();
+    let mut frames = hub.subscribe().await;
+
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (out_tx, mut out_rx) = mpsc::channel::<Message>(64);
+
+    let writer = tokio::spawn(async move {
+        while let Some(message) = out_rx.recv().await {
+            if ws_tx.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let frame_tx = out_tx.clone();
+    let frame_task = tokio::spawn(async move {
+        loop {
+            match frames.recv().await {
+                Ok(bytes) => {
+                    if frame_tx
+                        .send(Message::Binary(Bytes::from(bytes.to_vec())))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
+    let _ = out_tx
+        .send(Message::Text(control_event(hub.control().await).into()))
+        .await;
+
+    while let Some(Ok(message)) = ws_rx.next().await {
+        match message {
+            Message::Text(text) => {
+                if let Some(event) = handle_command(&hub, &session, &text).await {
+                    if out_tx.send(event).await.is_err() {
+                        break;
+                    }
+                }
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+
+    frame_task.abort();
+    writer.abort();
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum Command {
+    Mouse {
+        action: String,
+        x: f64,
+        y: f64,
+        #[serde(default)]
+        button: Option<String>,
+    },
+    Wheel {
+        x: f64,
+        y: f64,
+        dx: f64,
+        dy: f64,
+    },
+    Text {
+        text: String,
+    },
+    Control {
+        action: String,
+    },
+}
+
+async fn handle_command(hub: &ViewHub, session: &CdpSession, raw: &str) -> Option<Message> {
+    let command: Command = match serde_json::from_str(raw) {
+        Ok(command) => command,
+        Err(err) => return Some(error_event(format!("bad command: {err}"))),
+    };
+
+    match command {
+        Command::Control { action } => {
+            let owner = match action.as_str() {
+                "claim" => Control::Human,
+                "release" => Control::Agent,
+                _ => return Some(error_event("unknown control action".into())),
+            };
+            hub.set_control(owner).await;
+            Some(Message::Text(control_event(owner).into()))
+        }
+        Command::Mouse {
+            action,
+            x,
+            y,
+            button,
+        } => {
+            if hub.control().await != Control::Human {
+                return None;
+            }
+            let kind = match action.as_str() {
+                "down" => DispatchMouseEventType::MousePressed,
+                "up" => DispatchMouseEventType::MouseReleased,
+                "move" => DispatchMouseEventType::MouseMoved,
+                other => return Some(error_event(format!("unknown mouse action '{other}'"))),
+            };
+            let button = match button.as_deref() {
+                Some("right") => MouseButton::Right,
+                Some("middle") => MouseButton::Middle,
+                _ => MouseButton::Left,
+            };
+            match session.mouse(kind, x, y, button).await {
+                Ok(()) => None,
+                Err(err) => Some(error_event(err.to_string())),
+            }
+        }
+        Command::Wheel { x, y, dx, dy } => {
+            if hub.control().await != Control::Human {
+                return None;
+            }
+            match session.wheel(x, y, dx, dy).await {
+                Ok(()) => None,
+                Err(err) => Some(error_event(err.to_string())),
+            }
+        }
+        Command::Text { text } => {
+            if hub.control().await != Control::Human {
+                return None;
+            }
+            match session.insert_text(&text).await {
+                Ok(()) => None,
+                Err(err) => Some(error_event(err.to_string())),
+            }
+        }
+    }
+}
+
+fn control_event(owner: Control) -> String {
+    json!({ "type": "control", "owner": owner }).to_string()
+}
+
+fn error_event(message: String) -> Message {
+    Message::Text(
+        json!({ "type": "error", "message": message })
+            .to_string()
+            .into(),
+    )
 }
 
 /// Control-plane error mapped to a JSON response.

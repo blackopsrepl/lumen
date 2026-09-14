@@ -76,12 +76,11 @@ impl CdpSession {
         Ok(())
     }
 
-    pub async fn start_screencast(&self, width: u32, height: u32) -> Result<()> {
+    /// Begin streaming the page at its native viewport size.
+    pub async fn start_screencast(&self) -> Result<()> {
         let params = StartScreencastParams::builder()
             .format(StartScreencastFormat::Jpeg)
             .quality(70)
-            .max_width(width as i64)
-            .max_height(height as i64)
             .build();
         self.page
             .execute(params)
@@ -112,19 +111,36 @@ impl CdpSession {
     }
 
     pub async fn click(&self, x: f64, y: f64) -> Result<()> {
-        self.mouse(DispatchMouseEventType::MousePressed, x, y)
-            .await?;
-        self.mouse(DispatchMouseEventType::MouseReleased, x, y)
-            .await?;
+        self.mouse(
+            DispatchMouseEventType::MousePressed,
+            x,
+            y,
+            MouseButton::Left,
+        )
+        .await?;
+        self.mouse(
+            DispatchMouseEventType::MouseReleased,
+            x,
+            y,
+            MouseButton::Left,
+        )
+        .await?;
         Ok(())
     }
 
-    async fn mouse(&self, kind: DispatchMouseEventType, x: f64, y: f64) -> Result<()> {
+    /// Dispatch one mouse event in CSS pixels relative to the viewport.
+    pub async fn mouse(
+        &self,
+        kind: DispatchMouseEventType,
+        x: f64,
+        y: f64,
+        button: MouseButton,
+    ) -> Result<()> {
         let params = DispatchMouseEventParams::builder()
             .r#type(kind)
             .x(x)
             .y(y)
-            .button(MouseButton::Left)
+            .button(button)
             .click_count(1)
             .build()
             .map_err(|err| anyhow!(err))?;
@@ -132,6 +148,23 @@ impl CdpSession {
             .execute(params)
             .await
             .context("Input.dispatchMouseEvent")?;
+        Ok(())
+    }
+
+    /// Dispatch a wheel event in CSS pixels relative to the viewport.
+    pub async fn wheel(&self, x: f64, y: f64, delta_x: f64, delta_y: f64) -> Result<()> {
+        let params = DispatchMouseEventParams::builder()
+            .r#type(DispatchMouseEventType::MouseWheel)
+            .x(x)
+            .y(y)
+            .delta_x(delta_x)
+            .delta_y(delta_y)
+            .build()
+            .map_err(|err| anyhow!(err))?;
+        self.page
+            .execute(params)
+            .await
+            .context("Input.dispatchMouseEvent (wheel)")?;
         Ok(())
     }
 

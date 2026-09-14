@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>Lumen</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <aside id="sidebar">
+      <header>
+        <h1>Lumen</h1>
+        <span id="conn" class="dot" title="disconnected"></span>
+      </header>
+      <form id="new-session" autocomplete="off">
+        <input id="new-name" placeholder="agent name" spellcheck="false" />
+        <button type="submit">Add</button>
+      </form>
+      <ul id="sessions"></ul>
+      <footer id="cdp"></footer>
+    </aside>
+
+    <main>
+      <div id="toolbar">
+        <input id="url" placeholder="https://…" spellcheck="false" />
+        <button id="go">Go</button>
+        <span class="spacer"></span>
+        <button id="zoom-out" title="Zoom out">−</button>
+        <span id="zoom-label">100%</span>
+        <button id="zoom-in" title="Zoom in">+</button>
+        <button id="fit" title="Fit to window">Fit</button>
+        <button id="one" title="Actual size">1:1</button>
+        <button id="fullscreen" title="Fullscreen">⛶</button>
+        <button id="control" class="primary">Take control</button>
+      </div>
+      <div id="stage">
+        <canvas id="screen"></canvas>
+        <div id="empty">Select or create a session</div>
+      </div>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
