@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
 #
-# Run playwright-cli from the shared workspace, self-healing the agent session.
+# Drive an agent's browser through Lumen:
 #
-#   bin/pw.sh -s=<agent> goto https://example.com
-#   bin/pw.sh -s=<agent> open https://example.com   # 'open' is normalized to 'goto'
+#   bin/pw.sh -s=alice goto https://example.com
 #
-# Every command transparently ensures the agent's browser exists and the CLI is
-# attached; if the broker restarted, the stale session is replaced automatically.
+# It asks Lumen to ensure the session, attaches the host CLI to that browser's
+# CDP endpoint if needed, then runs the given playwright-cli command. 'open' is
+# normalized to 'goto' because the browser is already open.
 #
 set -euo pipefail
-# shellcheck source=common.sh
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 require_cli
 
-# Locate the command token: the first argument that is not an option. This CLI
-# takes options as `-s=name`, `--foo=bar`, or bare flags.
 ARGS=("$@")
 cmd_idx=-1
+name=""
+for i in "${!ARGS[@]}"; do
+  case "${ARGS[$i]}" in
+    -s=*|--session=*) name="${ARGS[$i]#*=}" ;;
+  esac
+done
 for i in "${!ARGS[@]}"; do
   case "${ARGS[$i]}" in
     -s=*|--session=*|--*=*|--*) ;;
@@ -27,18 +30,17 @@ for i in "${!ARGS[@]}"; do
 done
 cmd=""
 [ "${cmd_idx}" -ge 0 ] && cmd="${ARGS[$cmd_idx]}"
+name="${name:-${AGENT_NAME:-default}}"
 
 case "${cmd}" in
-  # Session/state management: never auto-provision a browser.
   ""|list|show|close|close-all|kill-all|detach|install|install-browser|delete-data|help|--help|--version)
     pw "$@"
     ;;
   *)
-    session="$(parse_session "$@")"
-    ensure_attached "${session}" \
-      || die "could not ensure browser session '${session}' (broker up? bin/status.sh)"
-    # The attached browser is already open; navigate with `goto`, not `open`
-    # (open launches a new local browser and fails).
+    endpoint="$(lumen ensure "${name}")" || die "could not ensure session '${name}' (bin/status.sh)"
+    if ! pw list 2>/dev/null | grep -qE "^- ${name}:"; then
+      pw attach --cdp="${endpoint}" --session="${name}" >/dev/null
+    fi
     if [ "${cmd}" = "open" ]; then
       ARGS[cmd_idx]="goto"
     fi

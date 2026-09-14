@@ -1,5 +1,5 @@
 [Unit]
-Description=Playwright browser broker (rootless Podman Compose)
+Description=Lumen browser service (rootless Podman Compose)
 Documentation=file://__PROJECT_DIR__/README.md
 Wants=podman-user-wait-network-online.service
 After=podman-user-wait-network-online.service
@@ -8,8 +8,8 @@ After=podman-user-wait-network-online.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=__PROJECT_DIR__
-ExecStart=__PODMAN_COMPOSE__ -f __PROJECT_DIR__/compose.yaml up -d browser-broker
-ExecStop=__PODMAN_COMPOSE__ -f __PROJECT_DIR__/compose.yaml stop browser-broker
+ExecStart=__PODMAN_COMPOSE__ -f __PROJECT_DIR__/compose.yaml up -d lumen
+ExecStop=__PODMAN_COMPOSE__ -f __PROJECT_DIR__/compose.yaml stop lumen
 TimeoutStartSec=0
 TimeoutStopSec=60
 

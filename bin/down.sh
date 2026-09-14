@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 #
-# Stop the browser broker (agent profile volumes are kept; use
-# `podman compose down -v` to delete them).
+# Stop the Lumen service (keeps the browser-profile volume).
 #
 set -euo pipefail
-# shellcheck source=common.sh
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
-log "stopping browser broker"
+log "stopping lumen"
 compose down

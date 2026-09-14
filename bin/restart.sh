@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 #
-# Restart the browser broker.
+# Restart the Lumen service.
 #
 set -euo pipefail
-# shellcheck source=common.sh
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
-log "restarting browser broker"
+log "restarting lumen"
 compose down
 compose up -d --build

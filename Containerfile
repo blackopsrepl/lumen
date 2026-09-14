@@ -1,59 +1,44 @@
-# Playwright browser stack
+# Lumen — single-binary browser service.
 #
-# Container role (architecture "B"): a *browser server*, not an MCP server.
-# It runs one isolated Chromium per agent and exposes each on its own loopback
-# CDP port. The agent's `playwright-cli` (running on the host) attaches to that
-# endpoint; `playwright-cli show` is the live, annotatable dashboard.
-#
-# Base image: official Microsoft Playwright image (Ubuntu 24.04 "noble") with
-# Chromium, Firefox, WebKit and every OS library they need already present.
-# We do not install the MCP server here.
-#
-# Build arg moves the single version pin:
-#   --build-arg PLAYWRIGHT_IMAGE_VERSION=1.63.0
+# Multi-stage: compile the Rust service against a stub so dependency layers
+# cache, then copy only the binary onto the official Playwright image, which
+# already carries Chromium and every OS library it needs.
 
 ARG PLAYWRIGHT_IMAGE_VERSION=1.63.0
+ARG RUST_IMAGE=rust:1.95-slim
+
+FROM ${RUST_IMAGE} AS builder
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential pkg-config \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src ui \
+ && echo '' > src/lib.rs \
+ && echo 'fn main() {}' > src/main.rs \
+ && echo '' > ui/index.html \
+ && cargo build --release --locked \
+ && rm -rf src ui
+COPY src ./src
+COPY ui ./ui
+# COPY preserves source mtimes, which can predate the stub build; touch the tree
+# so cargo rebuilds against the real sources instead of the cached stub.
+RUN find src ui -type f -exec touch {} + && cargo build --release --locked
+
 FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_IMAGE_VERSION}-noble
 
-ARG PLAYWRIGHT_IMAGE_VERSION
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-USER root
-
-# Stable chromium entrypoint for the broker. The base image path embeds a
-# browser revision that changes between releases, so resolve it once at build.
 RUN ln -sf "$(ls /ms-playwright/chromium-*/chrome-linux*/chrome | head -1)" /usr/local/bin/chromium \
- && chromium --version
-
-# Writable agent profile root. By default the container runs as root (rootless:
-# maps to your host user, so bind-mounted /data stays host-owned).
-RUN mkdir -p /data/agents \
+ && chromium --version \
+ && mkdir -p /data /etc/lumen \
  && chown -R ubuntu:ubuntu /data
 
-COPY browser-broker.js /usr/local/bin/browser-broker.js
-COPY entrypoint.sh /usr/local/bin/playwright-browser-entrypoint
-COPY healthcheck.sh /usr/local/bin/playwright-browser-healthcheck
-RUN chmod 0755 \
-      /usr/local/bin/browser-broker.js \
-      /usr/local/bin/playwright-browser-entrypoint \
-      /usr/local/bin/playwright-browser-healthcheck
+COPY --from=builder /src/target/release/lumen /usr/local/bin/lumen
+COPY config/lumen.toml /etc/lumen/lumen.toml
 
-ENV HOME=/home/ubuntu \
-    BROKER_HOST=127.0.0.1 \
-    BROKER_PORT=8090 \
-    AGENT_DATA_DIR=/data/agents \
-    AGENT_HEADLESS=1 \
-    AGENT_NO_SANDBOX=1 \
-    MAX_AGENTS=8 \
-    CHROME_BIN=chromium
+ENV LUMEN_CONFIG=/etc/lumen/lumen.toml \
+    HOME=/home/ubuntu \
+    RUST_LOG=lumen=info
 
 VOLUME ["/data"]
-EXPOSE 8090
-
-USER root
-WORKDIR /home/ubuntu
-ENTRYPOINT ["playwright-browser-entrypoint"]
-CMD []
+EXPOSE 8899
+ENTRYPOINT ["lumen"]

@@ -3,6 +3,7 @@ port = 8899
 max_agents = 8
 data_dir = "/data/agents"
 chrome_bin = "chromium"
+feedback_db = "/data/feedback.db"
 
 [default_viewport]
 width = 1440

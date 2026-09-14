@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 #
-# Build the playwright-browser image.
-#
-#   bin/build.sh [--no-cache] [--pull]
+# Build the Lumen image.
 #
 set -euo pipefail
-# shellcheck source=common.sh
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 NO_CACHE=()
