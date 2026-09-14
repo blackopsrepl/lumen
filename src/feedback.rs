@@ -45,10 +45,11 @@ pub struct AuditEntry {
 /// when no watcher is running.
 pub struct FeedbackStore {
     conn: Mutex<Connection>,
+    audit_retain: i64,
 }
 
 impl FeedbackStore {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path, audit_retain: i64) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;
@@ -78,6 +79,7 @@ impl FeedbackStore {
         .context("initializing feedback schema")?;
         Ok(Self {
             conn: Mutex::new(conn),
+            audit_retain: audit_retain.max(1),
         })
     }
 
@@ -200,6 +202,12 @@ impl FeedbackStore {
             params![at, session, action, detail],
         )
         .context("recording audit entry")?;
+        // Keep the trail bounded so a long-lived service cannot grow it forever.
+        conn.execute(
+            "DELETE FROM audit WHERE id <= (SELECT MAX(id) FROM audit) - ?1",
+            params![self.audit_retain],
+        )
+        .context("pruning audit entries")?;
         Ok(())
     }
 
@@ -223,5 +231,31 @@ impl FeedbackStore {
             items.push(row?);
         }
         Ok(items)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn audit_retention_bounds_the_trail() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("lumen-audit-{nanos}.db"));
+        let store = FeedbackStore::open(&path, 3).unwrap();
+
+        for i in 0..6 {
+            store.record("s", "test", &i.to_string()).await.unwrap();
+        }
+
+        let recent = store.recent(100).await.unwrap();
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0].detail, "5");
+
+        drop(store);
+        let _ = std::fs::remove_file(&path);
     }
 }

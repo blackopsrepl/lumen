@@ -24,6 +24,8 @@ pub struct Config {
     pub default_viewport: Viewport,
     /// SQLite database holding human feedback for each session.
     pub feedback_db: PathBuf,
+    /// Maximum audit rows to retain.
+    pub audit_retain: i64,
     /// Navigation host policy.
     pub policy: Policy,
 }
@@ -95,6 +97,7 @@ impl Default for Config {
                 height: 900,
             },
             feedback_db: PathBuf::from("/data/feedback.db"),
+            audit_retain: 10_000,
             policy: Policy::default(),
         }
     }

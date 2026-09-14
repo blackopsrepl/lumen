@@ -32,7 +32,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config) -> anyhow::Result<Self> {
-        let feedback = FeedbackStore::open(&config.feedback_db)?;
+        let feedback = FeedbackStore::open(&config.feedback_db, config.audit_retain)?;
         let config = Arc::new(config);
         Ok(Self {
             supervisor: Arc::new(Supervisor::new(config.clone())),
