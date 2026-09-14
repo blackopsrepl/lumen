@@ -1,0 +1,17 @@
+[Unit]
+Description=Playwright browser broker (rootless Podman Compose)
+Documentation=file://__PROJECT_DIR__/README.md
+Wants=podman-user-wait-network-online.service
+After=podman-user-wait-network-online.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=__PODMAN_COMPOSE__ -f __PROJECT_DIR__/compose.yaml up -d browser-broker
+ExecStop=__PODMAN_COMPOSE__ -f __PROJECT_DIR__/compose.yaml stop browser-broker
+TimeoutStartSec=0
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

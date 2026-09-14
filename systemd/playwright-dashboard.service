@@ -1,0 +1,22 @@
+[Unit]
+Description=Playwright live dashboard (localhost-only)
+Documentation=file://__PROJECT_DIR__/README.md
+Wants=playwright-browser.service
+After=playwright-browser.service
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_DIR__
+# playwright-cli lives in the user's ~/.local/bin; systemd's default PATH omits it.
+Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+# The dashboard uses a singleton socket: a second `show --port` finds the
+# existing daemon and exits 0, which would make Type=simple go inactive. Clear
+# any stale daemon first so ExecStart is always the foreground server.
+ExecStartPre=-__PROJECT_DIR__/bin/pw.sh show --kill
+ExecStart=__PROJECT_DIR__/bin/dashboard.sh
+ExecStop=-__PROJECT_DIR__/bin/pw.sh show --kill
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Playwright dashboard feedback router (annotations -> session inboxes)
+Documentation=file://__PROJECT_DIR__/README.md
+Wants=playwright-browser.service
+After=playwright-browser.service
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_DIR__
+Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+ExecStart=__PROJECT_DIR__/bin/feedback-watch.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
