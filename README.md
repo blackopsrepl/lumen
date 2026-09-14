@@ -1,110 +1,130 @@
 # Lumen
 
-A single-binary browser service for agents and humans. One process owns every
-agent's isolated Chromium, exposes a [Codex-style capability API](https://github.com/microsoft/playwright-cli),
-and serves a live, controllable 1:1 view of each browser to a human.
+<p align="center">
+  <img src="docs/images/viewer.png" alt="The Lumen viewer: a live browser session on the right, sessions and feedback on the left" width="920">
+</p>
 
-It replaces the earlier script-and-daemon stack (`browser-broker.js`, the
-`playwright-cli show` dashboard, a filesystem feedback watcher, and three
-systemd units) with one image, one config, one port, and one unit.
+One service that gives every agent its own isolated Chromium and gives the human a
+live, controllable view of the same browser. Agents drive real pages over a
+capability API or CDP; the human watches the active tab, can take over the mouse
+and keyboard at any moment, and leaves annotated feedback the agent reads back.
 
-## Architecture
+## How it fits together
 
-```
-        host                                        container: lumen (one process, port 8899)
-  human  http://localhost:8899  ── HTTP/WS ──▶  http (API + embedded viewer)
-  agent  playwright-cli ───────── CDP ───────▶  supervisor → Chromium/<agent>
-                                                 cdp · capabilities · view · input
-                                                 feedback (SQLite) · config
-```
+- **Control plane** — an HTTP/JSON API (`/v1/...`) for sessions, navigation,
+  tabs, viewport, screenshots, and raw CDP.
+- **View plane** — the browser is screencasted over WebSocket and rendered to a
+  canvas, so agent and human always look at the same tab. Zoom is view-only.
+- **Feedback** — humans drag a rectangle, type a note; it lands in SQLite and
+  the agent picks it up with one command. No watcher, no polling surface files.
 
-- **Control plane** — sessions, viewport, tabs, windows, screenshots, page
-  scale, visibility, raw CDP, and input, all over HTTP/JSON.
-- **View plane** — a CDP screencast fanned out over WebSocket, rendered to a
-  canvas. Zoom is view-only and never disturbs the agent; a control token lets
-  the human take over, with input forwarded as CDP events.
-- **Feedback** — annotations are written straight to SQLite and read back by the
-  agent, so nothing depends on a watcher running.
+## Install
 
-## Quick start
+You need Linux with rootless Podman (including `podman-compose`) and `make`.
+Node.js 18+ is only required to run the browser test-suite, Rust only to hack
+on the service itself — the image build handles the rest.
 
 ```bash
-make bootstrap              # host CLI + image + service + skill + smoke
-open http://localhost:8899  # the human viewer
-bin/pw.sh -s=alice goto https://example.com
-bin/pw.sh -s=alice snapshot
+git clone http://vigilance:3002/blackopsrepl/lumen.git
+cd lumen
+make bootstrap
 ```
 
-`bin/pw.sh` asks Lumen to ensure your session's browser, attaches
-`playwright-cli` over CDP, and runs the command. The container shares the host
-network, so a dev server on the host is reachable from the page at
-`http://127.0.0.1:<port>`. `host.containers.internal` and
-`host.docker.internal` are also mapped to the host loopback for compatibility
-with tools that use a container-host alias.
+`make bootstrap` installs the host agent CLI, builds the container image,
+starts the service, installs the systemd user unit and the opencode skill, and
+finishes with a black-box smoke test. When it prints *Bootstrap complete*, open:
 
-## Capability API
+**http://localhost:8899**
+
+To run on a different port or with a different Chromium binary:
+
+```bash
+cp .env.example .env       # set LUMEN_PORT and/or LUMEN_CHROME
+make restart
+```
+
+## Drive a browser as an agent
+
+```bash
+bin/pw.sh -s=alice goto https://example.com
+bin/pw.sh -s=alice snapshot              # accessibility tree with element refs
+bin/pw.sh -s=alice click e12
+bin/pw.sh -s=alice fill e7 "hello"
+bin/pw.sh -s=alice screenshot
+podman exec lumen lumen feedback alice --consume   # read + ack human notes
+```
+
+`bin/pw.sh` asks Lumen to ensure the session's browser, attaches
+`playwright-cli` over CDP, and runs your command. Sessions started this way are
+marked **agent-owned** in the viewer, so the human knows someone is reading the
+feedback. `make install-skill` gives opencode agents the full playbook.
+
+The service also exposes the same capabilities over plain HTTP:
 
 | Capability | Endpoint |
 | --- | --- |
 | sessions | `GET/POST /v1/sessions`, `GET/DELETE /v1/sessions/{name}` |
-| viewport set/reset | `PUT/DELETE /v1/sessions/{name}/viewport` |
-| page scale | `PUT /v1/sessions/{name}/page-scale` |
-| visibility | `PUT /v1/sessions/{name}/visibility` |
-| tabs | `GET/POST /v1/sessions/{name}/tabs`, `POST …/{index}/activate`, `DELETE …/{index}` |
-| screenshot | `POST /v1/sessions/{name}/screenshot?full=true` |
 | navigate | `POST /v1/sessions/{name}/navigate` |
+| tabs | `GET/POST /v1/sessions/{name}/tabs`, `POST …/{index}/activate`, `DELETE …/{index}` |
+| viewport / page scale | `PUT/DELETE /v1/sessions/{name}/viewport`, `PUT …/page-scale` |
+| screenshot | `POST /v1/sessions/{name}/screenshot?full=true` |
 | raw CDP | `POST /v1/sessions/{name}/cdp` |
-| audit | `GET /v1/audit` |
 | stream + input | `GET /v1/sessions/{name}/stream` (WebSocket) |
 | feedback | `GET/POST /v1/sessions/{name}/feedback`, `POST …/ack-all` |
+| audit trail | `GET /v1/audit` |
 
-## CLI
+## Watch and steer as a human
 
-```bash
-lumen serve                      # run the service (default)
-lumen status                     # list sessions
-lumen ensure <name>              # ensure a session, print its CDP endpoint
-lumen stop <name>                # stop a session's browser
-lumen feedback <name> [--consume]  # print a session's pending notes
-```
+Every session is listed on the left of the viewer. The canvas is a live
+screencast of the session's active tab at its native viewport size. Use
+**Take control** to forward your mouse, wheel, and typing into the page;
+**Escape** hands control back to the agent. Zoom and fullscreen are view-only.
 
-Inside the container the binary is `lumen`; from the host, use
-`podman exec lumen lumen …` or `bin/*.sh`.
+To leave feedback, click **Comment** and drag a rectangle over the area — the
+agent sees the note and the exact region on its next `lumen feedback` call.
 
-Sessions carry provenance. `lumen ensure` / `bin/pw.sh` register a session as
-**agent-owned** (optionally labelled with `--owner`), so the viewer groups it
-under “Agent sessions” and its feedback has a reader. A browser the human
-creates from the viewer is **manual** — it is clearly marked “no agent”, and
-notes left on it are not read by anyone. An agent that later uses the same name
-adopts a manual session.
+Because the container shares the host network, pages can reach dev servers on
+the host at `http://127.0.0.1:<port>` (`host.containers.internal` and
+`host.docker.internal` also resolve to loopback).
 
-## Layout
+## Operate
 
-```
-Containerfile          multi-stage image: Rust builder -> Playwright runtime
-compose.yaml           one service (host network, /data volume)
-config/lumen.toml      the only config file
-src/                   supervisor, cdp, capabilities, view, feedback, client, http
-ui/                    no-build viewer (ES modules + CSS), embedded in the binary
-systemd/lumen.service  the only unit
-bin/                   bootstrap, build/up/down, install, pw.sh, smoke
-skills/lumen/SKILL.md  opencode skill
-```
+| make target | what it does |
+| --- | --- |
+| `make up` / `make down` / `make restart` | start / stop / restart the service |
+| `make status` | container state, health, active sessions |
+| `make logs` | follow service logs |
+| `make shell` | shell inside the container |
+| `make build` | rebuild the image |
+| `make version` | show version and ports |
+| `make help` | every target, grouped |
 
-## Development
+Configuration lives in `config/lumen.toml`; `LUMEN_CONFIG`, `LUMEN_PORT`, and
+`LUMEN_CHROME` override it (see `.env.example`). The systemd user unit
+(`make install-systemd`) keeps the service running across logouts via linger.
+
+Upgrading:
 
 ```bash
-cargo test                     # unit tests
-cargo run --example spike      # drive a real Chromium and capture live frames
-bin/build.sh && bin/up.sh      # container image + service
-make ui-test                   # Playwright tests against Lumen
+git pull
+make build restart
 ```
 
-`make ui-test` starts a disposable local Lumen service when `LUMEN_URL` is not
-set. Set `LUMEN_URL` to test an already-running service. `LUMEN_CHROME` can
-point to the Chromium executable used by the disposable test service. The
-tests use the Playwright browser runner and exercise the rendered viewer, its WebSocket
-stream, navigation, control handoff, feedback annotation, and provenance UI.
+## Develop and test
+
+```bash
+make ci          # the exact CI gates, in CI order:
+                 #   fmt → clippy → Rust tests → release build → viewer E2E
+make test-unit   # Rust tests only
+make smoke       # black-box smoke test against the live service
+make ui-test     # Playwright E2E on a disposable service (port 18899)
+```
+
+Run a single Rust test with `cargo test <name-substring>`. For a single E2E
+test, set up the `make ui-test` environment once and run
+`npm run test:e2e -- -g "pattern"`. The E2E suite always targets its own
+disposable port so it can never mistake the production service for the code
+under test.
 
 ## Security
 
@@ -136,3 +156,18 @@ point instead.
 The audit trail (`GET /v1/audit`) records navigations, tab operations, raw CDP
 calls, and feedback that pass through Lumen's API. Actions an agent takes
 directly over CDP do not pass through Lumen and are not audited.
+
+## Layout
+
+```
+Containerfile          multi-stage image: Rust builder -> Playwright runtime
+compose.yaml           one service (host network, /data volume)
+config/lumen.toml      the only config file
+src/                   supervisor, cdp, capabilities, view, feedback, client, http
+ui/                    no-build viewer (ES modules + CSS), embedded in the binary
+tests/e2e/             Playwright suite (viewer, API, lifecycle)
+docs/                  screenshots and images
+systemd/lumen.service  the only unit
+bin/                   bootstrap, build/up/down, install, pw.sh, smoke
+skills/lumen/SKILL.md  opencode skill
+```
