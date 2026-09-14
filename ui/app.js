@@ -28,7 +28,9 @@ const state = {
   sessionsSig: null,
   sessionOrigin: null,
   reconnectTimer: null,
-  intentionalClose: false,
+  pollInFlight: false,
+  pollQueued: false,
+  pointerButton: null,
 };
 
 // --------------------------------------------------------------- utilities
@@ -51,7 +53,9 @@ async function api(path, options) {
     } catch {
       /* non-JSON error body */
     }
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
   }
   if (response.status === 204) return null;
   return response.json();
@@ -439,24 +443,50 @@ function clearReconnect() {
   }
 }
 
+function clearSession(name) {
+  if (state.session !== name) return;
+  clearReconnect();
+  if (state.ws) {
+    state.ws.onclose = null;
+    state.ws.close();
+  }
+  state.ws = null;
+  state.session = null;
+  state.sessionOrigin = null;
+  state.frame?.close();
+  state.frame = null;
+  canvas.dataset.frameReady = "false";
+  state.highlight = null;
+  el("cdp").textContent = "not connected";
+  el("attach").hidden = true;
+  el("spinner").hidden = true;
+  el("empty").hidden = false;
+  setControlsEnabled(false);
+  setState("empty");
+  setStatus("idle", "off");
+  markActive(null);
+}
+
 function scheduleReconnect(name) {
   clearReconnect();
   setStatus("reconnecting…", "warn");
   state.reconnectTimer = setTimeout(() => {
-    if (state.session === name) connect(name);
+    if (state.session === name) void connect(name);
   }, 1500);
 }
 
-function connect(name) {
+async function connect(name) {
   clearReconnect();
   if (state.ws) {
-    state.intentionalClose = true;
     state.ws.onclose = null;
     state.ws.close();
   }
+  state.ws = null;
   state.session = name;
+  state.sessionOrigin = null;
   state.frame?.close();
   state.frame = null;
+  canvas.dataset.frameReady = "false";
   state.fit = true;
   state.highlight = null;
   state.feedbackSig = null;
@@ -471,29 +501,42 @@ function connect(name) {
   markActive(name);
   loadFeedback();
 
-  api(sessionPath(name))
-    .then((info) => {
-      el("cdp").textContent = info.cdp_endpoint;
-      el("cdp").title = info.cdp_endpoint;
-      el("attach").textContent = `attach: bin/pw.sh -s=${name}`;
-      el("attach").hidden = false;
-      state.sessionOrigin = info.origin;
-      state.feedbackSig = null;
-      loadFeedback();
-    })
-    .catch(() => {});
+  let info;
+  try {
+    info = await api(sessionPath(name));
+  } catch (error) {
+    if (state.session !== name) return;
+    if (error.status === 404) {
+      clearSession(name);
+    } else {
+      scheduleReconnect(name);
+    }
+    return;
+  }
+  if (state.session !== name) return;
+
+  el("cdp").textContent = info.cdp_endpoint;
+  el("cdp").title = info.cdp_endpoint;
+  el("attach").textContent = `attach: bin/pw.sh -s=${name}`;
+  el("attach").hidden = false;
+  state.sessionOrigin = info.origin;
+  state.feedbackSig = null;
+  loadFeedback();
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}${sessionPath(name)}/stream`);
   ws.binaryType = "arraybuffer";
-  ws.onmessage = onServerMessage;
+  ws.onmessage = (event) => {
+    if (state.ws === ws) onServerMessage(event);
+  };
   ws.onopen = () => setControl("agent");
   ws.onerror = () => {};
   ws.onclose = () => {
+    if (state.ws !== ws) return;
+    state.ws = null;
     el("spinner").hidden = true;
     setControlsEnabled(false);
-    setStatus(state.intentionalClose ? "idle" : "disconnected", "off");
-    state.intentionalClose = false;
+    setStatus("disconnected", "off");
     if (state.session === name) scheduleReconnect(name);
   };
   state.ws = ws;
@@ -529,6 +572,9 @@ function onFrame(buffer) {
       state.frame = bitmap;
       state.frameW = bitmap.width;
       state.frameH = bitmap.height;
+      canvas.dataset.frameReady = "true";
+      canvas.dataset.frameWidth = String(bitmap.width);
+      canvas.dataset.frameHeight = String(bitmap.height);
       if (!el("spinner").hidden) {
         el("spinner").hidden = true;
         el("empty").hidden = true;
@@ -538,22 +584,34 @@ function onFrame(buffer) {
       }
       if (state.fit) fitView();
       else draw();
-      pollInfo();
     })
     .catch(() => {});
 }
 
 async function pollInfo() {
   if (!state.session) return;
+  if (state.pollInFlight) {
+    state.pollQueued = true;
+    return;
+  }
+  state.pollInFlight = true;
+  const session = state.session;
   try {
-    const tabs = await api(sessionPath(state.session) + "/tabs");
+    const tabs = await api(sessionPath(session) + "/tabs");
+    if (state.session !== session) return;
     const active = tabs.find((tab) => tab.active) || tabs[0];
     if (!active) return;
     if (document.activeElement !== el("url")) el("url").value = active.url || "";
     el("url").title = active.url || "";
     document.title = active.title ? `${active.title} · Lumen` : "Lumen";
-  } catch {
-    /* ignore transient tab errors */
+  } catch (error) {
+    if (error.status === 404) clearSession(session);
+  } finally {
+    state.pollInFlight = false;
+    if (state.pollQueued) {
+      state.pollQueued = false;
+      setTimeout(pollInfo, 0);
+    }
   }
 }
 
@@ -635,12 +693,13 @@ canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture(event.pointerId);
   if (state.control === "human") {
     const { x, y } = toPage(event.clientX, event.clientY);
+    state.pointerButton = event.button === 2 ? "right" : event.button === 1 ? "middle" : "left";
     send({
       type: "mouse",
       action: "down",
       x,
       y,
-      button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left",
+      button: state.pointerButton,
     });
   } else if (state.scale > 1) {
     state.panning = true;
@@ -664,8 +723,19 @@ canvas.addEventListener("pointerup", (event) => {
   canvas.releasePointerCapture(event.pointerId);
   if (state.control === "human") {
     const { x, y } = toPage(event.clientX, event.clientY);
-    send({ type: "mouse", action: "up", x, y, button: "left" });
+    send({ type: "mouse", action: "up", x, y, button: state.pointerButton || "left" });
   }
+  state.pointerButton = null;
+  state.panning = false;
+});
+
+canvas.addEventListener("pointercancel", (event) => {
+  canvas.releasePointerCapture(event.pointerId);
+  if (state.control === "human" && state.pointerButton) {
+    const { x, y } = toPage(event.clientX, event.clientY);
+    send({ type: "mouse", action: "up", x, y, button: state.pointerButton });
+  }
+  state.pointerButton = null;
   state.panning = false;
 });
 
