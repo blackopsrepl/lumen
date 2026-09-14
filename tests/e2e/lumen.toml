@@ -1,0 +1,15 @@
+host = "127.0.0.1"
+port = 8899
+max_agents = 8
+data_dir = "/tmp/lumen-e2e-agents"
+chrome_bin = "chromium"
+feedback_db = "/tmp/lumen-e2e-feedback.db"
+audit_retain = 100
+
+[default_viewport]
+width = 1024
+height = 768
+
+[policy]
+allow_hosts = []
+blocked_hosts = []

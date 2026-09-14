@@ -2,9 +2,10 @@
 SHELL := /usr/bin/env bash
 BIN := ./bin
 AGENT ?= default
+LUMEN_TEST_PORT ?= 18899
 
 .PHONY: help bootstrap install-host install-systemd install-skill build up down restart \
-        status logs shell pw feedback smoke test clean
+        status logs shell pw feedback smoke ui-test test clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -51,7 +52,12 @@ feedback: ## Read a session's feedback: make feedback AGENT=alice
 smoke: ## End-to-end smoke test
 	$(BIN)/smoke.sh
 
-test: smoke ## Alias for smoke
+ui-test: ## Browser-driven viewer end-to-end tests
+	npm ci
+	npx playwright install chromium
+	LUMEN_PORT=$(LUMEN_TEST_PORT) LUMEN_CHROME="$$(node -e 'console.log(require("playwright").chromium.executablePath())')" npm run test:e2e
+
+test: smoke ui-test ## Run smoke and browser-driven tests
 
 clean: ## Remove the image
 	-podman rmi localhost/lumen:$${LUMEN_VERSION:-0.1.0}

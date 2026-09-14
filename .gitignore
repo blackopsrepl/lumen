@@ -5,5 +5,8 @@
 /runtime/
 /data/
 /.workspace/
+/node_modules/
+/test-results/
+/playwright-report/
 .env
 *.log

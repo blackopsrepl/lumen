@@ -30,3 +30,6 @@ jobs:
 
       - name: Build
         run: cargo build --release --locked
+
+      - name: Viewer E2E
+        run: make ui-test
