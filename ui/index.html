@@ -18,6 +18,10 @@
         <button type="submit">Add</button>
       </form>
       <ul id="sessions"></ul>
+      <section id="feedback">
+        <header>Feedback <span id="feedback-count">0</span></header>
+        <ul id="feedback-list"></ul>
+      </section>
       <footer id="cdp"></footer>
     </aside>
 
@@ -32,11 +36,20 @@
         <button id="fit" title="Fit to window">Fit</button>
         <button id="one" title="Actual size">1:1</button>
         <button id="fullscreen" title="Fullscreen">⛶</button>
+        <button id="comment" title="Annotate a region">Comment</button>
         <button id="control" class="primary">Take control</button>
       </div>
       <div id="stage">
         <canvas id="screen"></canvas>
+        <canvas id="overlay"></canvas>
         <div id="empty">Select or create a session</div>
+        <div id="composer" hidden>
+          <textarea id="comment-text" placeholder="Leave a note for the agent…"></textarea>
+          <div class="composer-actions">
+            <button id="comment-send" class="primary">Send</button>
+            <button id="comment-cancel">Cancel</button>
+          </div>
+        </div>
       </div>
     </main>
 

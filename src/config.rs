@@ -22,6 +22,8 @@ pub struct Config {
     pub chrome_bin: String,
     /// Viewport every browser starts at, before any explicit override.
     pub default_viewport: Viewport,
+    /// SQLite database holding human feedback for each session.
+    pub feedback_db: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -43,6 +45,7 @@ impl Default for Config {
                 width: 1440,
                 height: 900,
             },
+            feedback_db: PathBuf::from("/data/feedback.db"),
         }
     }
 }

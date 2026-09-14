@@ -1,5 +1,6 @@
 use crate::cdp::{CdpSession, TabInfo};
 use crate::config::{Config, Viewport};
+use crate::feedback::{Feedback, FeedbackStore, Region};
 use crate::supervisor::{is_valid_agent_name, AgentInfo, Supervisor};
 use crate::view::{Control, ViewHub};
 use axum::body::Bytes;
@@ -26,15 +27,18 @@ struct UiAssets;
 pub struct AppState {
     pub config: Arc<Config>,
     pub supervisor: Arc<Supervisor>,
+    pub feedback: Arc<FeedbackStore>,
 }
 
 impl AppState {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> anyhow::Result<Self> {
+        let feedback = FeedbackStore::open(&config.feedback_db)?;
         let config = Arc::new(config);
-        Self {
+        Ok(Self {
             supervisor: Arc::new(Supervisor::new(config.clone())),
+            feedback: Arc::new(feedback),
             config,
-        }
+        })
     }
 }
 
@@ -62,6 +66,15 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{name}/screenshot", post(screenshot))
         .route("/v1/sessions/{name}/visibility", put(set_visibility))
         .route("/v1/sessions/{name}/page-scale", put(set_page_scale))
+        .route(
+            "/v1/sessions/{name}/feedback",
+            get(list_feedback).post(add_feedback),
+        )
+        .route("/v1/sessions/{name}/feedback/{id}/ack", post(ack_feedback))
+        .route(
+            "/v1/sessions/{name}/feedback/ack-all",
+            post(ack_all_feedback),
+        )
         .with_state(state)
 }
 
@@ -264,6 +277,64 @@ async fn set_page_scale(
     }
     let agent = state.supervisor.ensure(&name).await?;
     agent.session.set_page_scale(body.scale).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct FeedbackQuery {
+    #[serde(default)]
+    pending: bool,
+}
+
+async fn list_feedback(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(query): Query<FeedbackQuery>,
+) -> Result<Json<Vec<Feedback>>, ApiError> {
+    if !is_valid_agent_name(&name) {
+        return Err(ApiError::bad_request("invalid agent name"));
+    }
+    Ok(Json(state.feedback.list(&name, query.pending).await?))
+}
+
+#[derive(Deserialize)]
+struct FeedbackBody {
+    comment: String,
+    #[serde(default)]
+    region: Option<Region>,
+}
+
+async fn add_feedback(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<FeedbackBody>,
+) -> Result<Json<Feedback>, ApiError> {
+    if !is_valid_agent_name(&name) {
+        return Err(ApiError::bad_request("invalid agent name"));
+    }
+    if body.comment.trim().is_empty() {
+        return Err(ApiError::bad_request("comment must not be empty"));
+    }
+    let feedback = state
+        .feedback
+        .add(&name, "human", body.comment.trim(), body.region)
+        .await?;
+    Ok(Json(feedback))
+}
+
+async fn ack_feedback(
+    State(state): State<AppState>,
+    Path((name, id)): Path<(String, i64)>,
+) -> Result<StatusCode, ApiError> {
+    state.feedback.ack(&name, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn ack_all_feedback(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    state.feedback.ack_all(&name).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

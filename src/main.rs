@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to bind {addr}"))?;
 
-    axum::serve(listener, http::router(AppState::new(config)))
+    axum::serve(listener, http::router(AppState::new(config)?))
         .await
         .context("http server failed")?;
     Ok(())

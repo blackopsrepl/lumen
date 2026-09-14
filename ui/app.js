@@ -1,8 +1,10 @@
 const el = (id) => document.getElementById(id);
 
 const canvas = el("screen");
+const overlay = el("overlay");
 const stage = el("stage");
 const ctx = canvas.getContext("2d");
+const octx = overlay.getContext("2d");
 const dpr = window.devicePixelRatio || 1;
 
 const state = {
@@ -18,6 +20,10 @@ const state = {
   fit: true,
   panning: false,
   last: { x: 0, y: 0 },
+  annotating: false,
+  drawStart: null,
+  drawEnd: null,
+  feedbackSig: null,
 };
 
 function send(message) {
@@ -34,7 +40,10 @@ function resizeCanvas() {
   const { w, h } = stageSize();
   canvas.width = Math.max(1, Math.round(w * dpr));
   canvas.height = Math.max(1, Math.round(h * dpr));
+  overlay.width = canvas.width;
+  overlay.height = canvas.height;
   draw();
+  drawOverlay();
 }
 
 function draw() {
@@ -111,6 +120,111 @@ function setControl(owner) {
   button.classList.toggle("human", controlling);
 }
 
+function drawOverlay() {
+  const { w, h } = stageSize();
+  octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  octx.clearRect(0, 0, w, h);
+  if (!state.drawStart || !state.drawEnd) return;
+  const x = Math.min(state.drawStart.x, state.drawEnd.x);
+  const y = Math.min(state.drawStart.y, state.drawEnd.y);
+  const width = Math.abs(state.drawEnd.x - state.drawStart.x);
+  const height = Math.abs(state.drawEnd.y - state.drawStart.y);
+  octx.fillStyle = "rgba(94, 234, 212, 0.15)";
+  octx.strokeStyle = "#5eead4";
+  octx.lineWidth = 1.5;
+  octx.fillRect(x, y, width, height);
+  octx.strokeRect(x, y, width, height);
+}
+
+function setAnnotating(on) {
+  state.annotating = on;
+  document.body.classList.toggle("annotating", on);
+  el("comment").classList.toggle("active", on);
+  if (!on) {
+    state.drawStart = null;
+    state.drawEnd = null;
+    el("composer").hidden = true;
+    drawOverlay();
+  }
+}
+
+function overlayPos(event) {
+  const rect = overlay.getBoundingClientRect();
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+}
+
+function currentRegion() {
+  if (!state.drawStart || !state.drawEnd) return null;
+  const toPageLocal = (point) => ({
+    x: (point.x - state.ox) / state.scale,
+    y: (point.y - state.oy) / state.scale,
+  });
+  const a = toPageLocal(state.drawStart);
+  const b = toPageLocal(state.drawEnd);
+  return {
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    width: Math.abs(a.x - b.x),
+    height: Math.abs(a.y - b.y),
+    scale: state.scale,
+  };
+}
+
+async function sendComment() {
+  const comment = el("comment-text").value.trim();
+  if (!comment || !state.session) return;
+  await fetch(`/v1/sessions/${encodeURIComponent(state.session)}/feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ comment, region: currentRegion() }),
+  });
+  el("comment-text").value = "";
+  setAnnotating(false);
+  loadFeedback();
+}
+
+async function loadFeedback() {
+  if (!state.session) return;
+  const items = await fetch(
+    `/v1/sessions/${encodeURIComponent(state.session)}/feedback?pending=true`,
+  )
+    .then((r) => r.json())
+    .catch(() => []);
+  el("feedback-count").textContent = items.length;
+
+  const signature = items.map((item) => item.id).join(",");
+  if (signature === state.feedbackSig) return;
+  state.feedbackSig = signature;
+
+  const list = el("feedback-list");
+  list.replaceChildren();
+  if (!items.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "No pending notes";
+    list.append(li);
+    return;
+  }
+  for (const item of items) {
+    const li = document.createElement("li");
+    const comment = document.createElement("span");
+    comment.className = "comment";
+    comment.textContent = item.comment;
+    const resolve = document.createElement("button");
+    resolve.textContent = "Resolve";
+    resolve.onclick = async () => {
+      await fetch(
+        `/v1/sessions/${encodeURIComponent(state.session)}/feedback/${item.id}/ack`,
+        { method: "POST" },
+      );
+      state.feedbackSig = null;
+      loadFeedback();
+    };
+    li.append(comment, resolve);
+    list.append(li);
+  }
+}
+
 function onFrame(buffer) {
   createImageBitmap(new Blob([buffer], { type: "image/jpeg" })).then((bitmap) => {
     if (state.frame) state.frame.close();
@@ -147,7 +261,10 @@ function connect(name) {
   state.fit = true;
   el("empty").hidden = true;
   el("cdp").textContent = "";
+  setAnnotating(false);
+  state.feedbackSig = null;
   markActive(name);
+  loadFeedback();
 
   fetch(`/v1/sessions/${encodeURIComponent(name)}`)
     .then((r) => (r.ok ? r.json() : null))
@@ -308,6 +425,41 @@ window.addEventListener("resize", () => {
   if (state.fit) fitView();
 });
 
+overlay.addEventListener("pointerdown", (event) => {
+  if (!state.annotating) return;
+  overlay.setPointerCapture(event.pointerId);
+  state.drawStart = overlayPos(event);
+  state.drawEnd = state.drawStart;
+  drawOverlay();
+});
+
+overlay.addEventListener("pointermove", (event) => {
+  if (!state.annotating || !state.drawStart) return;
+  state.drawEnd = overlayPos(event);
+  drawOverlay();
+});
+
+overlay.addEventListener("pointerup", (event) => {
+  if (!state.annotating || !state.drawStart) return;
+  state.drawEnd = overlayPos(event);
+  drawOverlay();
+  const region = currentRegion();
+  if (region && region.width > 8 && region.height > 8) {
+    el("composer").hidden = false;
+    el("comment-text").focus();
+  }
+});
+
+el("comment").onclick = () => setAnnotating(!state.annotating);
+el("comment-send").onclick = sendComment;
+el("comment-cancel").onclick = () => setAnnotating(false);
+el("comment-text").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) sendComment();
+});
+
 resizeCanvas();
 loadSessions();
 setInterval(loadSessions, 5000);
+setInterval(() => {
+  if (state.session) loadFeedback();
+}, 4000);
