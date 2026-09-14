@@ -1,5 +1,9 @@
+# Build output
+/target/
+
 # Runtime state, never committed.
-.workspace/
-data/
+/runtime/
+/data/
+/.workspace/
 .env
 *.log
