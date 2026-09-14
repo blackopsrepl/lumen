@@ -14,7 +14,7 @@ cargo build --release --locked
 make ui-test
 ```
 
-Keep `Cargo.lock` in sync — CI builds `--locked`. Run the same order locally before committing.
+Keep `Cargo.lock` in sync — CI builds `--locked`. Run the same order locally before committing, or just `make ci`, which mirrors it.
 
 - Single Rust test: `cargo test host_matching_ignores` (name substring).
 - Single E2E test: set the env from `make ui-test`, then `npm run test:e2e -- -g "pattern"`.
