@@ -59,6 +59,9 @@ creates from the viewer has no agent and its feedback goes unread — use
 ## Notes
 
 - Sessions are isolated per agent; do not drive another agent's `-s=` name.
+- If a navigation fails with `net::ERR_BLOCKED_BY_CLIENT`, Lumen's navigation
+  host policy (`[policy]` in `config/lumen.toml`) blocked that host. Ask the
+  human to allow it if the page should be reachable.
 - The viewer is for the human, not for you. It is always served by the service.
 - If `pw.sh` reports the CLI is missing: `$PW/install-host.sh`.
 - If the service is down: `$PW/status.sh`, then `$PW/up.sh`.

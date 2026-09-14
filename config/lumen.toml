@@ -10,6 +10,10 @@ audit_retain = 10000
 width = 1440
 height = 900
 
+# Navigation host policy. Enforced per tab, inside the browser, on every tab
+# Lumen mediates (creates, activates, or adopts while switching) — regardless
+# of which CDP session drives the tab. Tabs an agent creates without Lumen's
+# API are not checked until Lumen's API touches them.
 [policy]
 allow_hosts = []
 blocked_hosts = []

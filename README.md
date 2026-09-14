@@ -119,9 +119,20 @@ allow_hosts = []          # empty = every host; ".example.com" matches subdomain
 blocked_hosts = ["evil.test"]
 ```
 
-Lumen rejects disallowed navigations with `403` and records every navigation,
-raw CDP call, and feedback note in an audit trail (`GET /v1/audit`).
+How it is enforced: per tab, inside the browser. Lumen installs a navigation
+check on every tab it mediates — creates, activates, or adopts while switching.
+Any document navigation on such a tab is checked no matter which session issues
+it: Lumen's API, an agent's own `playwright-cli` connection over CDP, or a
+redirect. Navigations through Lumen's API answer `403`; the same blocked
+navigation driven directly over CDP surfaces in the browser as
+`net::ERR_BLOCKED_BY_CLIENT`.
 
-Known boundary: the policy governs Lumen's own navigate/tab APIs. An agent that
-attaches `playwright-cli` straight to the browser over CDP bypasses it; make
-the browser's own network the enforcement point if that matters.
+Coverage boundary: a tab an agent creates entirely outside Lumen's API is not
+checked until Lumen's API touches it. The policy bounds Lumen-mediated browsing;
+it is not a sandbox for an agent's direct browser control. If the whole browser
+must be bounded regardless of who drives it, make the network the enforcement
+point instead.
+
+The audit trail (`GET /v1/audit`) records navigations, tab operations, raw CDP
+calls, and feedback that pass through Lumen's API. Actions an agent takes
+directly over CDP do not pass through Lumen and are not audited.

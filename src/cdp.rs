@@ -465,6 +465,10 @@ impl CdpSession {
         anyhow::bail!("CDP socket closed before a response")
     }
 
+    /// Give a tab Lumen is about to mediate a navigation-policy guard, so
+    /// every document navigation on it is checked regardless of which CDP
+    /// session issues it. Idempotent per target: if a guard already exists,
+    /// the duplicate task is discarded.
     async fn ensure_policy_guard(&self, page: &Page) -> Result<()> {
         let Some(guard) =
             install_navigation_policy(page, &self.policy, self.blocked_navigation.clone()).await?
@@ -482,6 +486,7 @@ impl CdpSession {
         Ok(())
     }
 
+    /// Stop a closed tab's guard so its interception task does not leak.
     async fn remove_policy_guard(&self, target_id: &str) {
         if let Some(guard) = self.policy_guards.lock().await.remove(target_id) {
             guard.abort();
@@ -500,6 +505,20 @@ impl CdpSession {
     }
 }
 
+/// Install the per-tab enforcement of the navigation policy for one target.
+///
+/// A `Fetch.enable` interception (document requests, request stage) pauses
+/// every document navigation on this target — including navigations issued by
+/// other CDP sessions, such as an agent's own playwright connection — and
+/// continues or fails each one according to `policy.check`. Blocked
+/// navigations surface in the browser as `net::ERR_BLOCKED_BY_CLIENT`; the
+/// URL is also published through `blocked_navigation` so Lumen's own
+/// navigate API can answer `403`.
+///
+/// The returned task must stay alive for the interception to be answered;
+/// callers keep it in `policy_guards` keyed by target id and abort it when
+/// the tab closes. Returns `None` for an unrestricted policy, leaving the
+/// tab unintercepted.
 async fn install_navigation_policy(
     page: &Page,
     policy: &crate::config::Policy,

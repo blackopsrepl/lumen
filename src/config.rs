@@ -35,6 +35,13 @@ pub struct Config {
 /// An empty `allow_hosts` permits every host; otherwise only listed hosts are
 /// reachable. `blocked_hosts` always wins. Entries beginning with `.` match a
 /// domain suffix (`.example.com` allows `api.example.com`).
+///
+/// [`Policy::check`] is the single predicate behind both enforcement points:
+/// Lumen's HTTP preflight and the per-tab CDP interception in
+/// [`crate::cdp::install_navigation_policy`]. The interception covers every
+/// tab Lumen mediates, so navigations there are checked no matter which CDP
+/// session issues them. Tabs created without Lumen's API are not intercepted
+/// until Lumen's API touches them; this policy is not a browser-wide sandbox.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
