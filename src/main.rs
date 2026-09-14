@@ -1,8 +1,5 @@
-mod config;
-mod http;
-
 use anyhow::Context;
-use config::Config;
+use lumen::{config::Config, http};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
