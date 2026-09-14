@@ -82,7 +82,8 @@ async fn main() -> Result<()> {
 
     let mut frames = agent
         .session
-        .page
+        .current_page()
+        .await
         .event_listener::<EventScreencastFrame>()
         .await?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
@@ -94,7 +95,7 @@ async fn main() -> Result<()> {
     save_frame(&agent.session, &out_dir, 0, &first).await?;
 
     for (index, script) in MUTATIONS.iter().enumerate() {
-        agent.session.page.evaluate(*script).await?;
+        agent.session.current_page().await.evaluate(*script).await?;
         let frame = tokio::time::timeout_at(deadline, frames.next())
             .await
             .with_context(|| format!("waiting for frame {} after a mutation", index + 1))?
@@ -105,7 +106,8 @@ async fn main() -> Result<()> {
     agent.session.click(80.0, 100.0).await?;
     let title = agent
         .session
-        .page
+        .current_page()
+        .await
         .evaluate("document.title")
         .await?
         .value()

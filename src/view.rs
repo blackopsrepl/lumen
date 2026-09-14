@@ -24,7 +24,8 @@ pub enum Control {
 pub struct ViewHub {
     session: Arc<CdpSession>,
     frames: broadcast::Sender<Arc<Vec<u8>>>,
-    started: AtomicBool,
+    started: Arc<AtomicBool>,
+    lifecycle: Mutex<()>,
     pump: Mutex<Option<JoinHandle<()>>>,
     control: Mutex<Control>,
 }
@@ -35,7 +36,8 @@ impl ViewHub {
         Self {
             session,
             frames,
-            started: AtomicBool::new(false),
+            started: Arc::new(AtomicBool::new(false)),
+            lifecycle: Mutex::new(()),
             pump: Mutex::new(None),
             control: Mutex::new(Control::Agent),
         }
@@ -43,8 +45,9 @@ impl ViewHub {
 
     /// Join the frame stream, starting the screencast if this is the first viewer.
     pub async fn subscribe(&self) -> broadcast::Receiver<Arc<Vec<u8>>> {
+        let receiver = self.frames.subscribe();
         self.ensure_started().await;
-        self.frames.subscribe()
+        receiver
     }
 
     /// Turn the screencast on or off. Off frees the browser from encoding frames
@@ -53,12 +56,19 @@ impl ViewHub {
         if visible {
             self.ensure_started().await;
         } else {
-            self.started.store(false, Ordering::SeqCst);
-            if let Some(pump) = self.pump.lock().await.take() {
-                pump.abort();
-            }
-            let _ = self.session.stop_screencast().await;
+            let _lifecycle = self.lifecycle.lock().await;
+            self.stop_locked().await;
         }
+    }
+
+    /// Rebind the screencast to the currently active page after a tab switch.
+    pub async fn rebind(&self) {
+        let _lifecycle = self.lifecycle.lock().await;
+        if !self.started.load(Ordering::SeqCst) {
+            return;
+        }
+        self.stop_locked().await;
+        self.start_locked().await;
     }
 
     pub async fn control(&self) -> Control {
@@ -70,29 +80,30 @@ impl ViewHub {
     }
 
     async fn ensure_started(&self) {
-        if self.started.swap(true, Ordering::SeqCst) {
+        let _lifecycle = self.lifecycle.lock().await;
+        if self.started.load(Ordering::SeqCst) {
             return;
         }
+        self.start_locked().await;
+    }
 
-        let mut stream = match self
-            .session
-            .page
-            .event_listener::<EventScreencastFrame>()
-            .await
-        {
+    async fn start_locked(&self) {
+        let page = self.session.current_page().await;
+        let mut stream = match page.event_listener::<EventScreencastFrame>().await {
             Ok(stream) => stream,
             Err(err) => {
                 tracing::warn!("screencast listener failed: {err}");
                 return;
             }
         };
-        if let Err(err) = self.session.start_screencast().await {
+        if let Err(err) = self.session.start_screencast_on(&page).await {
             tracing::warn!("starting screencast failed: {err}");
             return;
         }
 
         let session = self.session.clone();
         let frames = self.frames.clone();
+        let started = self.started.clone();
         let pump = tokio::spawn(async move {
             while let Some(frame) = stream.next().await {
                 let encoded: &str = frame.data.as_ref();
@@ -102,9 +113,19 @@ impl ViewHub {
                     }
                     Err(err) => tracing::warn!("screencast frame decode failed: {err}"),
                 }
-                let _ = session.ack_frame(frame.session_id).await;
+                let _ = session.ack_frame_on(&page, frame.session_id).await;
             }
+            started.store(false, Ordering::SeqCst);
         });
+        self.started.store(true, Ordering::SeqCst);
         *self.pump.lock().await = Some(pump);
+    }
+
+    async fn stop_locked(&self) {
+        self.started.store(false, Ordering::SeqCst);
+        if let Some(pump) = self.pump.lock().await.take() {
+            pump.abort();
+        }
+        let _ = self.session.stop_screencast().await;
     }
 }

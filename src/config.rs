@@ -52,14 +52,23 @@ pub fn url_host(url: &str) -> Option<String> {
 }
 
 fn host_matches(host: &str, entry: &str) -> bool {
+    let host = host.trim_end_matches('.');
+    let entry = entry.trim().trim_end_matches('.');
     if let Some(suffix) = entry.strip_prefix('.') {
-        host == suffix || host.ends_with(&format!(".{suffix}"))
+        host.eq_ignore_ascii_case(suffix)
+            || host
+                .to_ascii_lowercase()
+                .ends_with(&format!(".{}", suffix.to_ascii_lowercase()))
     } else {
-        host == entry
+        host.eq_ignore_ascii_case(entry)
     }
 }
 
 impl Policy {
+    pub fn is_restricted(&self) -> bool {
+        !self.allow_hosts.is_empty() || !self.blocked_hosts.is_empty()
+    }
+
     /// Reject a navigation that the policy forbids. Non-http(s) URLs (data:,
     /// about:, file: …) are allowed through, since they cannot reach a host.
     pub fn check(&self, url: &str) -> anyhow::Result<()> {
@@ -107,15 +116,26 @@ impl Config {
     pub fn load() -> Result<Self> {
         let path =
             std::env::var("LUMEN_CONFIG").unwrap_or_else(|_| "config/lumen.toml".to_string());
-        match std::fs::read_to_string(&path) {
+        let mut config = match std::fs::read_to_string(&path) {
             Ok(text) => {
                 let config: Config =
                     toml::from_str(&text).with_context(|| format!("invalid config at {path}"))?;
-                Ok(config)
+                config
             }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-            Err(err) => Err(err).with_context(|| format!("failed to read {path}")),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Config::default(),
+            Err(err) => return Err(err).with_context(|| format!("failed to read {path}")),
+        };
+
+        if let Ok(port) = std::env::var("LUMEN_PORT") {
+            config.port = port
+                .parse()
+                .with_context(|| format!("invalid LUMEN_PORT '{port}'"))?;
         }
+        if let Ok(chrome_bin) = std::env::var("LUMEN_CHROME") {
+            config.chrome_bin = chrome_bin;
+        }
+
+        Ok(config)
     }
 
     pub fn bind_addr(&self) -> SocketAddr {
@@ -158,5 +178,31 @@ mod tests {
         };
         assert!(policy.check("https://anything.test/").is_ok());
         assert!(policy.check("https://blocked.test/").is_err());
+    }
+
+    #[test]
+    fn restriction_is_detected_from_either_host_list() {
+        assert!(!Policy::default().is_restricted());
+        assert!(Policy {
+            allow_hosts: vec!["example.com".into()],
+            blocked_hosts: vec![],
+        }
+        .is_restricted());
+        assert!(Policy {
+            allow_hosts: vec![],
+            blocked_hosts: vec!["evil.test".into()],
+        }
+        .is_restricted());
+    }
+
+    #[test]
+    fn host_matching_ignores_dns_case_and_trailing_dots() {
+        let policy = Policy {
+            allow_hosts: vec!["Example.COM.".into()],
+            blocked_hosts: vec![".Evil.TEST.".into()],
+        };
+        assert!(policy.check("https://example.com./").is_ok());
+        assert!(policy.check("https://evil.test./").is_err());
+        assert!(policy.check("https://api.eViL.TeSt/").is_err());
     }
 }

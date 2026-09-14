@@ -18,7 +18,7 @@ pub struct Supervisor {
     agents: Mutex<HashMap<String, Arc<AgentBrowser>>>,
 }
 
-/// One isolated Chromium and the CDP session bound to its shared page.
+/// One isolated Chromium and the CDP session bound to its managed page.
 pub struct AgentBrowser {
     pub name: String,
     /// Loopback HTTP endpoint (`http://127.0.0.1:<port>`) that both the agent's
@@ -95,6 +95,7 @@ impl Supervisor {
             bail!("invalid agent name '{name}' (use [A-Za-z0-9._-], 1-32 chars)");
         }
 
+        self.reap_dead().await;
         let mut agents = self.agents.lock().await;
         if let Some(existing) = agents.get(name).cloned() {
             if let Some((origin, owner)) = provenance {
@@ -123,12 +124,25 @@ impl Supervisor {
     }
 
     pub async fn list(&self) -> Vec<AgentInfo> {
+        self.reap_dead().await;
         let agents: Vec<Arc<AgentBrowser>> = self.agents.lock().await.values().cloned().collect();
         let mut out = Vec::with_capacity(agents.len());
         for agent in agents {
             out.push(agent.info().await);
         }
         out
+    }
+
+    /// Return a running session without creating one.
+    pub async fn existing(&self, name: &str) -> Option<Arc<AgentBrowser>> {
+        let mut agents = self.agents.lock().await;
+        let agent = agents.get(name).cloned()?;
+        if agent.is_alive().await {
+            return Some(agent);
+        }
+        agents.remove(name);
+        agent.shutdown().await;
+        None
     }
 
     /// Stop and forget a session's browser. Returns whether it existed.
@@ -180,7 +194,8 @@ impl Supervisor {
         let port = discover_port(stderr).await?;
         let cdp_endpoint = format!("http://127.0.0.1:{port}");
 
-        let session = CdpSession::connect(&cdp_endpoint).await?;
+        let session =
+            CdpSession::connect_with_policy(&cdp_endpoint, self.config.policy.clone()).await?;
         session
             .set_viewport(viewport.width, viewport.height)
             .await?;
@@ -199,9 +214,34 @@ impl Supervisor {
             child: Mutex::new(child),
         }))
     }
+
+    async fn reap_dead(&self) {
+        let mut agents = self.agents.lock().await;
+        let names: Vec<String> = agents.keys().cloned().collect();
+        let mut dead = Vec::new();
+        for name in names {
+            if let Some(agent) = agents.get(&name) {
+                if !agent.is_alive().await {
+                    dead.push(name);
+                }
+            }
+        }
+        for name in dead {
+            if let Some(agent) = agents.remove(&name) {
+                agent.shutdown().await;
+            }
+        }
+    }
 }
 
 impl AgentBrowser {
+    pub async fn is_alive(&self) -> bool {
+        if !self.session.is_alive() {
+            return false;
+        }
+        matches!(self.child.lock().await.try_wait(), Ok(None))
+    }
+
     /// Stop this agent's Chromium.
     pub async fn shutdown(&self) {
         let _ = self.child.lock().await.kill().await;
@@ -240,6 +280,8 @@ fn parse_devtools_port(line: &str) -> Option<u16> {
 /// Whether a session name is safe to use as a profile directory and URL path.
 pub fn is_valid_agent_name(name: &str) -> bool {
     !name.is_empty()
+        && name != "."
+        && name != ".."
         && name.len() <= 32
         && name
             .chars()
@@ -265,6 +307,8 @@ mod tests {
         assert!(!is_valid_agent_name(""));
         assert!(!is_valid_agent_name("has space"));
         assert!(!is_valid_agent_name("slash/name"));
+        assert!(!is_valid_agent_name("."));
+        assert!(!is_valid_agent_name(".."));
         assert!(!is_valid_agent_name(&"a".repeat(33)));
     }
 }

@@ -1,4 +1,4 @@
-use crate::cdp::{CdpSession, TabInfo};
+use crate::cdp::{CdpSession, NavigationBlocked, OnlyManagedTab, TabInfo};
 use crate::config::{Config, Viewport};
 use crate::feedback::{AuditEntry, Feedback, FeedbackStore, Region};
 use crate::supervisor::{is_valid_agent_name, AgentInfo, Origin, Supervisor};
@@ -147,14 +147,27 @@ async fn get_session(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<AgentInfo>, ApiError> {
-    Ok(Json(ensure(&state, &name).await?))
+    if !is_valid_agent_name(&name) {
+        return Err(ApiError::bad_request("invalid agent name"));
+    }
+    let agent = state
+        .supervisor
+        .existing(&name)
+        .await
+        .ok_or_else(|| ApiError::not_found(format!("session '{name}' not found")))?;
+    Ok(Json(agent.info().await))
 }
 
 async fn delete_session(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    state.supervisor.remove(&name).await;
+    if !is_valid_agent_name(&name) {
+        return Err(ApiError::bad_request("invalid agent name"));
+    }
+    if !state.supervisor.remove(&name).await {
+        return Err(ApiError::not_found(format!("session '{name}' not found")));
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -174,7 +187,12 @@ async fn navigate(
         .check(&body.url)
         .map_err(|err| ApiError::forbidden(err.to_string()))?;
     let agent = state.supervisor.ensure(&name).await?;
-    agent.session.goto(&body.url).await?;
+    if let Err(err) = agent.session.goto(&body.url).await {
+        if err.downcast_ref::<NavigationBlocked>().is_some() {
+            return Err(ApiError::forbidden(err.to_string()));
+        }
+        return Err(err.into());
+    }
     if let Err(err) = state.feedback.record(&name, "navigate", &body.url).await {
         tracing::warn!("audit write failed: {err}");
     }
@@ -210,21 +228,18 @@ async fn reset_viewport(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn ensure(state: &AppState, name: &str) -> Result<AgentInfo, ApiError> {
-    if !is_valid_agent_name(name) {
-        return Err(ApiError::bad_request(
-            "invalid agent name (use [A-Za-z0-9._-], 1-32 chars)",
-        ));
-    }
-    let agent = state.supervisor.ensure(name).await?;
-    Ok(agent.info().await)
-}
-
 async fn list_tabs(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<Vec<TabInfo>>, ApiError> {
-    let agent = state.supervisor.ensure(&name).await?;
+    if !is_valid_agent_name(&name) {
+        return Err(ApiError::bad_request("invalid agent name"));
+    }
+    let agent = state
+        .supervisor
+        .existing(&name)
+        .await
+        .ok_or_else(|| ApiError::not_found(format!("session '{name}' not found")))?;
     Ok(Json(agent.session.tabs().await?))
 }
 
@@ -249,7 +264,13 @@ async fn open_tab(
         .check(&body.url)
         .map_err(|err| ApiError::forbidden(err.to_string()))?;
     let agent = state.supervisor.ensure(&name).await?;
-    agent.session.open_tab(&body.url).await?;
+    if let Err(err) = agent.session.open_tab(&body.url).await {
+        if err.downcast_ref::<NavigationBlocked>().is_some() {
+            return Err(ApiError::forbidden(err.to_string()));
+        }
+        return Err(err.into());
+    }
+    agent.view.rebind().await;
     if let Err(err) = state.feedback.record(&name, "open_tab", &body.url).await {
         tracing::warn!("audit write failed: {err}");
     }
@@ -261,7 +282,10 @@ async fn activate_tab(
     Path((name, index)): Path<(String, usize)>,
 ) -> Result<StatusCode, ApiError> {
     let agent = state.supervisor.ensure(&name).await?;
-    agent.session.activate_tab(index).await?;
+    if !agent.session.activate_tab(index).await? {
+        return Err(ApiError::not_found(format!("tab {index} not found")));
+    }
+    agent.view.rebind().await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -270,7 +294,20 @@ async fn close_tab(
     Path((name, index)): Path<(String, usize)>,
 ) -> Result<StatusCode, ApiError> {
     let agent = state.supervisor.ensure(&name).await?;
-    agent.session.close_tab(index).await?;
+    match agent.session.close_tab(index).await {
+        Ok(Some(changed)) => {
+            if changed {
+                agent.view.rebind().await;
+            }
+        }
+        Ok(None) => {
+            return Err(ApiError::not_found(format!("tab {index} not found")));
+        }
+        Err(err) if err.downcast_ref::<OnlyManagedTab>().is_some() => {
+            return Err(ApiError::conflict(err.to_string()));
+        }
+        Err(err) => return Err(err.into()),
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -437,12 +474,9 @@ async fn stream(
 }
 
 async fn stream_session(socket: WebSocket, state: AppState, name: String) {
-    let agent = match state.supervisor.ensure(&name).await {
-        Ok(agent) => agent,
-        Err(err) => {
-            tracing::warn!("stream for '{name}' failed: {err:#}");
-            return;
-        }
+    let Some(agent) = state.supervisor.existing(&name).await else {
+        tracing::debug!("stream for absent session '{name}'");
+        return;
     };
     let hub: Arc<ViewHub> = agent.view.clone();
     let session: Arc<CdpSession> = agent.session.clone();
@@ -602,6 +636,8 @@ fn error_event(message: String) -> Message {
 pub enum ApiError {
     BadRequest(String),
     Forbidden(String),
+    NotFound(String),
+    Conflict(String),
     Internal(anyhow::Error),
 }
 
@@ -612,6 +648,14 @@ impl ApiError {
 
     fn forbidden(message: impl Into<String>) -> Self {
         Self::Forbidden(message.into())
+    }
+
+    fn not_found(message: impl Into<String>) -> Self {
+        Self::NotFound(message.into())
+    }
+
+    fn conflict(message: impl Into<String>) -> Self {
+        Self::Conflict(message.into())
     }
 }
 
@@ -626,6 +670,8 @@ impl IntoResponse for ApiError {
         let (status, message) = match self {
             ApiError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
             ApiError::Forbidden(message) => (StatusCode::FORBIDDEN, message),
+            ApiError::NotFound(message) => (StatusCode::NOT_FOUND, message),
+            ApiError::Conflict(message) => (StatusCode::CONFLICT, message),
             ApiError::Internal(err) => {
                 tracing::warn!("control-plane error: {err:#}");
                 (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())

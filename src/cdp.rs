@@ -3,9 +3,13 @@ use base64::Engine as _;
 use chromiumoxide::cdp::browser_protocol::emulation::{
     SetDeviceMetricsOverrideParams, SetPageScaleFactorParams,
 };
+use chromiumoxide::cdp::browser_protocol::fetch::{
+    self, ContinueRequestParams, EventRequestPaused, FailRequestParams,
+};
 use chromiumoxide::cdp::browser_protocol::input::{
     DispatchMouseEventParams, DispatchMouseEventType, InsertTextParams, MouseButton,
 };
+use chromiumoxide::cdp::browser_protocol::network::{ErrorReason, ResourceType};
 use chromiumoxide::cdp::browser_protocol::page::{
     CaptureScreenshotFormat, CaptureScreenshotParams, EnableParams, ScreencastFrameAckParams,
     StartScreencastFormat, StartScreencastParams, StopScreencastParams,
@@ -13,7 +17,11 @@ use chromiumoxide::cdp::browser_protocol::page::{
 use chromiumoxide::{Browser, Page};
 use futures::{SinkExt, StreamExt};
 use serde::Serialize;
+use std::collections::hash_map::{Entry, HashMap};
+use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -27,28 +35,67 @@ pub struct TabInfo {
     pub active: bool,
 }
 
-/// A live CDP connection to one agent's Chromium, bound to a single shared page.
+/// A live CDP connection to one agent's Chromium, bound to one managed page.
 ///
-/// The page is the one the agent drives; the view plane screencasts this same
-/// page, so the human and the agent never diverge onto different tabs.
+/// The managed page is the one the view plane screencasts and the control plane
+/// drives. Tab activation replaces it so those planes stay together.
 pub struct CdpSession {
     pub browser: Browser,
-    pub page: Page,
+    page: RwLock<Page>,
     handler: JoinHandle<()>,
+    handler_alive: Arc<AtomicBool>,
+    policy: crate::config::Policy,
+    policy_guards: Mutex<HashMap<String, JoinHandle<()>>>,
+    navigation: Mutex<()>,
+    blocked_navigation: Arc<Mutex<Option<String>>>,
 }
+
+#[derive(Debug)]
+pub struct NavigationBlocked {
+    pub url: String,
+}
+
+impl fmt::Display for NavigationBlocked {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "navigation blocked by policy: {}", self.url)
+    }
+}
+
+impl std::error::Error for NavigationBlocked {}
+
+#[derive(Debug)]
+pub struct OnlyManagedTab;
+
+impl fmt::Display for OnlyManagedTab {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("cannot close the only managed tab")
+    }
+}
+
+impl std::error::Error for OnlyManagedTab {}
 
 impl CdpSession {
     pub async fn connect(endpoint: &str) -> Result<Arc<Self>> {
+        Self::connect_with_policy(endpoint, crate::config::Policy::default()).await
+    }
+
+    pub async fn connect_with_policy(
+        endpoint: &str,
+        policy: crate::config::Policy,
+    ) -> Result<Arc<Self>> {
         let (browser, mut handler) = Browser::connect(endpoint.to_string())
             .await
             .with_context(|| format!("connecting to CDP at {endpoint}"))?;
 
+        let handler_alive = Arc::new(AtomicBool::new(true));
+        let handler_status = handler_alive.clone();
         let handler = tokio::spawn(async move {
             while let Some(event) = handler.next().await {
                 if let Err(err) = event {
                     tracing::debug!("cdp handler error: {err}");
                 }
             }
+            handler_status.store(false, Ordering::SeqCst);
         });
 
         // Keep exactly one page so the viewer, the agent's `playwright-cli`,
@@ -88,11 +135,32 @@ impl CdpSession {
             .await
             .context("Page.enable")?;
 
+        let blocked_navigation = Arc::new(Mutex::new(None));
+        let mut policy_guards = HashMap::new();
+        if let Some(guard) =
+            install_navigation_policy(&page, &policy, blocked_navigation.clone()).await?
+        {
+            policy_guards.insert(page.target_id().inner().clone(), guard);
+        }
+
         Ok(Arc::new(Self {
             browser,
-            page,
+            page: RwLock::new(page),
             handler,
+            handler_alive,
+            policy,
+            policy_guards: Mutex::new(policy_guards),
+            navigation: Mutex::new(()),
+            blocked_navigation,
         }))
+    }
+
+    pub async fn current_page(&self) -> Page {
+        self.page.read().await.clone()
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.handler_alive.load(Ordering::SeqCst)
     }
 
     /// Pin the layout viewport to an exact CSS-pixel size, independent of any
@@ -105,7 +173,8 @@ impl CdpSession {
             .mobile(false)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.page
+        self.current_page()
+            .await
             .execute(params)
             .await
             .context("Emulation.setDeviceMetricsOverride")?;
@@ -113,26 +182,29 @@ impl CdpSession {
     }
 
     pub async fn goto(&self, url: &str) -> Result<()> {
-        self.page.goto(url).await.context("Page.navigate")?;
-        Ok(())
+        self.navigate_page(&self.current_page().await, url).await
     }
 
     /// Begin streaming the page at its native viewport size.
     pub async fn start_screencast(&self) -> Result<()> {
+        self.start_screencast_on(&self.current_page().await).await
+    }
+
+    pub async fn start_screencast_on(&self, page: &Page) -> Result<()> {
         let params = StartScreencastParams::builder()
             .format(StartScreencastFormat::Jpeg)
             .quality(70)
             .build();
-        self.page
-            .execute(params)
-            .await
-            .context("Page.startScreencast")?;
+        page.execute(params).await.context("Page.startScreencast")?;
         Ok(())
     }
 
     pub async fn stop_screencast(&self) -> Result<()> {
-        self.page
-            .execute(StopScreencastParams {})
+        self.stop_screencast_on(&self.current_page().await).await
+    }
+
+    pub async fn stop_screencast_on(&self, page: &Page) -> Result<()> {
+        page.execute(StopScreencastParams {})
             .await
             .context("Page.stopScreencast")?;
         Ok(())
@@ -140,12 +212,16 @@ impl CdpSession {
 
     /// Acknowledge a frame so Chromium releases the next one (flow control).
     pub async fn ack_frame(&self, session_id: i64) -> Result<()> {
+        self.ack_frame_on(&self.current_page().await, session_id)
+            .await
+    }
+
+    pub async fn ack_frame_on(&self, page: &Page, session_id: i64) -> Result<()> {
         let params = ScreencastFrameAckParams::builder()
             .session_id(session_id)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.page
-            .execute(params)
+        page.execute(params)
             .await
             .context("Page.screencastFrameAck")?;
         Ok(())
@@ -185,7 +261,8 @@ impl CdpSession {
             .click_count(1)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.page
+        self.current_page()
+            .await
             .execute(params)
             .await
             .context("Input.dispatchMouseEvent")?;
@@ -202,7 +279,8 @@ impl CdpSession {
             .delta_y(delta_y)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.page
+        self.current_page()
+            .await
             .execute(params)
             .await
             .context("Input.dispatchMouseEvent (wheel)")?;
@@ -214,7 +292,8 @@ impl CdpSession {
             .text(text)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.page
+        self.current_page()
+            .await
             .execute(params)
             .await
             .context("Input.insertText")?;
@@ -227,7 +306,8 @@ impl CdpSession {
             .page_scale_factor(scale)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.page
+        self.current_page()
+            .await
             .execute(params)
             .await
             .context("Emulation.setPageScaleFactor")?;
@@ -244,7 +324,8 @@ impl CdpSession {
         }
         let params = builder.build();
         let response = self
-            .page
+            .current_page()
+            .await
             .execute(params)
             .await
             .context("Page.captureScreenshot")?;
@@ -257,7 +338,7 @@ impl CdpSession {
     /// Every open tab, in browser order.
     pub async fn tabs(&self) -> Result<Vec<TabInfo>> {
         let pages = self.browser.pages().await?;
-        let active = self.target_id();
+        let active = self.target_id().await;
         let mut tabs = Vec::with_capacity(pages.len());
         for (index, page) in pages.iter().enumerate() {
             tabs.push(TabInfo {
@@ -271,28 +352,77 @@ impl CdpSession {
     }
 
     pub async fn open_tab(&self, url: &str) -> Result<()> {
-        let page = self.browser.new_page(url).await?;
+        let page = self.browser.new_page("about:blank").await?;
+        let target_id = page.target_id().inner().clone();
+        page.execute(EnableParams::builder().build()).await?;
+        self.ensure_policy_guard(&page).await?;
+        if let Err(err) = self.navigate_page(&page, url).await {
+            if page.close().await.is_ok() {
+                self.remove_policy_guard(&target_id).await;
+            }
+            return Err(err);
+        }
         page.bring_to_front().await?;
+        let old = {
+            let mut current = self.page.write().await;
+            std::mem::replace(&mut *current, page)
+        };
+        let _ = self.stop_screencast_on(&old).await;
         Ok(())
     }
 
-    pub async fn activate_tab(&self, index: usize) -> Result<()> {
-        if let Some(page) = self.browser.pages().await?.into_iter().nth(index) {
-            page.bring_to_front().await?;
-        }
-        Ok(())
+    pub async fn activate_tab(&self, index: usize) -> Result<bool> {
+        let Some(page) = self.browser.pages().await?.into_iter().nth(index) else {
+            return Ok(false);
+        };
+        self.ensure_policy_guard(&page).await?;
+        page.bring_to_front().await?;
+        let old = {
+            let mut current = self.page.write().await;
+            if current.target_id().inner() == page.target_id().inner() {
+                return Ok(true);
+            }
+            std::mem::replace(&mut *current, page)
+        };
+        let _ = self.stop_screencast_on(&old).await;
+        Ok(true)
     }
 
-    pub async fn close_tab(&self, index: usize) -> Result<()> {
-        if let Some(page) = self.browser.pages().await?.into_iter().nth(index) {
+    pub async fn close_tab(&self, index: usize) -> Result<Option<bool>> {
+        let pages = self.browser.pages().await?;
+        let Some(page) = pages.into_iter().nth(index) else {
+            return Ok(None);
+        };
+        let active = self.target_id().await;
+        if page.target_id().inner() == &active {
+            let pages = self.browser.pages().await?;
+            let Some(replacement) = pages
+                .into_iter()
+                .find(|candidate| candidate.target_id().inner() != &active)
+            else {
+                return Err(OnlyManagedTab.into());
+            };
+            self.ensure_policy_guard(&replacement).await?;
+            replacement.bring_to_front().await?;
+            let old = {
+                let mut current = self.page.write().await;
+                std::mem::replace(&mut *current, replacement)
+            };
+            let _ = self.stop_screencast_on(&old).await;
+            let target_id = page.target_id().inner().clone();
             page.close().await?;
+            self.remove_policy_guard(&target_id).await;
+            return Ok(Some(true));
         }
-        Ok(())
+        let target_id = page.target_id().inner().clone();
+        page.close().await?;
+        self.remove_policy_guard(&target_id).await;
+        Ok(Some(false))
     }
 
     /// The DevTools target id of the shared page.
-    pub fn target_id(&self) -> String {
-        self.page.target_id().inner().clone()
+    pub async fn target_id(&self) -> String {
+        self.current_page().await.target_id().inner().clone()
     }
 
     /// Send a raw CDP command to the shared page and return its result.
@@ -305,7 +435,7 @@ impl CdpSession {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        let ws_url = page_ws_url(endpoint, &self.target_id()).await?;
+        let ws_url = page_ws_url(endpoint, &self.target_id().await).await?;
         let (mut socket, _) = tokio_tungstenite::connect_async(&ws_url)
             .await
             .with_context(|| format!("connecting to {ws_url}"))?;
@@ -334,6 +464,89 @@ impl CdpSession {
         }
         anyhow::bail!("CDP socket closed before a response")
     }
+
+    async fn ensure_policy_guard(&self, page: &Page) -> Result<()> {
+        let Some(guard) =
+            install_navigation_policy(page, &self.policy, self.blocked_navigation.clone()).await?
+        else {
+            return Ok(());
+        };
+        let target_id = page.target_id().inner().clone();
+        let mut guards = self.policy_guards.lock().await;
+        match guards.entry(target_id) {
+            Entry::Occupied(_) => guard.abort(),
+            Entry::Vacant(entry) => {
+                entry.insert(guard);
+            }
+        }
+        Ok(())
+    }
+
+    async fn remove_policy_guard(&self, target_id: &str) {
+        if let Some(guard) = self.policy_guards.lock().await.remove(target_id) {
+            guard.abort();
+        }
+    }
+
+    async fn navigate_page(&self, page: &Page, url: &str) -> Result<()> {
+        let _navigation = self.navigation.lock().await;
+        *self.blocked_navigation.lock().await = None;
+        let result = page.goto(url).await;
+        if let Some(blocked_url) = self.blocked_navigation.lock().await.take() {
+            return Err(NavigationBlocked { url: blocked_url }.into());
+        }
+        result.context("Page.navigate")?;
+        Ok(())
+    }
+}
+
+async fn install_navigation_policy(
+    page: &Page,
+    policy: &crate::config::Policy,
+    blocked_navigation: Arc<Mutex<Option<String>>>,
+) -> Result<Option<JoinHandle<()>>> {
+    if !policy.is_restricted() {
+        return Ok(None);
+    }
+
+    let mut requests = page
+        .event_listener::<EventRequestPaused>()
+        .await
+        .context("Fetch.requestPaused listener")?;
+    let pattern = fetch::RequestPattern::builder()
+        .resource_type(ResourceType::Document)
+        .request_stage(fetch::RequestStage::Request)
+        .build();
+    page.execute(fetch::EnableParams::builder().pattern(pattern).build())
+        .await
+        .context("Fetch.enable")?;
+
+    let page = page.clone();
+    let policy = policy.clone();
+    Ok(Some(tokio::spawn(async move {
+        while let Some(event) = requests.next().await {
+            if policy.check(&event.request.url).is_ok() {
+                if let Err(err) = page
+                    .execute(ContinueRequestParams::new(event.request_id.clone()))
+                    .await
+                {
+                    tracing::debug!("continuing intercepted navigation failed: {err}");
+                }
+            } else {
+                tracing::warn!(url = %event.request.url, "blocked browser navigation by policy");
+                *blocked_navigation.lock().await = Some(event.request.url.clone());
+                if let Err(err) = page
+                    .execute(FailRequestParams::new(
+                        event.request_id.clone(),
+                        ErrorReason::BlockedByClient,
+                    ))
+                    .await
+                {
+                    tracing::debug!("failing intercepted navigation failed: {err}");
+                }
+            }
+        }
+    })))
 }
 
 /// Resolve the DevTools websocket URL for one page target.
