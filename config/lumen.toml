@@ -8,3 +8,7 @@ feedback_db = "/data/feedback.db"
 [default_viewport]
 width = 1440
 height = 900
+
+[policy]
+allow_hosts = []
+blocked_hosts = []

@@ -51,6 +51,8 @@ network, so a dev server on the host is reachable from the page at
 | tabs | `GET/POST /v1/sessions/{name}/tabs`, `POST …/{index}/activate`, `DELETE …/{index}` |
 | screenshot | `POST /v1/sessions/{name}/screenshot?full=true` |
 | navigate | `POST /v1/sessions/{name}/navigate` |
+| raw CDP | `POST /v1/sessions/{name}/cdp` |
+| audit | `GET /v1/audit` |
 | stream + input | `GET /v1/sessions/{name}/stream` (WebSocket) |
 | feedback | `GET/POST /v1/sessions/{name}/feedback`, `POST …/ack-all` |
 
@@ -90,6 +92,20 @@ bin/build.sh && bin/up.sh      # container image + service
 
 ## Security
 
-The service binds loopback only; the container runs with `no-new-privileges`
-and no sandbox is required for Chromium. Raw CDP and origin policy are the next
-hardening steps.
+The service binds loopback only, and the container runs with `no-new-privileges`;
+Chromium itself needs no sandbox here.
+
+Navigation host policy lives under `[policy]` in `config/lumen.toml`:
+
+```toml
+[policy]
+allow_hosts = []          # empty = every host; ".example.com" matches subdomains
+blocked_hosts = ["evil.test"]
+```
+
+Lumen rejects disallowed navigations with `403` and records every navigation,
+raw CDP call, and feedback note in an audit trail (`GET /v1/audit`).
+
+Known boundary: the policy governs Lumen's own navigate/tab APIs. An agent that
+attaches `playwright-cli` straight to the browser over CDP bypasses it; make
+the browser's own network the enforcement point if that matters.

@@ -28,6 +28,16 @@ pub struct Feedback {
     pub status: String,
 }
 
+/// One recorded control-plane action.
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditEntry {
+    pub id: i64,
+    pub at: i64,
+    pub session: String,
+    pub action: String,
+    pub detail: String,
+}
+
 /// Durable per-session inbox for human feedback.
 ///
 /// This replaces the old download-plus-filesystem-watcher path: annotations are
@@ -56,7 +66,14 @@ impl FeedbackStore {
                 status TEXT NOT NULL DEFAULT 'pending'
             );
             CREATE INDEX IF NOT EXISTS feedback_session_status
-                ON feedback (session, status);",
+                ON feedback (session, status);
+            CREATE TABLE IF NOT EXISTS audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                at INTEGER NOT NULL,
+                session TEXT NOT NULL,
+                action TEXT NOT NULL,
+                detail TEXT NOT NULL
+            );",
         )
         .context("initializing feedback schema")?;
         Ok(Self {
@@ -169,5 +186,42 @@ impl FeedbackStore {
             params![session],
         )?;
         Ok(changed)
+    }
+
+    /// Record a control-plane action for the audit trail.
+    pub async fn record(&self, session: &str, action: &str, detail: &str) -> Result<()> {
+        let at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or_default();
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO audit (at, session, action, detail) VALUES (?1, ?2, ?3, ?4)",
+            params![at, session, action, detail],
+        )
+        .context("recording audit entry")?;
+        Ok(())
+    }
+
+    /// The most recent audit entries, newest first.
+    pub async fn recent(&self, limit: i64) -> Result<Vec<AuditEntry>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, at, session, action, detail FROM audit ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit.clamp(1, 1000)], |row| {
+            Ok(AuditEntry {
+                id: row.get(0)?,
+                at: row.get(1)?,
+                session: row.get(2)?,
+                action: row.get(3)?,
+                detail: row.get(4)?,
+            })
+        })?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
     }
 }

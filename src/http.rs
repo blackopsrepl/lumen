@@ -1,6 +1,6 @@
 use crate::cdp::{CdpSession, TabInfo};
 use crate::config::{Config, Viewport};
-use crate::feedback::{Feedback, FeedbackStore, Region};
+use crate::feedback::{AuditEntry, Feedback, FeedbackStore, Region};
 use crate::supervisor::{is_valid_agent_name, AgentInfo, Supervisor};
 use crate::view::{Control, ViewHub};
 use axum::body::Bytes;
@@ -67,6 +67,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/sessions/{name}/tabs/{index}", delete(close_tab))
         .route("/v1/sessions/{name}/screenshot", post(screenshot))
+        .route("/v1/sessions/{name}/cdp", post(raw_cdp))
+        .route("/v1/audit", get(list_audit))
         .route("/v1/sessions/{name}/visibility", put(set_visibility))
         .route("/v1/sessions/{name}/page-scale", put(set_page_scale))
         .route(
@@ -149,8 +151,16 @@ async fn navigate(
     Path(name): Path<String>,
     Json(body): Json<NavigateBody>,
 ) -> Result<StatusCode, ApiError> {
+    state
+        .config
+        .policy
+        .check(&body.url)
+        .map_err(|err| ApiError::forbidden(err.to_string()))?;
     let agent = state.supervisor.ensure(&name).await?;
     agent.session.goto(&body.url).await?;
+    if let Err(err) = state.feedback.record(&name, "navigate", &body.url).await {
+        tracing::warn!("audit write failed: {err}");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -219,8 +229,16 @@ async fn open_tab(
     Path(name): Path<String>,
     Json(body): Json<OpenTabBody>,
 ) -> Result<StatusCode, ApiError> {
+    state
+        .config
+        .policy
+        .check(&body.url)
+        .map_err(|err| ApiError::forbidden(err.to_string()))?;
     let agent = state.supervisor.ensure(&name).await?;
     agent.session.open_tab(&body.url).await?;
+    if let Err(err) = state.feedback.record(&name, "open_tab", &body.url).await {
+        tracing::warn!("audit write failed: {err}");
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -330,6 +348,13 @@ async fn add_feedback(
         .feedback
         .add(&name, "human", body.comment.trim(), body.region)
         .await?;
+    if let Err(err) = state
+        .feedback
+        .record(&name, "feedback", body.comment.trim())
+        .await
+    {
+        tracing::warn!("audit write failed: {err}");
+    }
     Ok(Json(feedback))
 }
 
@@ -347,6 +372,46 @@ async fn ack_all_feedback(
 ) -> Result<StatusCode, ApiError> {
     state.feedback.ack_all(&name).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct CdpBody {
+    method: String,
+    #[serde(default)]
+    params: Value,
+}
+
+async fn raw_cdp(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<CdpBody>,
+) -> Result<Json<Value>, ApiError> {
+    let agent = state.supervisor.ensure(&name).await?;
+    let result = agent
+        .session
+        .raw_cdp(&agent.cdp_endpoint, &body.method, body.params)
+        .await?;
+    if let Err(err) = state.feedback.record(&name, "cdp", &body.method).await {
+        tracing::warn!("audit write failed: {err}");
+    }
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+struct AuditQuery {
+    #[serde(default = "default_audit_limit")]
+    limit: i64,
+}
+
+fn default_audit_limit() -> i64 {
+    100
+}
+
+async fn list_audit(
+    State(state): State<AppState>,
+    Query(query): Query<AuditQuery>,
+) -> Result<Json<Vec<AuditEntry>>, ApiError> {
+    Ok(Json(state.feedback.recent(query.limit).await?))
 }
 
 async fn stream(
@@ -522,12 +587,17 @@ fn error_event(message: String) -> Message {
 /// Control-plane error mapped to a JSON response.
 pub enum ApiError {
     BadRequest(String),
+    Forbidden(String),
     Internal(anyhow::Error),
 }
 
 impl ApiError {
     fn bad_request(message: impl Into<String>) -> Self {
         Self::BadRequest(message.into())
+    }
+
+    fn forbidden(message: impl Into<String>) -> Self {
+        Self::Forbidden(message.into())
     }
 }
 
@@ -541,6 +611,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             ApiError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+            ApiError::Forbidden(message) => (StatusCode::FORBIDDEN, message),
             ApiError::Internal(err) => {
                 tracing::warn!("control-plane error: {err:#}");
                 (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())

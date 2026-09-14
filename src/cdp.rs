@@ -11,10 +11,11 @@ use chromiumoxide::cdp::browser_protocol::page::{
     StartScreencastFormat, StartScreencastParams, StopScreencastParams,
 };
 use chromiumoxide::{Browser, Page};
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
+use tokio_tungstenite::tungstenite::Message;
 
 /// One open tab in an agent's browser, addressed by its position.
 #[derive(Debug, Clone, Serialize)]
@@ -22,6 +23,8 @@ pub struct TabInfo {
     pub index: usize,
     pub url: String,
     pub title: String,
+    /// Whether this is the page Lumen drives and screencasts.
+    pub active: bool,
 }
 
 /// A live CDP connection to one agent's Chromium, bound to a single shared page.
@@ -228,12 +231,14 @@ impl CdpSession {
     /// Every open tab, in browser order.
     pub async fn tabs(&self) -> Result<Vec<TabInfo>> {
         let pages = self.browser.pages().await?;
+        let active = self.target_id();
         let mut tabs = Vec::with_capacity(pages.len());
         for (index, page) in pages.iter().enumerate() {
             tabs.push(TabInfo {
                 index,
                 url: page.url().await?.unwrap_or_default(),
                 title: page.get_title().await?.unwrap_or_default(),
+                active: page.target_id().inner() == &active,
             });
         }
         Ok(tabs)
@@ -258,6 +263,72 @@ impl CdpSession {
         }
         Ok(())
     }
+
+    /// The DevTools target id of the shared page.
+    pub fn target_id(&self) -> String {
+        self.page.target_id().inner().clone()
+    }
+
+    /// Send a raw CDP command to the shared page and return its result.
+    ///
+    /// This is the escape hatch for protocol features Lumen has not wrapped;
+    /// it opens a short-lived DevTools socket to the page target.
+    pub async fn raw_cdp(
+        &self,
+        endpoint: &str,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let ws_url = page_ws_url(endpoint, &self.target_id()).await?;
+        let (mut socket, _) = tokio_tungstenite::connect_async(&ws_url)
+            .await
+            .with_context(|| format!("connecting to {ws_url}"))?;
+
+        let request = serde_json::json!({ "id": 1, "method": method, "params": params });
+        socket
+            .send(Message::Text(request.to_string().into()))
+            .await
+            .context("sending the CDP command")?;
+
+        while let Some(frame) = socket.next().await {
+            let frame = frame.context("reading the CDP response")?;
+            if let Message::Text(text) = frame {
+                let value: serde_json::Value =
+                    serde_json::from_str(text.as_str()).context("parsing the CDP response")?;
+                if value.get("id").and_then(serde_json::Value::as_i64) == Some(1) {
+                    if let Some(error) = value.get("error") {
+                        anyhow::bail!("CDP error: {error}");
+                    }
+                    return Ok(value
+                        .get("result")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null));
+                }
+            }
+        }
+        anyhow::bail!("CDP socket closed before a response")
+    }
+}
+
+/// Resolve the DevTools websocket URL for one page target.
+async fn page_ws_url(endpoint: &str, target_id: &str) -> Result<String> {
+    let targets: Vec<serde_json::Value> = reqwest::get(format!("{endpoint}/json/list"))
+        .await
+        .context("fetching /json/list")?
+        .json()
+        .await
+        .context("parsing /json/list")?;
+    for target in targets {
+        if target.get("id").and_then(serde_json::Value::as_str) == Some(target_id) {
+            if let Some(url) = target
+                .get("webSocketDebuggerUrl")
+                .and_then(serde_json::Value::as_str)
+            {
+                return Ok(url.to_string());
+            }
+        }
+    }
+    anyhow::bail!("no DevTools websocket for target {target_id}")
 }
 
 impl Drop for CdpSession {
