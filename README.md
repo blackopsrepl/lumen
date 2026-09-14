@@ -1,6 +1,10 @@
 # Lumen
 
 <p align="center">
+  <img src="docs/images/lumen-mascot.png" alt="Lumen's lantern-moth mascot, a watchful guardian for agent browsers and human control" width="360">
+</p>
+
+<p align="center">
   <img src="docs/images/viewer.png" alt="The Lumen viewer: a live browser session on the right, sessions and feedback on the left" width="920">
 </p>
 
