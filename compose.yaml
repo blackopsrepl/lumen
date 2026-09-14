@@ -20,6 +20,9 @@ services:
     restart: unless-stopped
     init: true
     network_mode: host
+    extra_hosts:
+      - "host.containers.internal:127.0.0.1"
+      - "host.docker.internal:127.0.0.1"
     shm_size: "1gb"
     security_opt:
       - no-new-privileges:true
@@ -43,6 +46,8 @@ services:
       start_period: 10s
     environment:
       LUMEN_CONFIG: /etc/lumen/lumen.toml
+      LUMEN_PORT: ${LUMEN_PORT:-8899}
+      LUMEN_CHROME: ${LUMEN_CHROME:-chromium}
       RUST_LOG: ${RUST_LOG:-lumen=info}
       TZ: ${TZ:-UTC}
     volumes:

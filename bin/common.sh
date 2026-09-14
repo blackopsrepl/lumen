@@ -36,7 +36,9 @@ require_cli() {
 
 # Run the Lumen client from inside the container (loopback is shared via host
 # networking, so its view of the server is the same as the host's).
-lumen() { podman exec "${CONTAINER}" lumen "$@"; }
+lumen() {
+  podman exec "${CONTAINER}" lumen --url "http://127.0.0.1:${LUMEN_PORT}" "$@"
+}
 
 # Run playwright-cli from the shared workspace so its daemon and every agent
 # session agree on one directory.

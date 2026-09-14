@@ -38,7 +38,9 @@ bin/pw.sh -s=alice snapshot
 `bin/pw.sh` asks Lumen to ensure your session's browser, attaches
 `playwright-cli` over CDP, and runs the command. The container shares the host
 network, so a dev server on the host is reachable from the page at
-`http://127.0.0.1:<port>`.
+`http://127.0.0.1:<port>`. `host.containers.internal` and
+`host.docker.internal` are also mapped to the host loopback for compatibility
+with tools that use a container-host alias.
 
 ## Capability API
 
@@ -95,7 +97,14 @@ skills/lumen/SKILL.md  opencode skill
 cargo test                     # unit tests
 cargo run --example spike      # drive a real Chromium and capture live frames
 bin/build.sh && bin/up.sh      # container image + service
+make ui-test                   # Playwright tests against Lumen
 ```
+
+`make ui-test` starts a disposable local Lumen service when `LUMEN_URL` is not
+set. Set `LUMEN_URL` to test an already-running service. `LUMEN_CHROME` can
+point to the Chromium executable used by the disposable test service. The
+tests use the Playwright browser runner and exercise the rendered viewer, its WebSocket
+stream, navigation, control handoff, feedback annotation, and provenance UI.
 
 ## Security
 
