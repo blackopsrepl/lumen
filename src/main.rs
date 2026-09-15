@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use lumen::client;
 use lumen::config::Config;
 use lumen::http::{self, AppState};
+use std::future::IntoFuture;
 
 #[derive(Parser)]
 #[command(
@@ -106,22 +107,36 @@ async fn serve_async() -> anyhow::Result<()> {
     let state = AppState::new(config)?;
     let supervisor = state.supervisor.clone();
     let app = state.clone();
-    let server =
-        axum::serve(listener, http::router(state)).with_graceful_shutdown(shutdown_signal(app));
-    // The signal handler only refuses new work and releases viewers; teardown
-    // runs after the server has drained, so no request can create a browser
-    // behind `shutdown_all`'s back. Bounded so a wedged viewer cannot hold the
-    // process open indefinitely.
-    if tokio::time::timeout(std::time::Duration::from_secs(15), server)
-        .await
-        .is_err()
-    {
-        tracing::warn!("http plane did not drain in time; stopping browsers anyway");
-    }
-    tracing::info!("http plane drained; stopping agent browsers");
+    let server = axum::serve(listener, http::router(state))
+        .with_graceful_shutdown(shutdown_signal(app.clone()))
+        .into_future();
+    tokio::pin!(server);
+
+    // The grace period begins only once a signal has asked the plane to drain;
+    // it must never bound the server's ordinary lifetime. The signal handler
+    // just refuses new work and releases viewers, so teardown cannot race a
+    // request that creates a browser.
+    let outcome = tokio::select! {
+        result = &mut server => result.context("http server failed"),
+        _ = async {
+            app.drain_started().await;
+            tokio::time::sleep(DRAIN_GRACE).await;
+        } => {
+            tracing::warn!(
+                "http plane did not drain within {}s; stopping browsers anyway",
+                DRAIN_GRACE.as_secs()
+            );
+            Ok(())
+        }
+    };
+
+    tracing::info!("stopping agent browsers");
     supervisor.shutdown_all().await;
-    Ok(())
+    outcome
 }
+
+/// How long the HTTP plane may take to drain after shutdown begins.
+const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Resolve once SIGINT or SIGTERM arrives, after telling the server to start
 /// draining.

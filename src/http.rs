@@ -34,6 +34,9 @@ pub struct AppState {
     /// requests that are still creating browsers.
     draining: Arc<std::sync::atomic::AtomicBool>,
     shutdown: broadcast::Sender<()>,
+    /// Resolves once draining has begun, so the shutdown path can time the
+    /// drain without ever bounding the server's ordinary lifetime.
+    drain_started: Arc<tokio::sync::Notify>,
 }
 
 impl AppState {
@@ -49,6 +52,7 @@ impl AppState {
             config,
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             shutdown,
+            drain_started: Arc::new(tokio::sync::Notify::new()),
         })
     }
 
@@ -57,6 +61,12 @@ impl AppState {
         self.draining
             .store(true, std::sync::atomic::Ordering::SeqCst);
         let _ = self.shutdown.send(());
+        self.drain_started.notify_one();
+    }
+
+    /// Wait until draining has begun.
+    pub async fn drain_started(&self) {
+        self.drain_started.notified().await;
     }
 
     fn is_draining(&self) -> bool {
