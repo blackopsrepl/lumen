@@ -3,8 +3,6 @@ use clap::{Parser, Subcommand};
 use lumen::client;
 use lumen::config::Config;
 use lumen::http::{self, AppState};
-use lumen::supervisor::Supervisor;
-use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(
@@ -107,19 +105,27 @@ async fn serve_async() -> anyhow::Result<()> {
 
     let state = AppState::new(config)?;
     let supervisor = state.supervisor.clone();
-    axum::serve(listener, http::router(state))
-        .with_graceful_shutdown(shutdown_signal(supervisor))
+    let app = state.clone();
+    let server =
+        axum::serve(listener, http::router(state)).with_graceful_shutdown(shutdown_signal(app));
+    // The signal handler only refuses new work and releases viewers; teardown
+    // runs after the server has drained, so no request can create a browser
+    // behind `shutdown_all`'s back. Bounded so a wedged viewer cannot hold the
+    // process open indefinitely.
+    if tokio::time::timeout(std::time::Duration::from_secs(15), server)
         .await
-        .context("http server failed")?;
+        .is_err()
+    {
+        tracing::warn!("http plane did not drain in time; stopping browsers anyway");
+    }
+    tracing::info!("http plane drained; stopping agent browsers");
+    supervisor.shutdown_all().await;
     Ok(())
 }
 
-/// Resolve once SIGINT or SIGTERM arrives, after stopping every browser.
-///
-/// Without this a signal kills the process outright and `kill_on_drop` never
-/// runs, orphaning the browser processes and their profiles — visible as
-/// stray Chromium processes whenever the service runs outside its container.
-async fn shutdown_signal(supervisor: Arc<Supervisor>) {
+/// Resolve once SIGINT or SIGTERM arrives, after telling the server to start
+/// draining.
+async fn shutdown_signal(state: AppState) {
     let ctrl_c = tokio::signal::ctrl_c();
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .expect("installing the SIGTERM handler");
@@ -127,6 +133,6 @@ async fn shutdown_signal(supervisor: Arc<Supervisor>) {
         _ = ctrl_c => {},
         _ = term.recv() => {},
     }
-    tracing::info!("shutdown signal received; stopping agent browsers");
-    supervisor.shutdown_all().await;
+    tracing::info!("shutdown signal received; draining");
+    state.begin_draining();
 }

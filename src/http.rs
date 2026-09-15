@@ -29,6 +29,11 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub supervisor: Arc<Supervisor>,
     pub feedback: Arc<FeedbackStore>,
+    /// Set once shutdown has begun: new control-plane calls are refused and
+    /// every open viewer is told to close, so browser teardown is not racing
+    /// requests that are still creating browsers.
+    draining: Arc<std::sync::atomic::AtomicBool>,
+    shutdown: broadcast::Sender<()>,
 }
 
 impl AppState {
@@ -37,16 +42,31 @@ impl AppState {
         let config = Arc::new(config);
         let supervisor = Arc::new(Supervisor::new(config.clone())?);
         supervisor.spawn_janitor();
+        let (shutdown, _) = broadcast::channel(1);
         Ok(Self {
             supervisor,
             feedback: Arc::new(feedback),
             config,
+            draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shutdown,
         })
+    }
+
+    /// Refuse new control-plane work and release every viewer.
+    pub fn begin_draining(&self) {
+        self.draining
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = self.shutdown.send(());
+    }
+
+    fn is_draining(&self) -> bool {
+        self.draining.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
 /// Build the HTTP control/view plane.
 pub fn router(state: AppState) -> Router {
+    let drain_state = state.clone();
     Router::new()
         .route("/", get(index))
         .route("/app.js", get(app_js))
@@ -88,7 +108,22 @@ pub fn router(state: AppState) -> Router {
             post(ack_all_feedback),
         )
         .layer(middleware::from_fn(loopback_guard))
+        .layer(middleware::from_fn_with_state(drain_state, draining_guard))
         .with_state(state)
+}
+
+/// Refuse control-plane work once shutdown has started, so teardown is not
+/// racing requests that would create or drive browsers. Health and the viewer
+/// assets stay reachable so the shutdown is observable.
+async fn draining_guard(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    if state.is_draining() && request.uri().path().starts_with("/v1/") {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "lumen is shutting down" })),
+        )
+            .into_response();
+    }
+    next.run(request).await
 }
 
 /// Whether a `Host` header value names the loopback interface.
@@ -570,6 +605,10 @@ async fn stream_session(socket: WebSocket, state: AppState, name: String) {
         tracing::debug!("stream for absent session '{name}'");
         return;
     };
+    if state.is_draining() {
+        return;
+    }
+    let mut shutdown = state.shutdown.subscribe();
     let hub: Arc<ViewHub> = agent.view.clone();
     let session: Arc<CdpSession> = agent.session.clone();
     let mut frames = hub.subscribe().await;
@@ -616,7 +655,14 @@ async fn stream_session(socket: WebSocket, state: AppState, name: String) {
         .send(Message::Text(control_event(hub.control().await).into()))
         .await;
 
-    while let Some(Ok(message)) = ws_rx.next().await {
+    loop {
+        let message = tokio::select! {
+            message = ws_rx.next() => message,
+            _ = shutdown.recv() => break,
+        };
+        let Some(Ok(message)) = message else {
+            break;
+        };
         match message {
             Message::Text(text) => {
                 if let Some(event) = handle_command(&hub, &session, &text).await {
