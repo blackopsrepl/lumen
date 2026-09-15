@@ -14,9 +14,9 @@ unit_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
 mkdir -p "${unit_dir}"
 
 sed \
-  -e "s|__PROJECT_DIR__|${PROJECT_DIR}|g" \
-  -e "s|__HOME__|${HOME}|g" \
-  -e "s|__PODMAN_COMPOSE__|${podman_compose}|g" \
+  -e "s|__PROJECT_DIR__|$(sed_escape "${PROJECT_DIR}")|g" \
+  -e "s|__HOME__|$(sed_escape "${HOME}")|g" \
+  -e "s|__PODMAN_COMPOSE__|$(sed_escape "${podman_compose}")|g" \
   "${PROJECT_DIR}/systemd/lumen.service" > "${unit_dir}/lumen.service"
 log "installed ${unit_dir}/lumen.service"
 
@@ -30,5 +30,8 @@ done
 
 systemctl --user daemon-reload
 systemctl --user enable --now lumen.service
-loginctl enable-linger "${USER}" >/dev/null 2>&1 || true
-log "enabled: lumen.service (linger on for ${USER})"
+if loginctl enable-linger "${USER}" >/dev/null 2>&1; then
+  log "enabled: lumen.service (linger on for ${USER})"
+else
+  log "enabled: lumen.service (warning: linger not enabled; the service stops at logout)"
+fi

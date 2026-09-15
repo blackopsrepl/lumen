@@ -177,7 +177,7 @@ help: banner
 	@printf "$(CYAN)$(BOLD)Service:$(RESET)\n"
 	@printf "  $(GREEN)make build$(RESET)            Build the container image\n"
 	@printf "  $(GREEN)make up$(RESET)               Start the service\n"
-	@printf "  $(GREEN)make down$(RESET)             Stop the service (browser profiles kept)\n"
+	@printf "  $(GREEN)make down$(RESET)             Stop the service (browser profiles are ephemeral; /data is kept)\n"
 	@printf "  $(GREEN)make restart$(RESET)          Restart the service\n"
 	@printf "  $(GREEN)make status$(RESET)           Container state, health, sessions\n"
 	@printf "  $(GREEN)make logs$(RESET)             Follow service logs\n"

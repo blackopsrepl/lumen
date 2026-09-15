@@ -4,6 +4,8 @@
 #
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+. "${HERE}/common.sh"
 
 "${HERE}/install-host.sh"
 "${HERE}/build.sh"
@@ -12,5 +14,5 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 "${HERE}/install-skill.sh"
 "${HERE}/smoke.sh"
 
-printf '\nBootstrap complete. Lumen: http://127.0.0.1:8899/\n'
+printf '\nBootstrap complete. Lumen: http://127.0.0.1:%s/\n' "${LUMEN_PORT}"
 printf 'Agents: bin/pw.sh -s=<name> goto https://example.com\n'

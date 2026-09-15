@@ -58,6 +58,10 @@ valid_session_name() {
     && [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]]
 }
 
+# Escape a string for use as a sed replacement with '|' as the delimiter, so a
+# checkout path containing '&', '\', or '|' cannot corrupt a generated file.
+sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
+
 compose() { ( cd "${PROJECT_DIR}" && exec podman compose -f "${PROJECT_DIR}/compose.yaml" "$@" ); }
 
 require_cli() {

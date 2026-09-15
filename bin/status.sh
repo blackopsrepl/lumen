@@ -20,4 +20,7 @@ else
 fi
 
 printf 'sessions:\n'
-lumen status || true
+if ! lumen status; then
+  printf 'warning: could not list sessions\n' >&2
+  exit 1
+fi
