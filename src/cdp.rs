@@ -358,15 +358,23 @@ impl CdpSession {
     }
 
     /// Every open tab, in browser order.
+    ///
+    /// A target that has just been destroyed can still appear in the browser's
+    /// page list for a moment, and asking it for its URL or title fails. That
+    /// must not fail the whole enumeration: the index has to stay aligned with
+    /// the list tab activation and closing operate on, so a vanishing target
+    /// contributes empty fields instead of taking the request down with it.
     pub async fn tabs(&self) -> Result<Vec<TabInfo>> {
         let pages = self.browser.pages().await?;
         let active = self.target_id().await;
         let mut tabs = Vec::with_capacity(pages.len());
         for (index, page) in pages.iter().enumerate() {
+            let url = page.url().await.ok().flatten().unwrap_or_default();
+            let title = page.get_title().await.ok().flatten().unwrap_or_default();
             tabs.push(TabInfo {
                 index,
-                url: page.url().await?.unwrap_or_default(),
-                title: page.get_title().await?.unwrap_or_default(),
+                url,
+                title,
                 active: page.target_id().inner() == &active,
             });
         }
@@ -483,13 +491,18 @@ impl CdpSession {
         if current.target_id().inner() != dead_target {
             return Ok(false);
         }
-        let candidates: Vec<Page> = self
-            .browser
-            .pages()
-            .await?
-            .into_iter()
-            .filter(|candidate| candidate.target_id().inner() != dead_target)
-            .collect();
+        let mut candidates = Vec::new();
+        for candidate in self.browser.pages().await? {
+            if candidate.target_id().inner() == dead_target {
+                continue;
+            }
+            // Skip anything that cannot answer for itself: a target on its way
+            // out is worse than no candidate, since adopting it would strand
+            // the session again.
+            if candidate.url().await.is_ok() {
+                candidates.push(candidate);
+            }
+        }
         let replacement = match candidates.into_iter().next() {
             Some(page) => page,
             None => self.browser.new_page("about:blank").await?,
