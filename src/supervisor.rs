@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use chromiumoxide::cdp::browser_protocol::target::EventTargetCreated;
+use chromiumoxide::cdp::browser_protocol::target::{EventTargetCreated, EventTargetDestroyed};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -353,15 +353,21 @@ impl AgentBrowser {
     }
 }
 
-/// Follow tabs the browser opens on its own.
+/// Follow tabs the browser opens and closes on its own.
 ///
 /// A `target=_blank` link or a popup creates a page target without any Lumen
 /// API call, so without this watcher the viewer keeps screencasting the tab
 /// the human just left, their input lands in a hidden tab, and the browser
-/// looks frozen. On every new page target the session adopts it as the
-/// managed tab and the view plane rebinds. The task ends when the browser
-/// connection dies.
+/// looks frozen. The mirror case matters just as much: an agent driving the
+/// browser over CDP can close the managed page itself, which used to leave the
+/// session reported alive while the viewer and every command targeted a dead
+/// page. Each task ends when the browser connection dies.
 fn spawn_tab_watcher(session: Arc<CdpSession>, view: Arc<ViewHub>) {
+    spawn_created_watcher(session.clone(), view.clone());
+    spawn_destroyed_watcher(session, view);
+}
+
+fn spawn_created_watcher(session: Arc<CdpSession>, view: Arc<ViewHub>) {
     tokio::spawn(async move {
         let mut created = match session.browser.event_listener::<EventTargetCreated>().await {
             Ok(created) => created,
@@ -391,6 +397,35 @@ fn spawn_tab_watcher(session: Arc<CdpSession>, view: Arc<ViewHub>) {
                     Err(err) => tracing::debug!(target = %target_id, "adopt attempt failed: {err}"),
                 }
                 tokio::time::sleep(ADOPT_RETRY).await;
+            }
+        }
+    });
+}
+
+fn spawn_destroyed_watcher(session: Arc<CdpSession>, view: Arc<ViewHub>) {
+    tokio::spawn(async move {
+        let mut destroyed = match session
+            .browser
+            .event_listener::<EventTargetDestroyed>()
+            .await
+        {
+            Ok(destroyed) => destroyed,
+            Err(err) => {
+                tracing::warn!("browser tab destruction watcher unavailable: {err}");
+                return;
+            }
+        };
+        while let Some(event) = destroyed.next().await {
+            let target_id = event.target_id.inner().clone();
+            match session.recover_managed_page(&target_id).await {
+                Ok(true) => {
+                    tracing::info!(target = %target_id, "managed tab was closed; adopted a replacement");
+                    view.rebind().await;
+                }
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::warn!(target = %target_id, "recovering the managed tab failed: {err}")
+                }
             }
         }
     });

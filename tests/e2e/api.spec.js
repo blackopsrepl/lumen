@@ -78,6 +78,56 @@ test("serializes concurrent navigation and tab activation", async ({ request }) 
   }
 });
 
+test("recovers when the managed tab is closed behind Lumen's back", async ({ request }) => {
+  const name = sessionName("destroy");
+  try {
+    const info = await (await request.post("/v1/sessions", { data: { name } })).json();
+    expect(
+      (
+        await request.post(`/v1/sessions/${name}/tabs`, {
+          data: { url: "data:text/html,keep-me" },
+        })
+      ).ok(),
+    ).toBeTruthy();
+
+    // Close the managed target directly, the way an agent driving CDP could.
+    const targets = await (await request.get(`${info.cdp_endpoint}/json/list`)).json();
+    const managed = targets.find((target) => target.type === "page" && target.url.includes("keep-me"));
+    expect(managed).toBeTruthy();
+    expect(
+      (
+        await request.post(`/v1/sessions/${name}/cdp`, {
+          data: { method: "Target.closeTarget", params: { targetId: managed.id } },
+        })
+      ).ok(),
+    ).toBeTruthy();
+
+    await expect
+      .poll(async () => {
+        const tabs = await (await request.get(`/v1/sessions/${name}/tabs`)).json();
+        return tabs.filter((tab) => tab.active).length;
+      })
+      .toBe(1);
+
+    // The session must still be usable rather than stranded on a dead page.
+    expect(
+      (
+        await request.post(`/v1/sessions/${name}/navigate`, {
+          data: { url: "data:text/html,recovered" },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    await expect
+      .poll(async () => {
+        const tabs = await (await request.get(`/v1/sessions/${name}/tabs`)).json();
+        return tabs.find((tab) => tab.active)?.url;
+      })
+      .toContain("recovered");
+  } finally {
+    await request.delete(`/v1/sessions/${name}`);
+  }
+});
+
 test("keeps the managed tab active and protects the last tab", async ({ request }) => {
   const name = sessionName("tabs");
   try {

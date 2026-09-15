@@ -474,6 +474,39 @@ impl CdpSession {
         self.current_page().await.target_id().inner().clone()
     }
 
+    /// Replace the managed page after its target disappears — an agent closed
+    /// it over CDP, or it crashed. Returns whether recovery happened.
+    ///
+    /// Lumen's own `close_tab` swaps the managed page *before* closing the old
+    /// target, so when the destruction event for that target arrives the dead
+    /// target is no longer managed and this is a no-op.
+    pub async fn recover_managed_page(&self, dead_target: &str) -> Result<bool> {
+        if !self.is_alive() {
+            return Ok(false);
+        }
+        let mut current = self.page.lock().await;
+        if current.target_id().inner() != dead_target {
+            return Ok(false);
+        }
+        let candidates: Vec<Page> = self
+            .browser
+            .pages()
+            .await?
+            .into_iter()
+            .filter(|candidate| candidate.target_id().inner() != dead_target)
+            .collect();
+        let replacement = match candidates.into_iter().next() {
+            Some(page) => page,
+            None => self.browser.new_page("about:blank").await?,
+        };
+        let _ = replacement.execute(EnableParams::builder().build()).await;
+        self.ensure_policy_guard(&replacement).await?;
+        let _ = replacement.bring_to_front().await;
+        let old = std::mem::replace(&mut *current, replacement);
+        let _ = self.stop_screencast_on(&old).await;
+        Ok(true)
+    }
+
     /// Send a raw CDP command to the shared page and return its result.
     ///
     /// This is the escape hatch for protocol features Lumen has not wrapped;
