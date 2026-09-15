@@ -1,7 +1,7 @@
 use crate::cdp::{CdpSession, NavigationBlocked, OnlyManagedTab, TabInfo};
 use crate::config::{Config, Viewport};
 use crate::feedback::{AuditEntry, Feedback, FeedbackStore, Region};
-use crate::supervisor::{is_valid_agent_name, AgentInfo, Origin, Supervisor};
+use crate::supervisor::{is_valid_agent_name, AgentInfo, InvalidAgentName, Origin, Supervisor};
 use crate::view::{Control, ViewHub};
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -695,6 +695,10 @@ impl ApiError {
 
 impl From<anyhow::Error> for ApiError {
     fn from(err: anyhow::Error) -> Self {
+        // A malformed session name is a caller error, not a service failure.
+        if let Some(invalid) = err.downcast_ref::<InvalidAgentName>() {
+            return Self::BadRequest(invalid.to_string());
+        }
         Self::Internal(err)
     }
 }

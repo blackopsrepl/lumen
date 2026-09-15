@@ -20,6 +20,20 @@ test("rejects profile path components as session names", async ({ request }) => 
     expect((await request.post("/v1/sessions", { data: { name } })).status()).toBe(400);
 });
 
+test("reports an invalid session name as a bad request, not a server error", async ({ request }) => {
+  const tooLong = "a".repeat(33);
+  const calls = [
+    ["navigate", { url: "about:blank" }],
+    ["tabs", { url: "about:blank" }],
+    ["screenshot", {}],
+    ["cdp", { method: "Browser.getVersion" }],
+  ];
+  for (const [path, data] of calls) {
+    const response = await request.post(`/v1/sessions/${tooLong}/${path}`, { data });
+    expect(response.status(), `${path} should reject the name`).toBe(400);
+  }
+});
+
 test("keeps the managed tab active and protects the last tab", async ({ request }) => {
   const name = sessionName("tabs");
   try {

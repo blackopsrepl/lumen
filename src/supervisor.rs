@@ -3,6 +3,7 @@ use chromiumoxide::cdp::browser_protocol::target::EventTargetCreated;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -74,6 +75,26 @@ pub struct AgentInfo {
     pub owner: Option<String>,
 }
 
+/// A session name that would be unsafe as a URL segment, a log field, or a
+/// directory component.
+///
+/// Callers get this as a `400`, not a `500`: the request was malformed, the
+/// service is fine.
+#[derive(Debug)]
+pub struct InvalidAgentName(pub String);
+
+impl fmt::Display for InvalidAgentName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid agent name '{}' (use [A-Za-z0-9._-], 1-32 chars)",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InvalidAgentName {}
+
 impl AgentBrowser {
     pub async fn info(&self) -> AgentInfo {
         let meta = self.meta.lock().await;
@@ -132,7 +153,7 @@ impl Supervisor {
         provenance: Option<(Origin, Option<String>)>,
     ) -> Result<Arc<AgentBrowser>> {
         if !is_valid_agent_name(name) {
-            bail!("invalid agent name '{name}' (use [A-Za-z0-9._-], 1-32 chars)");
+            return Err(InvalidAgentName(name.to_string()).into());
         }
 
         self.reap_dead().await;
