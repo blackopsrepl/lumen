@@ -1,6 +1,6 @@
 ---
 name: lumen
-description: Use when you need to drive a real web browser — navigate, click, type, fill forms, take screenshots, or scrape pages — or to read human feedback left on the shared viewer. Front-loads the concrete tools: lumen, pw.sh, playwright-cli, snapshot, browser automation.
+description: Use when you need to drive a real web browser — navigate, click, type, fill forms, take screenshots, or scrape pages — or to read human feedback left on the shared viewer. Front-loads concrete tooling (lumen, pw.sh, playwright-cli, snapshot, browser automation).
 ---
 
 # Lumen (browser service)
