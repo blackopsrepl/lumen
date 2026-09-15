@@ -92,7 +92,8 @@ case "${cmd}" in
     [ -n "${AGENT_NAME:-}" ] && owner_args=(--owner "${AGENT_NAME}")
     endpoint="$(lumen ensure "${name}" "${owner_args[@]}")" || die "could not ensure session '${name}' (bin/status.sh)"
 
-    mkdir -p "${session_dir}" "${PW_ROOT}/.playwright"
+    pw_workspace_init
+    mkdir -p "${session_dir}"
     if [ "$(cat "${session_dir}/endpoint" 2>/dev/null)" != "${endpoint}" ]; then
       pw_in "${session_dir}" attach --cdp="${endpoint}" --session="${name}" >/dev/null \
         || die "could not bind session '${name}' to ${endpoint}"

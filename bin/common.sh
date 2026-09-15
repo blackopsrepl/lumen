@@ -22,6 +22,13 @@ LUMEN_PORT="${LUMEN_PORT:-8899}"
 PW_WORKSPACE="${PW_WORKSPACE:-${PROJECT_DIR}/.workspace}"
 PW_CLI="${PW_CLI:-playwright-cli}"
 
+# Keep the workspace absolute so the artifact paths pw.sh reports are
+# resolvable from wherever the agent runs, not only from the checkout's parent.
+case "${PW_WORKSPACE}" in
+  /*) ;;
+  *) PW_WORKSPACE="${PROJECT_DIR}/${PW_WORKSPACE}" ;;
+esac
+
 # The image is stamped with this revision so a deploy can tell which checkout
 # the running container was built from. Image ids are not usable for that:
 # every rebuild produces a new one because the layers carry file mtimes.
@@ -69,7 +76,11 @@ lumen() {
 # binding. Keeping one marker at the root keeps every session in a single CLI
 # workspace; without it the CLI falls back to a global default it shares with
 # unrelated projects.
+pw_workspace_init() {
+  mkdir -p "${PW_WORKSPACE}/.playwright"
+}
+
 pw() {
-  mkdir -p "${PW_WORKSPACE}"
+  pw_workspace_init
   ( cd "${PW_WORKSPACE}" && exec "${PW_CLI}" "$@" )
 }
