@@ -46,5 +46,6 @@ A production `lumen` container usually runs on 8899 with host networking and liv
 
 ## Conventions
 
-- Conventional commit subjects with scope: `fix(cdp): …`, `test(viewer): …`, `docs(policy): …`. No changelog tooling in this repo.
+- Conventional commit subjects with scope: `fix(cdp): …`, `test(viewer): …`, `docs(policy): …`.
+- Releases use `commit-and-tag-version`; `.versionrc.cjs` owns every version surface (Cargo.toml, Cargo.lock, the image-tag defaults, `.env.example`) and `CHANGELOG.md`. Never edit a changelog or version file by hand — run `npx commit-and-tag-version --release-as vX.Y.Z`.
 - Do not push or publish unless asked. Two remotes: `origin` is the local Forgejo (`http://vigilance:3002/blackopsrepl/lumen.git`) and `blackopsrepl` is GitHub. Both run the same gates, and `.github/workflows/ci.yml` declares `workflow_call` so `.github/workflows/release.yml` reuses it — a pushed `v*` tag publishes a GitHub Release with generated notes, gated on those checks.
