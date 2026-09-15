@@ -1,4 +1,6 @@
 use anyhow::{bail, Context, Result};
+use chromiumoxide::cdp::browser_protocol::target::EventTargetCreated;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -243,6 +245,7 @@ impl Supervisor {
             .set_viewport(viewport.width, viewport.height)
             .await?;
         let view = Arc::new(ViewHub::new(session.clone()));
+        spawn_tab_watcher(session.clone(), view.clone());
 
         tracing::info!(agent = name, %cdp_endpoint, profile = %profile.display(), "agent browser ready");
         let profile = guard.disarm();
@@ -313,6 +316,53 @@ impl AgentBrowser {
         let _ = purge_profile(self.profile.clone()).await;
     }
 }
+
+/// Follow tabs the browser opens on its own.
+///
+/// A `target=_blank` link or a popup creates a page target without any Lumen
+/// API call, so without this watcher the viewer keeps screencasting the tab
+/// the human just left, their input lands in a hidden tab, and the browser
+/// looks frozen. On every new page target the session adopts it as the
+/// managed tab and the view plane rebinds. The task ends when the browser
+/// connection dies.
+fn spawn_tab_watcher(session: Arc<CdpSession>, view: Arc<ViewHub>) {
+    tokio::spawn(async move {
+        let mut created = match session.browser.event_listener::<EventTargetCreated>().await {
+            Ok(created) => created,
+            Err(err) => {
+                tracing::warn!("browser tab watcher unavailable: {err}");
+                return;
+            }
+        };
+        while let Some(event) = created.next().await {
+            if event.target_info.r#type != "page" {
+                continue;
+            }
+            let target_id = event.target_info.target_id.inner().clone();
+            // A brand-new target is not attachable yet, so it is missing from
+            // `browser.pages()` on the first attempts; poll briefly for it.
+            for _ in 0..ADOPT_ATTEMPTS {
+                if session.target_id().await == target_id {
+                    break;
+                }
+                match session.adopt_opened_page(&target_id).await {
+                    Ok(true) => {
+                        tracing::info!(target = %target_id, "adopted browser-opened tab");
+                        view.rebind().await;
+                        break;
+                    }
+                    Ok(false) => {}
+                    Err(err) => tracing::debug!(target = %target_id, "adopt attempt failed: {err}"),
+                }
+                tokio::time::sleep(ADOPT_RETRY).await;
+            }
+        }
+    });
+}
+
+/// How long adoption may poll for a browser-opened tab to become attachable.
+const ADOPT_ATTEMPTS: usize = 20;
+const ADOPT_RETRY: Duration = Duration::from_millis(50);
 
 /// Removes a freshly created profile unless the browser is fully constructed.
 ///

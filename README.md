@@ -83,6 +83,9 @@ Every session is listed on the left of the viewer. The canvas is a live
 screencast of the session's active tab at its native viewport size. Use
 **Take control** to forward your mouse, wheel, and typing into the page;
 **Escape** hands control back to the agent. Zoom and fullscreen are view-only.
+Tabs the browser opens on its own — a `target=_blank` link, a popup — are
+adopted automatically, so what you watch is always the tab the browser is
+actually showing.
 
 To leave feedback, click **Comment** and drag a rectangle over the area — the
 agent sees the note and the exact region on its next `lumen feedback` call.

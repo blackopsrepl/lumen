@@ -52,6 +52,46 @@ test("keeps the managed tab active and protects the last tab", async ({ request 
   }
 });
 
+test("adopts a tab the browser opened itself", async ({ request }) => {
+  const name = sessionName("adopt");
+  // Chromium refuses to open popups at data: URLs, so aim the link at the
+  // service's own health endpoint.
+  const popup = process.env.LUMEN_URL || `http://127.0.0.1:${process.env.LUMEN_PORT || 18899}/healthz`;
+  const link = `data:text/html,<a%20href="${popup}"%20target="_blank"%20style="position:fixed;left:10px;top:10px;width:120px;height:40px;display:block">open</a>`;
+  try {
+    expect((await request.post("/v1/sessions", { data: { name } })).ok()).toBeTruthy();
+    expect((await request.post(`/v1/sessions/${name}/navigate`, { data: { url: link } })).ok()).toBeTruthy();
+    await expect
+      .poll(async () => {
+        const tabs = await (await request.get(`/v1/sessions/${name}/tabs`)).json();
+        return tabs.find((tab) => tab.active)?.url;
+      })
+      .toContain("target=");
+
+    // A trusted click (viewer Take control, or an agent over CDP) on a
+    // target=_blank link makes the browser open and foreground a tab without
+    // any Lumen API call. The managed tab must follow it.
+    const click = (type) =>
+      request.post(`/v1/sessions/${name}/cdp`, {
+        data: {
+          method: "Input.dispatchMouseEvent",
+          params: { type, x: 60, y: 20, button: "left", clickCount: 1 },
+        },
+      });
+    expect((await click("mousePressed")).ok()).toBeTruthy();
+    expect((await click("mouseReleased")).ok()).toBeTruthy();
+
+    await expect
+      .poll(async () => {
+        const tabs = await (await request.get(`/v1/sessions/${name}/tabs`)).json();
+        return tabs.filter((tab) => tab.active).map((tab) => tab.url);
+      })
+      .toEqual([popup]);
+  } finally {
+    await request.delete(`/v1/sessions/${name}`);
+  }
+});
+
 test("deleting a session removes read and stream targets", async ({ request }) => {
   const name = sessionName("delete");
   expect((await request.post("/v1/sessions", { data: { name } })).ok()).toBeTruthy();

@@ -365,10 +365,40 @@ impl CdpSession {
         page.bring_to_front().await?;
         let old = {
             let mut current = self.page.write().await;
+            if current.target_id().inner() == page.target_id().inner() {
+                return Ok(());
+            }
             std::mem::replace(&mut *current, page)
         };
         let _ = self.stop_screencast_on(&old).await;
         Ok(())
+    }
+
+    /// Make a tab the browser opened on its own (a `target=_blank` link, a
+    /// popup) the managed tab, so the view and control planes follow what the
+    /// browser actually shows instead of stranding on the tab the human left.
+    /// Returns whether the managed tab changed.
+    pub async fn adopt_opened_page(&self, target_id: &str) -> Result<bool> {
+        let Some(page) = self
+            .browser
+            .pages()
+            .await?
+            .into_iter()
+            .find(|candidate| candidate.target_id().inner() == target_id)
+        else {
+            return Ok(false);
+        };
+        self.ensure_policy_guard(&page).await?;
+        page.bring_to_front().await?;
+        let old = {
+            let mut current = self.page.write().await;
+            if current.target_id().inner() == page.target_id().inner() {
+                return Ok(false);
+            }
+            std::mem::replace(&mut *current, page)
+        };
+        let _ = self.stop_screencast_on(&old).await;
+        Ok(true)
     }
 
     pub async fn activate_tab(&self, index: usize) -> Result<bool> {

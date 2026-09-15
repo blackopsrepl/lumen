@@ -39,7 +39,7 @@ A production `lumen` container usually runs on 8899 with host networking and liv
 ## Code invariants
 
 - `Policy::check` (`src/config.rs`) is the single navigation-policy predicate, enforced at two points: Lumen's HTTP preflight (403) and a per-tab CDP `Fetch.enable` interception (`ERR_BLOCKED_BY_CLIENT`). Never add a second check. Enforcement scope (covers every tab Lumen mediates; not a sandbox for agent-created tabs) is documented in README "Security" — read it before reasoning about "bypass".
-- Exactly one managed page per `CdpSession` (`src/cdp.rs`); tab activation replaces it and stops the old screencast. `ViewHub::rebind` must follow any managed-page swap from HTTP handlers.
+- Exactly one managed page per `CdpSession` (`src/cdp.rs`); tab activation replaces it and stops the old screencast. Activation happens through the API and through the supervisor watcher that adopts tabs the browser opens itself (`target=_blank`, popups). `ViewHub::rebind` must follow every managed-page swap, wherever it happens.
 - Browser profiles are ephemeral and owned by one instance: `<data_dir>/run/<name>-<suffix>` exists only while that browser is alive. Shutdown, reaping, and startup reconciliation remove them; the path is service-generated so deletion never derives from API input.
 - `chromiumoxide::Page::close(self)` consumes the page — clone `target_id` before closing if you need it afterwards.
 - UI assets are embedded via `rust-embed` (`src/http.rs`): debug builds read `ui/` from disk, release builds embed. Verify UI changes under `cargo run`, rebuild the image for release behavior.
