@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Reused by release.yml so a tag cannot publish without passing these gates.
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same gates the Forgejo workflow runs; the Makefile owns their order.
+      - name: Toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Test dependencies
+        run: |
+          npm ci
+          # GitHub runners do not ship Chromium's runtime libraries.
+          npx playwright install-deps chromium
+
+      - name: Gates
+        run: make ci
