@@ -105,8 +105,11 @@ the host at `http://127.0.0.1:<port>` (`host.containers.internal` and
 | `make help` | every target, grouped |
 
 Configuration lives in `config/lumen.toml`; `LUMEN_CONFIG`, `LUMEN_PORT`, and
-`LUMEN_CHROME` override it (see `.env.example`). The systemd user unit
-(`make install-systemd`) keeps the service running across logouts via linger.
+`LUMEN_CHROME` override it, and `LUMEN_LOG` sets the service's log level (see
+`.env.example`). A globally exported `RUST_LOG` is deliberately ignored so a
+shell setting cannot silently change the container's verbosity. The systemd
+user unit (`make install-systemd`) keeps the service running across logouts via
+linger.
 
 Browser profiles are ephemeral. Lumen gives each browser instance a private
 profile directory under `<data_dir>/run` and reclaims it when that browser ends

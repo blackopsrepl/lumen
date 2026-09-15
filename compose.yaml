@@ -49,7 +49,9 @@ services:
       LUMEN_CONFIG: /etc/lumen/lumen.toml
       LUMEN_PORT: ${LUMEN_PORT:-8899}
       LUMEN_CHROME: ${LUMEN_CHROME:-chromium}
-      RUST_LOG: ${RUST_LOG:-lumen=info}
+      # Deliberately not ${RUST_LOG}: a globally exported RUST_LOG in the
+      # operator's shell would silently override the service's log level.
+      RUST_LOG: ${LUMEN_LOG:-lumen=info}
       TZ: ${TZ:-UTC}
     volumes:
       - lumen-data:/data
