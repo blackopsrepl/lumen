@@ -16,7 +16,9 @@ pub struct Config {
     pub port: u16,
     /// Maximum concurrently running agent browsers.
     pub max_agents: usize,
-    /// Per-agent Chromium profile root inside the container.
+    /// Root for ephemeral per-session browser profiles. Lumen owns
+    /// `<data_dir>/run`: it creates one profile per browser instance and
+    /// removes it when that browser ends, and clears the tree at startup.
     pub data_dir: PathBuf,
     /// Chromium binary executed by the supervisor.
     pub chrome_bin: String,

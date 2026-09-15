@@ -95,7 +95,7 @@ the host at `http://127.0.0.1:<port>` (`host.containers.internal` and
 
 | make target | what it does |
 | --- | --- |
-| `make up` / `make down` / `make restart` | start / stop / restart the service |
+| `make up` / `make down` / `make restart` | start / stop / restart the service (browser state is ephemeral) |
 | `make status` | container state, health, active sessions |
 | `make logs` | follow service logs |
 | `make shell` | shell inside the container |
@@ -106,6 +106,12 @@ the host at `http://127.0.0.1:<port>` (`host.containers.internal` and
 Configuration lives in `config/lumen.toml`; `LUMEN_CONFIG`, `LUMEN_PORT`, and
 `LUMEN_CHROME` override it (see `.env.example`). The systemd user unit
 (`make install-systemd`) keeps the service running across logouts via linger.
+
+Browser profiles are ephemeral. Lumen gives each browser instance a private
+profile directory under `<data_dir>/run` and reclaims it when that browser ends
+— on session delete, on a crash, and at the next start — so no browser state
+survives a session and nothing accumulates. The feedback database lives at
+`<data_dir>/feedback.db` and does persist.
 
 Upgrading:
 

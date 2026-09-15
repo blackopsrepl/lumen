@@ -66,7 +66,7 @@ up: ## Start the service (detached)
 	@printf "$(ARROW) Starting service...\n"
 	@$(BIN)/up.sh && printf "$(GREEN)$(CHECK) Lumen: http://127.0.0.1:$${LUMEN_PORT:-8899}/$(RESET)\n\n"
 
-down: ## Stop the service (keeps browser profiles)
+down: ## Stop the service (browser profiles are ephemeral; /data is kept)
 	@printf "$(ARROW) Stopping service...\n"
 	@$(BIN)/down.sh && printf "$(GREEN)$(CHECK) Stopped$(RESET)\n\n"
 

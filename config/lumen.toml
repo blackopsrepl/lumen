@@ -1,6 +1,9 @@
 host = "127.0.0.1"
 port = 8899
 max_agents = 8
+# Root for ephemeral per-session browser profiles. Lumen owns <data_dir>/run:
+# one directory per browser instance, removed when the browser ends and cleared
+# at startup. Browser state (cookies, logins) therefore never outlives a session.
 data_dir = "/data/agents"
 chrome_bin = "chromium"
 feedback_db = "/data/feedback.db"
