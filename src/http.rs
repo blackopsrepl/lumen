@@ -521,6 +521,14 @@ async fn stream_session(socket: WebSocket, state: AppState, name: String) {
         }
     });
 
+    // A page only screencasts on change; hand the joiner the last known frame
+    // so an idle page does not leave the viewer staring at an empty canvas.
+    if let Some(latest) = hub.latest_frame().await {
+        let _ = out_tx
+            .send(Message::Binary(Bytes::from(latest.to_vec())))
+            .await;
+    }
+
     let _ = out_tx
         .send(Message::Text(control_event(hub.control().await).into()))
         .await;

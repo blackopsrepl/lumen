@@ -24,6 +24,9 @@ pub enum Control {
 pub struct ViewHub {
     session: Arc<CdpSession>,
     frames: broadcast::Sender<Arc<Vec<u8>>>,
+    /// The most recent frame, so a viewer joining an idle page paints
+    /// immediately instead of waiting for the content to change.
+    latest: Arc<Mutex<Option<Arc<Vec<u8>>>>>,
     started: Arc<AtomicBool>,
     lifecycle: Mutex<()>,
     pump: Mutex<Option<JoinHandle<()>>>,
@@ -36,6 +39,7 @@ impl ViewHub {
         Self {
             session,
             frames,
+            latest: Arc::new(Mutex::new(None)),
             started: Arc::new(AtomicBool::new(false)),
             lifecycle: Mutex::new(()),
             pump: Mutex::new(None),
@@ -48,6 +52,11 @@ impl ViewHub {
         let receiver = self.frames.subscribe();
         self.ensure_started().await;
         receiver
+    }
+
+    /// The most recent frame, if any screencast has produced one.
+    pub async fn latest_frame(&self) -> Option<Arc<Vec<u8>>> {
+        self.latest.lock().await.clone()
     }
 
     /// Turn the screencast on or off. Off frees the browser from encoding frames
@@ -103,13 +112,16 @@ impl ViewHub {
 
         let session = self.session.clone();
         let frames = self.frames.clone();
+        let latest = self.latest.clone();
         let started = self.started.clone();
         let pump = tokio::spawn(async move {
             while let Some(frame) = stream.next().await {
                 let encoded: &str = frame.data.as_ref();
                 match base64::engine::general_purpose::STANDARD.decode(encoded) {
                     Ok(bytes) => {
-                        let _ = frames.send(Arc::new(bytes));
+                        let frame = Arc::new(bytes);
+                        *latest.lock().await = Some(frame.clone());
+                        let _ = frames.send(frame);
                     }
                     Err(err) => tracing::warn!("screencast frame decode failed: {err}"),
                 }
