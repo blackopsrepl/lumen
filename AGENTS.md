@@ -22,9 +22,9 @@ Keep `Cargo.lock` in sync — CI builds `--locked`. Run the same order locally b
 
 ## The 8899 port trap
 
-A production `lumen` container usually runs on 8899 with host networking and live sessions. `playwright.config.js` uses `reuseExistingServer: true`, so if the suite targets a port where anything answers, it silently tests that process — not your worktree.
+A production `lumen` container usually runs on 8899 with host networking and live sessions, so a test run must never assume whatever answers on a port is the service under test.
 
-- Always run E2E via `make ui-test`: it uses `LUMEN_TEST_PORT` (default 18899) and self-hosts a disposable service with `tests/e2e/lumen.toml`.
+- Always run E2E via `make ui-test`: `bin/ui-test.sh` picks a free port starting at `LUMEN_TEST_PORT` (default 18899), writes a per-run config with its own data directory, and starts its own server. `playwright.config.js` sets `reuseExistingServer: false`, so the suite can only exercise the worktree it just started.
 - Only test the production service by explicitly setting `LUMEN_URL`.
 - Do not restart the production container to "refresh" tests; it owns real sessions. `bin/smoke.sh` runs against the live service and honors `LUMEN_PORT`/`LUMEN_CONTAINER`.
 

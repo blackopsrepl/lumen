@@ -134,7 +134,7 @@ make ci          # the exact CI gates, in CI order:
                  #   fmt → clippy → Rust tests → release build → viewer E2E
 make test-unit   # Rust tests only
 make smoke       # black-box smoke test against the live service
-make ui-test     # Playwright E2E on a disposable service (port 18899)
+make ui-test     # Playwright E2E on a disposable service (own free port + state)
 ```
 
 Run a single Rust test with `cargo test <name-substring>`. For a single E2E

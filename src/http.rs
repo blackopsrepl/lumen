@@ -213,8 +213,15 @@ async fn style_css() -> Response {
     asset("style.css", "text/css; charset=utf-8")
 }
 
-async fn healthz() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+async fn healthz(State(state): State<AppState>) -> Response {
+    if state.is_draining() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "status": "draining" })),
+        )
+            .into_response();
+    }
+    Json(json!({ "status": "ok" })).into_response()
 }
 
 async fn list_sessions(State(state): State<AppState>) -> Json<Vec<AgentInfo>> {

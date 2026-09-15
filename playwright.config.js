@@ -26,9 +26,12 @@ module.exports = defineConfig({
   webServer: process.env.LUMEN_URL
     ? undefined
     : {
-        command: "LUMEN_CONFIG=tests/e2e/lumen.toml cargo run --quiet -- serve",
+        command: `LUMEN_CONFIG=${process.env.LUMEN_TEST_CONFIG || "tests/e2e/lumen.toml"} cargo run --quiet -- serve`,
         url: `${baseURL}/healthz`,
         timeout: 120_000,
-        reuseExistingServer: true,
+        // Always start our own server. Reusing whatever answers on the port is
+        // how the suite ends up testing a leftover or the production service;
+        // make ui-test picks a free port so this can never collide.
+        reuseExistingServer: false,
       },
 });

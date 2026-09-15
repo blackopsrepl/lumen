@@ -126,10 +126,9 @@ smoke: ## Black-box smoke test against the live service
 		|| (printf "$(RED)$(CROSS) Smoke failed$(RESET)\n\n" && exit 1)
 
 ui-test: ## Browser-driven E2E on a disposable service (CI gate 5)
-	@printf "$(ARROW) $(BOLD)Viewer E2E on disposable service, port $(YELLOW)$(LUMEN_TEST_PORT)$(RESET)\n"
 	@npm ci --silent
 	@npx playwright install chromium >/dev/null
-	@LUMEN_PORT=$(LUMEN_TEST_PORT) LUMEN_CHROME="$$(node -e 'console.log(require("playwright").chromium.executablePath())')" npm run test:e2e --silent \
+	@$(BIN)/ui-test.sh \
 		&& printf "$(GREEN)$(CHECK) Viewer E2E passed$(RESET)\n\n" \
 		|| (printf "$(RED)$(CROSS) Viewer E2E failed$(RESET)\n\n" && exit 1)
 
