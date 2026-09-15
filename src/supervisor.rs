@@ -4,6 +4,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,6 +25,15 @@ use crate::view::ViewHub;
 /// misconfigured `data_dir` can never make startup reconciliation destructive.
 const PROFILE_SUBDIR: &str = "run";
 
+/// Marks a directory as created by Lumen for ephemeral browser profiles. The
+/// destructive startup reconciliation only runs inside a tree that carries it.
+const PROFILE_MARKER: &str = ".lumen-profile-root";
+const PROFILE_MARKER_CONTENT: &str = "lumen ephemeral browser profiles; safe to clear\n";
+
+/// Advisory lock held for the life of the process, so two instances can never
+/// manage — and delete — each other's profiles.
+const PROFILE_LOCK: &str = ".lumen-profile.lock";
+
 /// How often the running service reclaims profiles whose purge failed.
 const PROFILE_SWEEP_INTERVAL: Duration = Duration::from_secs(300);
 
@@ -33,6 +43,9 @@ static PROFILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub struct Supervisor {
     config: Arc<Config>,
     agents: Mutex<HashMap<String, Arc<AgentBrowser>>>,
+    /// Held for the process lifetime; dropping it releases the profile-root
+    /// lock to the next instance.
+    _lock: std::fs::File,
 }
 
 /// One isolated Chromium and the CDP session bound to its managed page.
@@ -114,10 +127,13 @@ impl Supervisor {
     /// can be live yet, so every directory under the profile root is residue
     /// from a crash, an interrupted teardown, or a restart.
     pub fn new(config: Arc<Config>) -> Result<Self> {
-        reconcile_profile_root(&profile_root(&config.data_dir))?;
+        let root = profile_root(&config.data_dir);
+        let lock = lock_profile_root(&root)?;
+        reconcile_profile_root(&root)?;
         Ok(Self {
             config,
             agents: Mutex::new(HashMap::new()),
+            _lock: lock,
         })
     }
 
@@ -498,8 +514,14 @@ fn profile_root(data_dir: &Path) -> PathBuf {
     data_dir.join(PROFILE_SUBDIR)
 }
 
-/// Create the dedicated profile root, refusing to manage a symlinked path so
-/// cleanup can never be redirected outside it.
+/// Create or adopt the dedicated profile root.
+///
+/// Refuses a symlinked path so cleanup can never be redirected outside it, and
+/// refuses a non-empty directory that Lumen did not create: the dangerous case
+/// is a `data_dir` misconfigured to something like `/`, which would otherwise
+/// aim the reconciliation at `/run`. Adoption is allowed only when the
+/// directory is empty or holds nothing but profile directories, which is how a
+/// tree written by an earlier version (with no marker yet) is taken over.
 fn prepare_profile_root(root: &Path) -> Result<()> {
     match std::fs::symlink_metadata(root) {
         Ok(meta) => {
@@ -512,12 +534,86 @@ fn prepare_profile_root(root: &Path) -> Result<()> {
             if !meta.is_dir() {
                 bail!("profile root {} is not a directory", root.display());
             }
-            Ok(())
+            if root.join(PROFILE_MARKER).exists() {
+                return Ok(());
+            }
+            let entries = std::fs::read_dir(root)
+                .with_context(|| format!("reading profile root {}", root.display()))?;
+            let foreign: Vec<String> = entries
+                .flatten()
+                .filter(|entry| {
+                    !(entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false)
+                        && looks_like_profile_dir(&entry.file_name().to_string_lossy()))
+                })
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            if !foreign.is_empty() {
+                bail!(
+                    "refusing to manage profile root {}: it holds entries Lumen did not create ({}); \
+                     point data_dir at a dedicated directory or clear it",
+                    root.display(),
+                    foreign.join(", ")
+                );
+            }
+            write_profile_marker(root)
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir_all(root)
-            .with_context(|| format!("creating profile root {}", root.display())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(root)
+                .with_context(|| format!("creating profile root {}", root.display()))?;
+            write_profile_marker(root)
+        }
         Err(err) => Err(err).with_context(|| format!("reading profile root {}", root.display())),
     }
+}
+
+fn write_profile_marker(root: &Path) -> Result<()> {
+    let marker = root.join(PROFILE_MARKER);
+    std::fs::write(&marker, PROFILE_MARKER_CONTENT)
+        .with_context(|| format!("writing {}", marker.display()))
+}
+
+/// Whether a name matches the generated profile-directory pattern
+/// `<session>-<pid>-<counter>-<nanos>`. Session names may themselves contain
+/// `-`, so the check anchors on the last three numeric fields.
+fn looks_like_profile_dir(name: &str) -> bool {
+    let mut parts = name.rsplitn(4, '-');
+    let nanos = parts.next();
+    let counter = parts.next();
+    let pid = parts.next();
+    let session = parts.next();
+    let numeric = |value: Option<&str>| {
+        value.is_some_and(|value| !value.is_empty() && value.chars().all(|c| c.is_ascii_digit()))
+    };
+    numeric(nanos)
+        && numeric(counter)
+        && numeric(pid)
+        && session.is_some_and(|session| !session.is_empty())
+}
+
+/// Take the exclusive profile-root lock, preparing the tree first.
+///
+/// A second instance sharing `data_dir` fails here instead of deleting the
+/// profiles of the first.
+fn lock_profile_root(root: &Path) -> Result<std::fs::File> {
+    prepare_profile_root(root)?;
+    let path = root.join(PROFILE_LOCK);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .with_context(|| format!("opening {}", path.display()))?;
+    // SAFETY: `flock` is called on a live fd we own and only sets an advisory
+    // lock; a non-zero return is handled as a normal error.
+    let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if locked != 0 {
+        bail!(
+            "profile root {} is already managed by another running lumen instance",
+            root.display()
+        );
+    }
+    Ok(file)
 }
 
 /// Create a unique, service-generated profile directory for one browser.
@@ -621,7 +717,8 @@ async fn purge_profile(path: PathBuf) -> Option<u64> {
     }
 }
 
-/// Remove every profile left by a previous process.
+/// Remove every profile left by a previous process, keeping the root's own
+/// marker and lock.
 fn reconcile_profile_root(root: &Path) -> Result<()> {
     prepare_profile_root(root)?;
     let entries = std::fs::read_dir(root)
@@ -629,6 +726,11 @@ fn reconcile_profile_root(root: &Path) -> Result<()> {
     let mut removed = 0usize;
     let mut bytes = 0u64;
     for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == PROFILE_MARKER || name == PROFILE_LOCK {
+            continue;
+        }
         let path = entry.path();
         let size = dir_size(&path);
         match remove_path_retrying(&path) {
@@ -647,13 +749,15 @@ fn reconcile_profile_root(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Profile directories that no live browser owns.
+/// Profile directories that no live browser owns. Files (the root's marker and
+/// lock) are never treated as profiles.
 fn stale_profiles(root: &Path, live: &HashSet<PathBuf>) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
     };
     entries
         .flatten()
+        .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
         .map(|entry| entry.path())
         .filter(|path| !live.contains(path))
         .collect()
@@ -744,11 +848,53 @@ mod tests {
     fn reconciliation_clears_only_the_profile_root() {
         let base = temp_root("reconcile");
         let root = profile_root(&base);
-        std::fs::create_dir_all(root.join("leftover")).expect("leftover");
+        std::fs::create_dir_all(root.join("alice-1-1-1")).expect("leftover");
+        std::fs::write(root.join(PROFILE_MARKER), "x").expect("marker");
         std::fs::create_dir_all(base.join("keep")).expect("keep");
         reconcile_profile_root(&root).expect("reconcile");
-        assert!(!root.join("leftover").exists());
+        assert!(!root.join("alice-1-1-1").exists());
+        assert!(root.join(PROFILE_MARKER).exists());
         assert!(base.join("keep").exists());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn refuses_a_non_empty_root_it_did_not_create() {
+        let base = temp_root("foreign");
+        let root = profile_root(&base);
+        std::fs::create_dir_all(root.join("systemd")).expect("foreign entry");
+        assert!(prepare_profile_root(&root).is_err());
+        assert!(root.join("systemd").exists());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn adopts_an_empty_root_and_a_root_of_old_profiles() {
+        let base = temp_root("adopt");
+        let root = profile_root(&base);
+        std::fs::create_dir_all(&root).expect("root");
+        prepare_profile_root(&root).expect("adopt empty");
+        assert!(root.join(PROFILE_MARKER).exists());
+
+        let upgraded = temp_root("upgrade");
+        let upgraded_root = profile_root(&upgraded);
+        std::fs::create_dir_all(upgraded_root.join("alice-7-2-1789482902823221842"))
+            .expect("old profile");
+        prepare_profile_root(&upgraded_root).expect("adopt old profiles");
+        assert!(upgraded_root.join(PROFILE_MARKER).exists());
+
+        std::fs::remove_dir_all(&base).ok();
+        std::fs::remove_dir_all(&upgraded).ok();
+    }
+
+    #[test]
+    fn refuses_a_second_instance_on_the_same_root() {
+        let base = temp_root("lock");
+        let root = profile_root(&base);
+        let first = lock_profile_root(&root).expect("first instance");
+        assert!(lock_profile_root(&root).is_err());
+        drop(first);
+        assert!(lock_profile_root(&root).is_ok());
         std::fs::remove_dir_all(&base).ok();
     }
 
