@@ -1,9 +1,11 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStderr, Command};
 use tokio::sync::Mutex;
@@ -11,6 +13,18 @@ use tokio::sync::Mutex;
 use crate::cdp::CdpSession;
 use crate::config::Config;
 use crate::view::ViewHub;
+
+/// Subdirectory of `data_dir` that holds ephemeral browser profiles.
+///
+/// Lumen owns this tree: it creates one directory per browser instance and
+/// removes it when that browser ends. Keeping it in a dedicated subtree means a
+/// misconfigured `data_dir` can never make startup reconciliation destructive.
+const PROFILE_SUBDIR: &str = "run";
+
+/// How often the running service reclaims profiles whose purge failed.
+const PROFILE_SWEEP_INTERVAL: Duration = Duration::from_secs(300);
+
+static PROFILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Owns every agent browser: launch, isolation, discovery, and teardown.
 pub struct Supervisor {
@@ -26,6 +40,10 @@ pub struct AgentBrowser {
     pub cdp_endpoint: String,
     pub session: Arc<CdpSession>,
     pub view: Arc<ViewHub>,
+    /// Ephemeral profile directory owned by this browser instance. It is
+    /// removed on shutdown, and reclaimed at startup if this process died
+    /// first; it is never reused by another instance.
+    profile: PathBuf,
     meta: Mutex<SessionMeta>,
     child: Mutex<Child>,
 }
@@ -67,11 +85,31 @@ impl AgentBrowser {
 }
 
 impl Supervisor {
-    pub fn new(config: Arc<Config>) -> Self {
-        Self {
+    /// Prepare the profile tree, reclaiming whatever a previous process left.
+    ///
+    /// Reconciliation happens before the service accepts requests: no browser
+    /// can be live yet, so every directory under the profile root is residue
+    /// from a crash, an interrupted teardown, or a restart.
+    pub fn new(config: Arc<Config>) -> Result<Self> {
+        reconcile_profile_root(&profile_root(&config.data_dir))?;
+        Ok(Self {
             config,
             agents: Mutex::new(HashMap::new()),
-        }
+        })
+    }
+
+    /// Start the background sweeper that reclaims profiles whose purge failed
+    /// while the service kept running. Detached: the task lives for the process.
+    pub fn spawn_janitor(self: &Arc<Self>) {
+        let supervisor = self.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(PROFILE_SWEEP_INTERVAL);
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                supervisor.sweep_orphan_profiles().await;
+            }
+        });
     }
 
     /// Return the agent's browser, launching it on first use. Provenance is
@@ -113,6 +151,8 @@ impl Supervisor {
             bail!("max agents ({}) reached", self.config.max_agents);
         }
 
+        // Launching while holding the lock is what makes the sweeper safe: a
+        // browser directory is never visible without its map entry.
         let agent = self.launch(name).await?;
         if let Some((origin, owner)) = provenance {
             let mut meta = agent.meta.lock().await;
@@ -135,12 +175,15 @@ impl Supervisor {
 
     /// Return a running session without creating one.
     pub async fn existing(&self, name: &str) -> Option<Arc<AgentBrowser>> {
-        let mut agents = self.agents.lock().await;
-        let agent = agents.get(name).cloned()?;
-        if agent.is_alive().await {
-            return Some(agent);
-        }
-        agents.remove(name);
+        let agent = {
+            let mut agents = self.agents.lock().await;
+            let agent = agents.get(name).cloned()?;
+            if agent.is_alive().await {
+                return Some(agent);
+            }
+            agents.remove(name);
+            agent
+        };
         agent.shutdown().await;
         None
     }
@@ -158,9 +201,9 @@ impl Supervisor {
     }
 
     async fn launch(&self, name: &str) -> Result<Arc<AgentBrowser>> {
-        let profile = self.config.data_dir.join(name);
-        std::fs::create_dir_all(&profile)
-            .with_context(|| format!("creating profile dir {}", profile.display()))?;
+        let profile = create_profile_dir(&profile_root(&self.config.data_dir), name)?;
+        // Until the browser is registered, an error path would leak the profile.
+        let mut guard = ProfileGuard::new(profile.clone());
 
         let viewport = self.config.default_viewport;
         let mut child = Command::new(&self.config.chrome_bin)
@@ -201,12 +244,14 @@ impl Supervisor {
             .await?;
         let view = Arc::new(ViewHub::new(session.clone()));
 
-        tracing::info!(agent = name, %cdp_endpoint, "agent browser ready");
+        tracing::info!(agent = name, %cdp_endpoint, profile = %profile.display(), "agent browser ready");
+        let profile = guard.disarm();
         Ok(Arc::new(AgentBrowser {
             name: name.to_string(),
             cdp_endpoint,
             session,
             view,
+            profile,
             meta: Mutex::new(SessionMeta {
                 origin: Origin::Manual,
                 owner: None,
@@ -216,20 +261,40 @@ impl Supervisor {
     }
 
     async fn reap_dead(&self) {
-        let mut agents = self.agents.lock().await;
-        let names: Vec<String> = agents.keys().cloned().collect();
-        let mut dead = Vec::new();
-        for name in names {
-            if let Some(agent) = agents.get(&name) {
-                if !agent.is_alive().await {
-                    dead.push(name);
+        let dead: Vec<Arc<AgentBrowser>> = {
+            let mut agents = self.agents.lock().await;
+            let names: Vec<String> = agents.keys().cloned().collect();
+            let mut dead = Vec::new();
+            for name in &names {
+                if let Some(agent) = agents.get(name) {
+                    if !agent.is_alive().await {
+                        dead.push(name.clone());
+                    }
                 }
             }
+            dead.into_iter()
+                .filter_map(|name| agents.remove(&name))
+                .collect()
+        };
+        for agent in dead {
+            agent.shutdown().await;
         }
-        for name in dead {
-            if let Some(agent) = agents.remove(&name) {
-                agent.shutdown().await;
-            }
+    }
+
+    /// Reclaim profiles no live browser owns, for purges that failed earlier.
+    ///
+    /// The live set and the directory listing are read under the agents lock,
+    /// which launches also hold for their whole lifetime, so a browser being
+    /// created can never be mistaken for residue.
+    async fn sweep_orphan_profiles(&self) {
+        let stale = {
+            let agents = self.agents.lock().await;
+            let live: HashSet<PathBuf> =
+                agents.values().map(|agent| agent.profile.clone()).collect();
+            stale_profiles(&profile_root(&self.config.data_dir), &live)
+        };
+        for path in stale {
+            purge_profile(path).await;
         }
     }
 }
@@ -242,10 +307,200 @@ impl AgentBrowser {
         matches!(self.child.lock().await.try_wait(), Ok(None))
     }
 
-    /// Stop this agent's Chromium.
+    /// Stop this agent's Chromium and reclaim its profile directory.
     pub async fn shutdown(&self) {
         let _ = self.child.lock().await.kill().await;
+        let _ = purge_profile(self.profile.clone()).await;
     }
+}
+
+/// Removes a freshly created profile unless the browser is fully constructed.
+///
+/// Launch failures (port discovery, CDP connect, viewport) must not leak the
+/// directory, and only the successful path disarms this.
+struct ProfileGuard(Option<PathBuf>);
+
+impl ProfileGuard {
+    fn new(path: PathBuf) -> Self {
+        Self(Some(path))
+    }
+
+    fn disarm(&mut self) -> PathBuf {
+        self.0.take().expect("profile guard already disarmed")
+    }
+}
+
+impl Drop for ProfileGuard {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = remove_path(&path);
+        }
+    }
+}
+
+fn profile_root(data_dir: &Path) -> PathBuf {
+    data_dir.join(PROFILE_SUBDIR)
+}
+
+/// Create the dedicated profile root, refusing to manage a symlinked path so
+/// cleanup can never be redirected outside it.
+fn prepare_profile_root(root: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(root) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                bail!(
+                    "profile root {} is a symlink; refusing to manage it",
+                    root.display()
+                );
+            }
+            if !meta.is_dir() {
+                bail!("profile root {} is not a directory", root.display());
+            }
+            Ok(())
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => std::fs::create_dir_all(root)
+            .with_context(|| format!("creating profile root {}", root.display())),
+        Err(err) => Err(err).with_context(|| format!("reading profile root {}", root.display())),
+    }
+}
+
+/// Create a unique, service-generated profile directory for one browser.
+///
+/// The path never derives from API input, so no session name can escape the
+/// root, and the suffix keeps a fresh browser from reusing a profile left
+/// behind by a crashed one.
+fn create_profile_dir(root: &Path, name: &str) -> Result<PathBuf> {
+    prepare_profile_root(root)?;
+    for _ in 0..16 {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default();
+        let counter = PROFILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = root.join(format!("{name}-{}-{counter}-{nanos}", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(err).with_context(|| format!("creating profile {}", dir.display()))
+            }
+        }
+    }
+    bail!(
+        "could not allocate a unique profile directory under {}",
+        root.display()
+    )
+}
+
+/// Remove a profile path, treating an already-absent path as success.
+fn remove_path(path: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+/// Remove a profile, retrying briefly around Chromium's surviving children.
+///
+/// Chromium's crashpad, GPU, and renderer processes can outlive the browser
+/// process for a moment and keep writing into the profile, which makes a
+/// single `remove_dir_all` fail with `Directory not empty`.
+fn remove_path_retrying(path: &Path) -> std::io::Result<()> {
+    let mut last = None;
+    for attempt in 0..5 {
+        match remove_path(path) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                last = Some(err);
+                std::thread::sleep(Duration::from_millis(50 * (attempt + 1)));
+            }
+        }
+    }
+    Err(last.expect("at least one removal attempt"))
+}
+
+/// Bytes a profile occupies; symlinks are never followed.
+fn dir_size(path: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => dir_size(&entry.path()),
+            Ok(kind) if kind.is_symlink() => 0,
+            Ok(_) => entry.metadata().map(|meta| meta.len()).unwrap_or(0),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
+/// Remove one profile, reporting the bytes reclaimed.
+///
+/// Best effort: a failure is logged and either the running sweeper or the next
+/// startup reconciliation retries, so teardown never blocks on disk errors.
+async fn purge_profile(path: PathBuf) -> Option<u64> {
+    let shown = path.clone();
+    // Profile removal is unbounded blocking I/O; keep it off the runtime.
+    match tokio::task::spawn_blocking(move || {
+        let bytes = dir_size(&path);
+        remove_path_retrying(&path).map(|()| bytes)
+    })
+    .await
+    {
+        Ok(Ok(bytes)) => {
+            tracing::info!(profile = %shown.display(), bytes, "removed browser profile");
+            Some(bytes)
+        }
+        Ok(Err(err)) => {
+            tracing::warn!(profile = %shown.display(), "removing browser profile failed: {err}");
+            None
+        }
+        Err(err) => {
+            tracing::warn!(profile = %shown.display(), "profile cleanup task failed: {err}");
+            None
+        }
+    }
+}
+
+/// Remove every profile left by a previous process.
+fn reconcile_profile_root(root: &Path) -> Result<()> {
+    prepare_profile_root(root)?;
+    let entries = std::fs::read_dir(root)
+        .with_context(|| format!("reading profile root {}", root.display()))?;
+    let mut removed = 0usize;
+    let mut bytes = 0u64;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let size = dir_size(&path);
+        match remove_path_retrying(&path) {
+            Ok(()) => {
+                removed += 1;
+                bytes += size;
+            }
+            Err(err) => {
+                tracing::warn!(profile = %path.display(), "removing stale profile failed: {err}")
+            }
+        }
+    }
+    if removed > 0 {
+        tracing::info!(removed, bytes, root = %root.display(), "reconciled stale browser profiles");
+    }
+    Ok(())
+}
+
+/// Profile directories that no live browser owns.
+fn stale_profiles(root: &Path, live: &HashSet<PathBuf>) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| !live.contains(path))
+        .collect()
 }
 
 /// Read Chromium's stderr until it announces its DevTools endpoint, then keep
@@ -277,7 +532,8 @@ fn parse_devtools_port(line: &str) -> Option<u16> {
     digits.parse().ok()
 }
 
-/// Whether a session name is safe to use as a profile directory and URL path.
+/// Whether a session name is safe to embed in URLs, logs, and generated
+/// profile directory names.
 pub fn is_valid_agent_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
@@ -310,5 +566,73 @@ mod tests {
         assert!(!is_valid_agent_name("."));
         assert!(!is_valid_agent_name(".."));
         assert!(!is_valid_agent_name(&"a".repeat(33)));
+    }
+
+    #[test]
+    fn creates_a_unique_profile_per_call() {
+        let base = temp_root("unique");
+        let root = profile_root(&base);
+        let first = create_profile_dir(&root, "alice").expect("first profile");
+        let second = create_profile_dir(&root, "alice").expect("second profile");
+        assert_ne!(first, second);
+        assert!(first.starts_with(&root));
+        assert!(first
+            .file_name()
+            .expect("file name")
+            .to_string_lossy()
+            .starts_with("alice-"));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn reconciliation_clears_only_the_profile_root() {
+        let base = temp_root("reconcile");
+        let root = profile_root(&base);
+        std::fs::create_dir_all(root.join("leftover")).expect("leftover");
+        std::fs::create_dir_all(base.join("keep")).expect("keep");
+        reconcile_profile_root(&root).expect("reconcile");
+        assert!(!root.join("leftover").exists());
+        assert!(base.join("keep").exists());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn refuses_a_symlinked_profile_root() {
+        let base = temp_root("symlink");
+        let target = base.join("target");
+        std::fs::create_dir_all(&target).expect("target");
+        std::os::unix::fs::symlink(&target, profile_root(&base)).expect("symlink");
+        assert!(reconcile_profile_root(&profile_root(&base)).is_err());
+        assert!(target.exists());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn sweeps_only_profiles_without_a_live_browser() {
+        let base = temp_root("sweep");
+        let root = profile_root(&base);
+        std::fs::create_dir_all(root.join("live")).expect("live");
+        std::fs::create_dir_all(root.join("stale")).expect("stale");
+        let live: HashSet<PathBuf> = [root.join("live")].into_iter().collect();
+        assert_eq!(stale_profiles(&root, &live), vec![root.join("stale")]);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn removing_an_absent_profile_is_not_an_error() {
+        let base = temp_root("absent");
+        assert!(remove_path(&base.join("gone")).is_ok());
+        assert!(remove_path_retrying(&base.join("gone")).is_ok());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    fn temp_root(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("lumen-{label}-{nanos}"));
+        std::fs::create_dir_all(&path).expect("temp root");
+        path
     }
 }

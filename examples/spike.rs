@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&out_dir).context("create output dir")?;
 
     let viewport = config.default_viewport;
-    let supervisor = Supervisor::new(Arc::new(config));
+    let supervisor = Supervisor::new(Arc::new(config))?;
     println!("default viewport: {}x{}", viewport.width, viewport.height);
 
     let agent = supervisor.ensure("spike").await?;

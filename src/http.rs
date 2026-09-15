@@ -34,8 +34,10 @@ impl AppState {
     pub fn new(config: Config) -> anyhow::Result<Self> {
         let feedback = FeedbackStore::open(&config.feedback_db, config.audit_retain)?;
         let config = Arc::new(config);
+        let supervisor = Arc::new(Supervisor::new(config.clone())?);
+        supervisor.spawn_janitor();
         Ok(Self {
-            supervisor: Arc::new(Supervisor::new(config.clone())),
+            supervisor,
             feedback: Arc::new(feedback),
             config,
         })
@@ -167,6 +169,13 @@ async fn delete_session(
     }
     if !state.supervisor.remove(&name).await {
         return Err(ApiError::not_found(format!("session '{name}' not found")));
+    }
+    if let Err(err) = state
+        .feedback
+        .record(&name, "delete", "session stopped; profile purged")
+        .await
+    {
+        tracing::warn!("audit write failed: {err}");
     }
     Ok(StatusCode::NO_CONTENT)
 }
