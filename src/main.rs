@@ -94,7 +94,7 @@ async fn serve_async() -> anyhow::Result<()> {
         )
         .init();
 
-    let addr = config.bind_addr();
+    let addr = config.bind_addr()?;
     tracing::info!(
         "lumen listening on http://{addr} (default viewport {}x{})",
         config.default_viewport.width,

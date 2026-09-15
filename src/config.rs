@@ -147,9 +147,19 @@ impl Config {
         Ok(config)
     }
 
-    pub fn bind_addr(&self) -> SocketAddr {
-        let raw = format!("{}:{}", self.host, self.port);
-        raw.parse().expect("host/port must form a socket address")
+    /// Resolve the listen address, accepting `127.0.0.1`, `::1`, or a bracketed
+    /// IPv6 literal. A bad host is a configuration error, so it is reported
+    /// instead of panicking the whole service at startup.
+    pub fn bind_addr(&self) -> Result<SocketAddr> {
+        let host = self
+            .host
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']');
+        let ip: std::net::IpAddr = host
+            .parse()
+            .with_context(|| format!("host '{}' is not an IP address", self.host))?;
+        Ok(SocketAddr::new(ip, self.port))
     }
 }
 
@@ -213,5 +223,28 @@ mod tests {
         assert!(policy.check("https://example.com./").is_ok());
         assert!(policy.check("https://evil.test./").is_err());
         assert!(policy.check("https://api.eViL.TeSt/").is_err());
+    }
+
+    #[test]
+    fn bind_addr_accepts_ipv4_and_ipv6() {
+        let mut config = Config {
+            host: "127.0.0.1".into(),
+            port: 8899,
+            ..Config::default()
+        };
+        assert_eq!(config.bind_addr().unwrap().to_string(), "127.0.0.1:8899");
+        config.host = "::1".into();
+        assert_eq!(config.bind_addr().unwrap().to_string(), "[::1]:8899");
+        config.host = "[::1]".into();
+        assert_eq!(config.bind_addr().unwrap().to_string(), "[::1]:8899");
+    }
+
+    #[test]
+    fn bind_addr_reports_a_bad_host_instead_of_panicking() {
+        let config = Config {
+            host: "not-an-ip".into(),
+            ..Config::default()
+        };
+        assert!(config.bind_addr().is_err());
     }
 }
