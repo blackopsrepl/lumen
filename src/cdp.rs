@@ -21,7 +21,7 @@ use std::collections::hash_map::{Entry, HashMap};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -41,7 +41,10 @@ pub struct TabInfo {
 /// drives. Tab activation replaces it so those planes stay together.
 pub struct CdpSession {
     pub browser: Browser,
-    page: RwLock<Page>,
+    /// The one managed page. Held for the whole of every operation that
+    /// resolves "the current page" and then acts on it, so a tab switch can
+    /// never slip in between and leave a command driving a hidden page.
+    page: Mutex<Page>,
     handler: JoinHandle<()>,
     handler_alive: Arc<AtomicBool>,
     policy: crate::config::Policy,
@@ -145,7 +148,7 @@ impl CdpSession {
 
         Ok(Arc::new(Self {
             browser,
-            page: RwLock::new(page),
+            page: Mutex::new(page),
             handler,
             handler_alive,
             policy,
@@ -155,8 +158,11 @@ impl CdpSession {
         }))
     }
 
+    /// A snapshot of the managed page. Only for callers that need an owned
+    /// `Page` outside a serialized operation (the view plane); control-plane
+    /// operations must act under the lock instead.
     pub async fn current_page(&self) -> Page {
-        self.page.read().await.clone()
+        self.page.lock().await.clone()
     }
 
     pub fn is_alive(&self) -> bool {
@@ -173,7 +179,8 @@ impl CdpSession {
             .mobile(false)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.current_page()
+        self.page
+            .lock()
             .await
             .execute(params)
             .await
@@ -182,12 +189,14 @@ impl CdpSession {
     }
 
     pub async fn goto(&self, url: &str) -> Result<()> {
-        self.navigate_page(&self.current_page().await, url).await
+        let page = self.page.lock().await;
+        self.navigate_page(&page, url).await
     }
 
     /// Begin streaming the page at its native viewport size.
     pub async fn start_screencast(&self) -> Result<()> {
-        self.start_screencast_on(&self.current_page().await).await
+        let page = self.page.lock().await;
+        self.start_screencast_on(&page).await
     }
 
     pub async fn start_screencast_on(&self, page: &Page) -> Result<()> {
@@ -200,7 +209,8 @@ impl CdpSession {
     }
 
     pub async fn stop_screencast(&self) -> Result<()> {
-        self.stop_screencast_on(&self.current_page().await).await
+        let page = self.page.lock().await;
+        self.stop_screencast_on(&page).await
     }
 
     pub async fn stop_screencast_on(&self, page: &Page) -> Result<()> {
@@ -212,8 +222,8 @@ impl CdpSession {
 
     /// Acknowledge a frame so Chromium releases the next one (flow control).
     pub async fn ack_frame(&self, session_id: i64) -> Result<()> {
-        self.ack_frame_on(&self.current_page().await, session_id)
-            .await
+        let page = self.page.lock().await;
+        self.ack_frame_on(&page, session_id).await
     }
 
     pub async fn ack_frame_on(&self, page: &Page, session_id: i64) -> Result<()> {
@@ -228,14 +238,17 @@ impl CdpSession {
     }
 
     pub async fn click(&self, x: f64, y: f64) -> Result<()> {
-        self.mouse(
+        let page = self.page.lock().await;
+        self.mouse_on(
+            &page,
             DispatchMouseEventType::MousePressed,
             x,
             y,
             MouseButton::Left,
         )
         .await?;
-        self.mouse(
+        self.mouse_on(
+            &page,
             DispatchMouseEventType::MouseReleased,
             x,
             y,
@@ -253,6 +266,18 @@ impl CdpSession {
         y: f64,
         button: MouseButton,
     ) -> Result<()> {
+        let page = self.page.lock().await;
+        self.mouse_on(&page, kind, x, y, button).await
+    }
+
+    async fn mouse_on(
+        &self,
+        page: &Page,
+        kind: DispatchMouseEventType,
+        x: f64,
+        y: f64,
+        button: MouseButton,
+    ) -> Result<()> {
         let params = DispatchMouseEventParams::builder()
             .r#type(kind)
             .x(x)
@@ -261,9 +286,7 @@ impl CdpSession {
             .click_count(1)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.current_page()
-            .await
-            .execute(params)
+        page.execute(params)
             .await
             .context("Input.dispatchMouseEvent")?;
         Ok(())
@@ -279,7 +302,8 @@ impl CdpSession {
             .delta_y(delta_y)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.current_page()
+        self.page
+            .lock()
             .await
             .execute(params)
             .await
@@ -292,7 +316,8 @@ impl CdpSession {
             .text(text)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.current_page()
+        self.page
+            .lock()
             .await
             .execute(params)
             .await
@@ -306,7 +331,8 @@ impl CdpSession {
             .page_scale_factor(scale)
             .build()
             .map_err(|err| anyhow!(err))?;
-        self.current_page()
+        self.page
+            .lock()
             .await
             .execute(params)
             .await
@@ -324,7 +350,8 @@ impl CdpSession {
         }
         let params = builder.build();
         let response = self
-            .current_page()
+            .page
+            .lock()
             .await
             .execute(params)
             .await
@@ -363,13 +390,11 @@ impl CdpSession {
             return Err(err);
         }
         page.bring_to_front().await?;
-        let old = {
-            let mut current = self.page.write().await;
-            if current.target_id().inner() == page.target_id().inner() {
-                return Ok(());
-            }
-            std::mem::replace(&mut *current, page)
-        };
+        let mut current = self.page.lock().await;
+        if current.target_id().inner() == &target_id {
+            return Ok(());
+        }
+        let old = std::mem::replace(&mut *current, page);
         let _ = self.stop_screencast_on(&old).await;
         Ok(())
     }
@@ -390,13 +415,11 @@ impl CdpSession {
         };
         self.ensure_policy_guard(&page).await?;
         page.bring_to_front().await?;
-        let old = {
-            let mut current = self.page.write().await;
-            if current.target_id().inner() == page.target_id().inner() {
-                return Ok(false);
-            }
-            std::mem::replace(&mut *current, page)
-        };
+        let mut current = self.page.lock().await;
+        if current.target_id().inner() == target_id {
+            return Ok(false);
+        }
+        let old = std::mem::replace(&mut *current, page);
         let _ = self.stop_screencast_on(&old).await;
         Ok(true)
     }
@@ -405,15 +428,14 @@ impl CdpSession {
         let Some(page) = self.browser.pages().await?.into_iter().nth(index) else {
             return Ok(false);
         };
+        let target_id = page.target_id().inner().clone();
         self.ensure_policy_guard(&page).await?;
         page.bring_to_front().await?;
-        let old = {
-            let mut current = self.page.write().await;
-            if current.target_id().inner() == page.target_id().inner() {
-                return Ok(true);
-            }
-            std::mem::replace(&mut *current, page)
-        };
+        let mut current = self.page.lock().await;
+        if current.target_id().inner() == &target_id {
+            return Ok(true);
+        }
+        let old = std::mem::replace(&mut *current, page);
         let _ = self.stop_screencast_on(&old).await;
         Ok(true)
     }
@@ -423,31 +445,28 @@ impl CdpSession {
         let Some(page) = pages.into_iter().nth(index) else {
             return Ok(None);
         };
-        let active = self.target_id().await;
-        if page.target_id().inner() == &active {
-            let pages = self.browser.pages().await?;
-            let Some(replacement) = pages
-                .into_iter()
-                .find(|candidate| candidate.target_id().inner() != &active)
-            else {
-                return Err(OnlyManagedTab.into());
-            };
-            self.ensure_policy_guard(&replacement).await?;
-            replacement.bring_to_front().await?;
-            let old = {
-                let mut current = self.page.write().await;
-                std::mem::replace(&mut *current, replacement)
-            };
-            let _ = self.stop_screencast_on(&old).await;
-            let target_id = page.target_id().inner().clone();
+        let target_id = page.target_id().inner().clone();
+        let mut current = self.page.lock().await;
+        if current.target_id().inner() != &target_id {
+            drop(current);
             page.close().await?;
             self.remove_policy_guard(&target_id).await;
-            return Ok(Some(true));
+            return Ok(Some(false));
         }
-        let target_id = page.target_id().inner().clone();
+        let pages = self.browser.pages().await?;
+        let Some(replacement) = pages
+            .into_iter()
+            .find(|candidate| candidate.target_id().inner() != &target_id)
+        else {
+            return Err(OnlyManagedTab.into());
+        };
+        self.ensure_policy_guard(&replacement).await?;
+        replacement.bring_to_front().await?;
+        let old = std::mem::replace(&mut *current, replacement);
+        let _ = self.stop_screencast_on(&old).await;
         page.close().await?;
         self.remove_policy_guard(&target_id).await;
-        Ok(Some(false))
+        Ok(Some(true))
     }
 
     /// The DevTools target id of the shared page.

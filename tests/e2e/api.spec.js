@@ -42,6 +42,42 @@ test("refuses requests that did not come from loopback", async ({ request }) => 
   expect((await request.get("/healthz")).ok()).toBeTruthy();
 });
 
+test("serializes concurrent navigation and tab activation", async ({ request }) => {
+  const name = sessionName("race");
+  try {
+    expect((await request.post("/v1/sessions", { data: { name } })).ok()).toBeTruthy();
+    expect(
+      (
+        await request.post(`/v1/sessions/${name}/tabs`, {
+          data: { url: "data:text/html,second" },
+        })
+      ).ok(),
+    ).toBeTruthy();
+
+    const navigate = () =>
+      request.post(`/v1/sessions/${name}/navigate`, { data: { url: "data:text/html,raced" } });
+    const activate = () => request.post(`/v1/sessions/${name}/tabs/0/activate`);
+
+    const results = await Promise.all([navigate(), activate(), navigate(), activate(), navigate()]);
+    for (const response of results) expect(response.ok()).toBeTruthy();
+
+    const tabs = await (await request.get(`/v1/sessions/${name}/tabs`)).json();
+    expect(tabs).toHaveLength(2);
+    expect(tabs.filter((tab) => tab.active)).toHaveLength(1);
+
+    // Whichever order the calls resolved in, the active tab is the one the
+    // viewer and every later command must target.
+    const active = tabs.find((tab) => tab.active);
+    expect((await request.post(`/v1/sessions/${name}/tabs/1/activate`)).ok()).toBeTruthy();
+    expect((await request.get(`/v1/sessions/${name}/tabs`)).ok()).toBeTruthy();
+    const after = await (await request.get(`/v1/sessions/${name}/tabs`)).json();
+    expect(after.filter((tab) => tab.active)).toHaveLength(1);
+    expect(after.find((tab) => tab.active).index).not.toBe(active.index);
+  } finally {
+    await request.delete(`/v1/sessions/${name}`);
+  }
+});
+
 test("keeps the managed tab active and protects the last tab", async ({ request }) => {
   const name = sessionName("tabs");
   try {
