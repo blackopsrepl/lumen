@@ -359,13 +359,13 @@ impl CdpSession {
 
     /// Every open tab, in browser order.
     ///
-    /// A target that has just been destroyed can still appear in the browser's
-    /// page list for a moment, and asking it for its URL or title fails. That
-    /// must not fail the whole enumeration: the index has to stay aligned with
-    /// the list tab activation and closing operate on, so a vanishing target
-    /// contributes empty fields instead of taking the request down with it.
+    /// A target that has just been closed can linger in the browser's page list
+    /// for a moment, and asking it for its URL or title fails. Enumeration,
+    /// activation, and closing all resolve against the same filtered view, so
+    /// the index a caller read here names the same page everywhere and a
+    /// closing target is never reported or driven.
     pub async fn tabs(&self) -> Result<Vec<TabInfo>> {
-        let pages = self.browser.pages().await?;
+        let pages = self.live_pages().await?;
         let active = self.target_id().await;
         let mut tabs = Vec::with_capacity(pages.len());
         for (index, page) in pages.iter().enumerate() {
@@ -379,6 +379,34 @@ impl CdpSession {
             });
         }
         Ok(tabs)
+    }
+
+    /// The browser's pages that answer for themselves, in browser order.
+    async fn live_pages(&self) -> Result<Vec<Page>> {
+        let mut live = Vec::new();
+        for page in self.browser.pages().await? {
+            if page.url().await.is_ok() {
+                live.push(page);
+            }
+        }
+        Ok(live)
+    }
+
+    /// Wait briefly for a closed target to leave the browser's page list, so a
+    /// successful close means the tab is really gone from the next listing.
+    async fn await_target_gone(&self, target_id: &str) {
+        for _ in 0..40 {
+            let gone = match self.browser.pages().await {
+                Ok(pages) => pages
+                    .iter()
+                    .all(|page| page.target_id().inner() != target_id),
+                Err(_) => true,
+            };
+            if gone {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
     }
 
     pub async fn open_tab(&self, url: &str) -> Result<()> {
@@ -428,7 +456,7 @@ impl CdpSession {
     }
 
     pub async fn activate_tab(&self, index: usize) -> Result<bool> {
-        let Some(page) = self.browser.pages().await?.into_iter().nth(index) else {
+        let Some(page) = self.live_pages().await?.into_iter().nth(index) else {
             return Ok(false);
         };
         let target_id = page.target_id().inner().clone();
@@ -444,8 +472,7 @@ impl CdpSession {
     }
 
     pub async fn close_tab(&self, index: usize) -> Result<Option<bool>> {
-        let pages = self.browser.pages().await?;
-        let Some(page) = pages.into_iter().nth(index) else {
+        let Some(page) = self.live_pages().await?.into_iter().nth(index) else {
             return Ok(None);
         };
         let target_id = page.target_id().inner().clone();
@@ -453,14 +480,16 @@ impl CdpSession {
         if current.target_id().inner() != &target_id {
             drop(current);
             page.close().await?;
+            self.await_target_gone(&target_id).await;
             self.remove_policy_guard(&target_id).await;
             return Ok(Some(false));
         }
-        let pages = self.browser.pages().await?;
-        let Some(replacement) = pages
+        let replacement = self
+            .live_pages()
+            .await?
             .into_iter()
-            .find(|candidate| candidate.target_id().inner() != &target_id)
-        else {
+            .find(|candidate| candidate.target_id().inner() != &target_id);
+        let Some(replacement) = replacement else {
             return Err(OnlyManagedTab.into());
         };
         self.ensure_policy_guard(&replacement).await?;
@@ -468,6 +497,7 @@ impl CdpSession {
         let old = std::mem::replace(&mut *current, replacement);
         let _ = self.stop_screencast_on(&old).await;
         page.close().await?;
+        self.await_target_gone(&target_id).await;
         self.remove_policy_guard(&target_id).await;
         Ok(Some(true))
     }
@@ -492,14 +522,8 @@ impl CdpSession {
             return Ok(false);
         }
         let mut candidates = Vec::new();
-        for candidate in self.browser.pages().await? {
-            if candidate.target_id().inner() == dead_target {
-                continue;
-            }
-            // Skip anything that cannot answer for itself: a target on its way
-            // out is worse than no candidate, since adopting it would strand
-            // the session again.
-            if candidate.url().await.is_ok() {
+        for candidate in self.live_pages().await? {
+            if candidate.target_id().inner() != dead_target {
                 candidates.push(candidate);
             }
         }
