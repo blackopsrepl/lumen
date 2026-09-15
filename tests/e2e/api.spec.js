@@ -1,4 +1,15 @@
+const fs = require("node:fs");
 const { test, expect } = require("@playwright/test");
+
+const PROFILES = process.env.LUMEN_PROFILES_DIR || "/tmp/lumen-e2e-agents/run";
+
+function profileDirs(name) {
+  try {
+    return fs.readdirSync(PROFILES).filter((entry) => entry.startsWith(`${name}-`));
+  } catch {
+    return [];
+  }
+}
 
 function sessionName(label) {
   return `e2e-api-${label}-${Date.now().toString(36)}-${test.info().workerIndex}`.slice(0, 32);
@@ -68,4 +79,13 @@ test("recreates a session after its Chromium exits", async ({ request }) => {
   } finally {
     await request.delete(`/v1/sessions/${name}`);
   }
+});
+
+test("removes the browser profile when the session is deleted", async ({ request }) => {
+  test.skip(Boolean(process.env.LUMEN_URL), "profiles are only inspectable for the disposable service");
+  const name = sessionName("profile");
+  expect((await request.post("/v1/sessions", { data: { name } })).ok()).toBeTruthy();
+  await expect.poll(() => profileDirs(name).length).toBe(1);
+  expect((await request.delete(`/v1/sessions/${name}`)).status()).toBe(204);
+  await expect.poll(() => profileDirs(name).length).toBe(0);
 });
