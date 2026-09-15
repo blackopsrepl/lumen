@@ -23,7 +23,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Test
         run: cargo test --locked
@@ -31,5 +31,7 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
+      # The `rust` runner is expected to provide Node and a Chromium build;
+      # .github/workflows/ci.yml installs them explicitly on a clean runner.
       - name: Viewer E2E
         run: make ui-test

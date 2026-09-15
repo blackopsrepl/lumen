@@ -1,0 +1,13 @@
+# The image only needs Cargo.toml/lock, src, ui, config, and the Containerfile.
+# Everything else is runtime state, build output, or local configuration.
+.git/
+target/
+node_modules/
+.workspace/
+runtime/
+data/
+test-results/
+playwright-report/
+docs/
+.env
+*.log

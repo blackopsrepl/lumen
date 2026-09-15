@@ -25,8 +25,8 @@ and keyboard at any moment, and leaves annotated feedback the agent reads back.
 ## Install
 
 You need Linux with rootless Podman (including `podman-compose`) and `make`.
-Node.js 18+ is only required to run the browser test-suite, Rust only to hack
-on the service itself — the image build handles the rest.
+Node.js 20+ is only required to run the browser test-suite and the host agent
+CLI, Rust only to hack on the service itself — the image build handles the rest.
 
 ```bash
 git clone http://vigilance:3002/blackopsrepl/lumen.git

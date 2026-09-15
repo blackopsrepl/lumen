@@ -8,7 +8,9 @@ set -euo pipefail
 
 command -v npm >/dev/null 2>&1 || die "npm not found on PATH"
 
-version="${CLI_VERSION:-latest}"
+# Pinned: the CLI holds the CDP routing and artifact layout agents depend on,
+# so it ships as a tested pair with the service rather than tracking latest.
+version="${CLI_VERSION:-0.1.19}"
 prefix="${NPM_PREFIX:-${HOME}/.local}"
 log "installing @playwright/cli@${version} into ${prefix}"
 npm install -g --prefix "${prefix}" "@playwright/cli@${version}"
