@@ -202,6 +202,21 @@ impl Supervisor {
         }
     }
 
+    /// Stop every session's browser.
+    ///
+    /// Service shutdown calls this so no browser outlives the supervisor,
+    /// wherever the service runs. Relies on nothing else re-inserting agents
+    /// afterwards; the HTTP plane is already draining when it runs.
+    pub async fn shutdown_all(&self) {
+        let agents: Vec<Arc<AgentBrowser>> = {
+            let mut agents = self.agents.lock().await;
+            agents.drain().map(|(_, agent)| agent).collect()
+        };
+        for agent in agents {
+            agent.shutdown().await;
+        }
+    }
+
     async fn launch(&self, name: &str) -> Result<Arc<AgentBrowser>> {
         let profile = create_profile_dir(&profile_root(&self.config.data_dir), name)?;
         // Until the browser is registered, an error path would leak the profile.
