@@ -77,6 +77,10 @@ pub fn router(state: AppState) -> Router {
             "/v1/sessions/{name}/feedback",
             get(list_feedback).post(add_feedback),
         )
+        .route(
+            "/v1/sessions/{name}/feedback/consume",
+            post(consume_feedback),
+        )
         .route("/v1/sessions/{name}/feedback/{id}/ack", post(ack_feedback))
         .route(
             "/v1/sessions/{name}/feedback/ack-all",
@@ -422,8 +426,21 @@ async fn ack_feedback(
     State(state): State<AppState>,
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    state.feedback.ack(&name, id).await?;
+    if !state.feedback.ack(&name, id).await? {
+        return Err(ApiError::not_found(format!("feedback {id} not found")));
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Return a session's pending notes and acknowledge them atomically.
+async fn consume_feedback(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<Vec<Feedback>>, ApiError> {
+    if !is_valid_agent_name(&name) {
+        return Err(ApiError::bad_request("invalid agent name"));
+    }
+    Ok(Json(state.feedback.consume(&name).await?))
 }
 
 async fn ack_all_feedback(

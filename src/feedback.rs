@@ -48,6 +48,51 @@ pub struct FeedbackStore {
     audit_retain: i64,
 }
 
+fn row_to_feedback(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feedback> {
+    let region = match (
+        row.get::<_, Option<f64>>(5)?,
+        row.get::<_, Option<f64>>(6)?,
+        row.get::<_, Option<f64>>(7)?,
+        row.get::<_, Option<f64>>(8)?,
+        row.get::<_, Option<f64>>(9)?,
+    ) {
+        (Some(x), Some(y), Some(width), Some(height), Some(scale)) => Some(Region {
+            x,
+            y,
+            width,
+            height,
+            scale,
+        }),
+        _ => None,
+    };
+    Ok(Feedback {
+        id: row.get(0)?,
+        session: row.get(1)?,
+        created_at: row.get(2)?,
+        author: row.get(3)?,
+        comment: row.get(4)?,
+        region,
+        status: row.get(10)?,
+    })
+}
+
+fn query(conn: &Connection, session: &str, pending_only: bool) -> Result<Vec<Feedback>> {
+    let sql = if pending_only {
+        "SELECT id, session, created_at, author, comment, x, y, width, height, scale, status
+         FROM feedback WHERE session = ?1 AND status = 'pending' ORDER BY id"
+    } else {
+        "SELECT id, session, created_at, author, comment, x, y, width, height, scale, status
+         FROM feedback WHERE session = ?1 ORDER BY id"
+    };
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![session], row_to_feedback)?;
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(row?);
+    }
+    Ok(items)
+}
+
 impl FeedbackStore {
     pub fn open(path: &Path, audit_retain: i64) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -130,45 +175,25 @@ impl FeedbackStore {
 
     pub async fn list(&self, session: &str, pending_only: bool) -> Result<Vec<Feedback>> {
         let conn = self.conn.lock().await;
-        let sql = if pending_only {
-            "SELECT id, session, created_at, author, comment, x, y, width, height, scale, status
-             FROM feedback WHERE session = ?1 AND status = 'pending' ORDER BY id"
-        } else {
-            "SELECT id, session, created_at, author, comment, x, y, width, height, scale, status
-             FROM feedback WHERE session = ?1 ORDER BY id"
-        };
-        let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(params![session], |row| {
-            let region = match (
-                row.get::<_, Option<f64>>(5)?,
-                row.get::<_, Option<f64>>(6)?,
-                row.get::<_, Option<f64>>(7)?,
-                row.get::<_, Option<f64>>(8)?,
-                row.get::<_, Option<f64>>(9)?,
-            ) {
-                (Some(x), Some(y), Some(width), Some(height), Some(scale)) => Some(Region {
-                    x,
-                    y,
-                    width,
-                    height,
-                    scale,
-                }),
-                _ => None,
-            };
-            Ok(Feedback {
-                id: row.get(0)?,
-                session: row.get(1)?,
-                created_at: row.get(2)?,
-                author: row.get(3)?,
-                comment: row.get(4)?,
-                region,
-                status: row.get(10)?,
-            })
-        })?;
-        let mut items = Vec::new();
-        for row in rows {
-            items.push(row?);
+        query(&conn, session, pending_only)
+    }
+
+    /// Return a session's pending notes and acknowledge them in one transaction.
+    ///
+    /// The read and the acknowledgement have to be the same operation: a note
+    /// that arrives between a separate read and a separate `ack-all` would be
+    /// acknowledged without ever being shown to the agent.
+    pub async fn consume(&self, session: &str) -> Result<Vec<Feedback>> {
+        let mut conn = self.conn.lock().await;
+        let tx = conn.transaction()?;
+        let items = query(&tx, session, true)?;
+        if !items.is_empty() {
+            tx.execute(
+                "UPDATE feedback SET status = 'acked' WHERE session = ?1 AND status = 'pending'",
+                params![session],
+            )?;
         }
+        tx.commit()?;
         Ok(items)
     }
 
@@ -254,6 +279,51 @@ mod tests {
         let recent = store.recent(100).await.unwrap();
         assert_eq!(recent.len(), 3);
         assert_eq!(recent[0].detail, "5");
+
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn temp_store(label: &str) -> (FeedbackStore, std::path::PathBuf) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("lumen-{label}-{nanos}.db"));
+        (FeedbackStore::open(&path, 100).unwrap(), path)
+    }
+
+    #[tokio::test]
+    async fn consume_returns_exactly_what_it_acknowledges() {
+        let (store, path) = temp_store("consume");
+        store.add("s", "human", "first", None).await.unwrap();
+        store.add("s", "human", "second", None).await.unwrap();
+
+        let taken = store.consume("s").await.unwrap();
+        assert_eq!(
+            taken.iter().map(|f| f.comment.as_str()).collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        assert!(store.list("s", true).await.unwrap().is_empty());
+
+        store.add("s", "human", "after", None).await.unwrap();
+        let next = store.consume("s").await.unwrap();
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].comment, "after");
+
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn acknowledging_reports_whether_the_note_exists() {
+        let (store, path) = temp_store("ack-missing");
+        assert!(!store.ack("s", 404).await.unwrap());
+        let added = store.add("s", "human", "note", None).await.unwrap();
+        assert!(store.ack("s", added.id).await.unwrap());
+        // Acknowledging again is idempotent: the note still exists.
+        assert!(store.ack("s", added.id).await.unwrap());
+        assert!(store.list("s", true).await.unwrap().is_empty());
 
         drop(store);
         let _ = std::fs::remove_file(&path);

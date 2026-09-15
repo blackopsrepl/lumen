@@ -101,15 +101,29 @@ pub fn stop_all(base: &str) -> Result<()> {
 }
 
 /// Print a session's pending human feedback, optionally consuming it.
+///
+/// `--consume` uses the atomic endpoint: the notes it prints are exactly the
+/// notes it acknowledges, so one arriving mid-read is never silently lost.
 pub fn feedback(base: &str, name: &str, consume: bool) -> Result<()> {
-    let items: Vec<Feedback> = check(
-        client()?
-            .get(format!("{base}/v1/sessions/{name}/feedback?pending=true"))
-            .send()?,
-    )
-    .context("connecting to lumen")?
-    .json()
-    .context("parsing feedback")?;
+    let items: Vec<Feedback> = if consume {
+        check(
+            client()?
+                .post(format!("{base}/v1/sessions/{name}/feedback/consume"))
+                .send()?,
+        )
+        .context("connecting to lumen")?
+        .json()
+        .context("parsing feedback")?
+    } else {
+        check(
+            client()?
+                .get(format!("{base}/v1/sessions/{name}/feedback?pending=true"))
+                .send()?,
+        )
+        .context("connecting to lumen")?
+        .json()
+        .context("parsing feedback")?
+    };
 
     if items.is_empty() {
         println!("no pending feedback for {name}");
@@ -127,11 +141,6 @@ pub fn feedback(base: &str, name: &str, consume: bool) -> Result<()> {
     }
 
     if consume {
-        check(
-            client()?
-                .post(format!("{base}/v1/sessions/{name}/feedback/ack-all"))
-                .send()?,
-        )?;
         println!("consumed {} note(s)", items.len());
     }
     Ok(())
