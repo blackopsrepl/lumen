@@ -12,4 +12,4 @@ height = 768
 
 [policy]
 allow_hosts = []
-blocked_hosts = []
+blocked_hosts = ["blocked.test"]

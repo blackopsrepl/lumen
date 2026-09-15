@@ -50,7 +50,6 @@ pub struct CdpSession {
     policy: crate::config::Policy,
     policy_guards: Mutex<HashMap<String, JoinHandle<()>>>,
     navigation: Mutex<()>,
-    blocked_navigation: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Debug)]
@@ -138,11 +137,8 @@ impl CdpSession {
             .await
             .context("Page.enable")?;
 
-        let blocked_navigation = Arc::new(Mutex::new(None));
         let mut policy_guards = HashMap::new();
-        if let Some(guard) =
-            install_navigation_policy(&page, &policy, blocked_navigation.clone()).await?
-        {
+        if let Some(guard) = install_navigation_policy(&page, &policy).await? {
             policy_guards.insert(page.target_id().inner().clone(), guard);
         }
 
@@ -154,7 +150,6 @@ impl CdpSession {
             policy,
             policy_guards: Mutex::new(policy_guards),
             navigation: Mutex::new(()),
-            blocked_navigation,
         }))
     }
 
@@ -562,9 +557,7 @@ impl CdpSession {
     /// session issues it. Idempotent per target: if a guard already exists,
     /// the duplicate task is discarded.
     async fn ensure_policy_guard(&self, page: &Page) -> Result<()> {
-        let Some(guard) =
-            install_navigation_policy(page, &self.policy, self.blocked_navigation.clone()).await?
-        else {
+        let Some(guard) = install_navigation_policy(page, &self.policy).await? else {
             return Ok(());
         };
         let target_id = page.target_id().inner().clone();
@@ -587,13 +580,21 @@ impl CdpSession {
 
     async fn navigate_page(&self, page: &Page, url: &str) -> Result<()> {
         let _navigation = self.navigation.lock().await;
-        *self.blocked_navigation.lock().await = None;
-        let result = page.goto(url).await;
-        if let Some(blocked_url) = self.blocked_navigation.lock().await.take() {
-            return Err(NavigationBlocked { url: blocked_url }.into());
+        match page.goto(url).await {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                // The per-tab Fetch guard fails a blocked document request in
+                // the browser; report that as a policy decision, not a CDP
+                // fault. Every other failure is a real navigation error.
+                if format!("{err}").contains("ERR_BLOCKED_BY_CLIENT") {
+                    return Err(NavigationBlocked {
+                        url: url.to_string(),
+                    }
+                    .into());
+                }
+                Err(err).context("Page.navigate")
+            }
         }
-        result.context("Page.navigate")?;
-        Ok(())
     }
 }
 
@@ -603,9 +604,8 @@ impl CdpSession {
 /// every document navigation on this target — including navigations issued by
 /// other CDP sessions, such as an agent's own playwright connection — and
 /// continues or fails each one according to `policy.check`. Blocked
-/// navigations surface in the browser as `net::ERR_BLOCKED_BY_CLIENT`; the
-/// URL is also published through `blocked_navigation` so Lumen's own
-/// navigate API can answer `403`.
+/// navigations surface in the browser as `net::ERR_BLOCKED_BY_CLIENT`, which
+/// Lumen's own navigate call translates into a `403`.
 ///
 /// The returned task must stay alive for the interception to be answered;
 /// callers keep it in `policy_guards` keyed by target id and abort it when
@@ -614,7 +614,6 @@ impl CdpSession {
 async fn install_navigation_policy(
     page: &Page,
     policy: &crate::config::Policy,
-    blocked_navigation: Arc<Mutex<Option<String>>>,
 ) -> Result<Option<JoinHandle<()>>> {
     if !policy.is_restricted() {
         return Ok(None);
@@ -645,7 +644,6 @@ async fn install_navigation_policy(
                 }
             } else {
                 tracing::warn!(url = %event.request.url, "blocked browser navigation by policy");
-                *blocked_navigation.lock().await = Some(event.request.url.clone());
                 if let Err(err) = page
                     .execute(FailRequestParams::new(
                         event.request_id.clone(),

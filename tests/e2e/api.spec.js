@@ -128,6 +128,40 @@ test("recovers when the managed tab is closed behind Lumen's back", async ({ req
   }
 });
 
+test("enforces the navigation policy through the API and over CDP", async ({ request }) => {
+  const name = sessionName("policy");
+  try {
+    expect((await request.post("/v1/sessions", { data: { name } })).ok()).toBeTruthy();
+
+    expect(
+      (
+        await request.post(`/v1/sessions/${name}/navigate`, {
+          data: { url: "http://blocked.test/" },
+        })
+      ).status(),
+      "API navigation to a blocked host",
+    ).toBe(403);
+
+    expect(
+      (
+        await request.post(`/v1/sessions/${name}/navigate`, {
+          data: { url: "data:text/html,allowed" },
+        })
+      ).ok(),
+    ).toBeTruthy();
+
+    // The same block must hold for a navigation Lumen did not issue.
+    const result = await (
+      await request.post(`/v1/sessions/${name}/cdp`, {
+        data: { method: "Page.navigate", params: { url: "http://blocked.test/" } },
+      })
+    ).json();
+    expect(JSON.stringify(result)).toContain("ERR_BLOCKED_BY_CLIENT");
+  } finally {
+    await request.delete(`/v1/sessions/${name}`);
+  }
+});
+
 test("keeps the managed tab active and protects the last tab", async ({ request }) => {
   const name = sessionName("tabs");
   try {
