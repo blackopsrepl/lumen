@@ -30,14 +30,20 @@ CDP automatically.
 `snapshot` prints an accessibility tree with refs (`e1`, `e2`, …) that `click` /
 `fill` / `hover` / `check` accept. Take one snapshot, then act on the refs.
 
+Every file a command produces (screenshots, pdfs, snapshots) is reported on a
+line like `[lumen] artifact /absolute/path.png`. Read exactly that path —
+never search the filesystem for it.
+
 Useful extras: `go-back`, `reload`, `type`, `select`, `upload`, `tab-list`,
 `console`, `requests`, `eval`, `pdf`, `state-save`/`state-load`.
 
 ## 2. Human feedback
 
-The human watches your browser at <http://localhost:8899> and can take control
-or annotate a region with a comment. Feedback is non-blocking: check your inbox
-between steps and adjust.
+The human watches your browser live at <http://localhost:8899> — they see the
+same tab you act on, in real time. Do not narrate for them or paste
+screenshots at them; take a screenshot only when *you* need to verify
+something. They can take control or annotate a region with a comment.
+Feedback is non-blocking: check your inbox between steps and adjust.
 
     lumen feedback <your-agent-name>            # print pending notes
     lumen feedback <your-agent-name> --consume  # print and acknowledge them

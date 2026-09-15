@@ -46,6 +46,19 @@ case "${cmd}" in
     if [ "${cmd}" = "open" ]; then
       ARGS[cmd_idx]="goto"
     fi
-    pw "${ARGS[@]}"
+    marker="$(mktemp)"
+    rc=0
+    pw "${ARGS[@]}" || rc=$?
+    # Artifacts (screenshots, pdfs, snapshots) are written into the workspace
+    # with relative names, which no agent can resolve from its own project.
+    # Name every file this command produced by absolute path so reading it is
+    # a plain Read and never a filesystem search.
+    artifact_dir="${PW_WORKSPACE}/.playwright-cli"
+    if [ -d "${artifact_dir}" ]; then
+      find "${artifact_dir}" -type f -newer "${marker}" 2>/dev/null |
+        while IFS= read -r file; do printf '[lumen] artifact %s\n' "${file}"; done
+    fi
+    rm -f "${marker}"
+    exit "${rc}"
     ;;
 esac

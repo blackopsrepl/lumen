@@ -53,8 +53,8 @@ lumen() {
   podman exec "${CONTAINER}" lumen --url "http://127.0.0.1:${LUMEN_PORT}" "$@"
 }
 
-# Run playwright-cli from the shared workspace so its daemon and every agent
-# session agree on one directory.
+# Run playwright-cli from the shared workspace so its session registry and
+# every agent's artifacts land in one predictable place.
 pw() {
   mkdir -p "${PW_WORKSPACE}"
   ( cd "${PW_WORKSPACE}" && exec "${PW_CLI}" "$@" )
