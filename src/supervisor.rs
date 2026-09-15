@@ -268,6 +268,9 @@ impl Supervisor {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
+            // Give Chromium its own process group so teardown can signal every
+            // descendant (renderers, GPU, crashpad), not just the parent.
+            .process_group(0)
             .spawn()
             .with_context(|| format!("spawning {}", self.config.chrome_bin))?;
 
@@ -348,9 +351,41 @@ impl AgentBrowser {
 
     /// Stop this agent's Chromium and reclaim its profile directory.
     pub async fn shutdown(&self) {
-        let _ = self.child.lock().await.kill().await;
+        {
+            let mut child = self.child.lock().await;
+            terminate_process_group(&mut child).await;
+        }
         let _ = purge_profile(self.profile.clone()).await;
     }
+}
+
+/// Stop a browser and everything it spawned.
+///
+/// `Child::kill` signals only the Chromium parent; its renderer, GPU, and
+/// crashpad children can outlive it and keep writing into the profile. Since
+/// the browser was spawned with its own process group, signalling the group
+/// reaches all of them: SIGTERM first for a clean shutdown, SIGKILL if the
+/// group is still alive shortly after.
+async fn terminate_process_group(child: &mut Child) {
+    let Some(pid) = child.id() else {
+        return;
+    };
+    let pgid = pid as i32;
+    // SAFETY: `kill` only touches the process group created for this browser;
+    // a negative pid targets the group, and errors are ignored on purpose.
+    unsafe {
+        libc::kill(-pgid, libc::SIGTERM);
+    }
+    for _ in 0..20 {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
+    let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
 }
 
 /// Follow tabs the browser opens and closes on its own.

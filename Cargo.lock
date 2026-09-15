@@ -1146,6 +1146,7 @@ dependencies = [
  "chromiumoxide",
  "clap",
  "futures",
+ "libc",
  "reqwest",
  "rusqlite",
  "rust-embed",
