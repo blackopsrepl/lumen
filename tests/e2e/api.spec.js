@@ -34,6 +34,14 @@ test("reports an invalid session name as a bad request, not a server error", asy
   }
 });
 
+test("refuses requests that did not come from loopback", async ({ request }) => {
+  expect(
+    (await request.get("/healthz", { headers: { Origin: "http://evil.test" } })).status(),
+  ).toBe(403);
+  expect((await request.get("/healthz", { headers: { Host: "evil.test" } })).status()).toBe(403);
+  expect((await request.get("/healthz")).ok()).toBeTruthy();
+});
+
 test("keeps the managed tab active and protects the last tab", async ({ request }) => {
   const name = sessionName("tabs");
   try {

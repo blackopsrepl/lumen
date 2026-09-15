@@ -5,8 +5,9 @@ use crate::supervisor::{is_valid_agent_name, AgentInfo, InvalidAgentName, Origin
 use crate::view::{Control, ViewHub};
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -86,7 +87,72 @@ pub fn router(state: AppState) -> Router {
             "/v1/sessions/{name}/feedback/ack-all",
             post(ack_all_feedback),
         )
+        .layer(middleware::from_fn(loopback_guard))
         .with_state(state)
+}
+
+/// Whether a `Host` header value names the loopback interface.
+///
+/// Lumen deliberately has no authentication, but it must not be drivable by a
+/// page the browser is showing: under host networking any page can reach
+/// `127.0.0.1:<port>`. Checking `Host` blocks DNS rebinding, where a hostile
+/// name resolves to loopback while still being sent as the `Host`.
+fn host_is_loopback(host: &str) -> bool {
+    let bare = if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or_default()
+    } else if let Some((name, port)) = host.rsplit_once(':') {
+        if port.chars().all(|c| c.is_ascii_digit()) {
+            name
+        } else {
+            host
+        }
+    } else {
+        host
+    };
+    bare.eq_ignore_ascii_case("localhost")
+        || bare
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
+/// Whether an `Origin` header value is a loopback origin.
+fn origin_is_loopback(origin: &str) -> bool {
+    url::Url::parse(origin)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(host_is_loopback))
+        .unwrap_or(false)
+}
+
+/// Reject control/view requests that did not come from the loopback interface.
+///
+/// This is a boundary against foreign origins, not authentication: any local
+/// process may call Lumen, by design. It covers both ordinary requests
+/// (`Host`) and the WebSocket upgrades a browser opens (`Origin`).
+async fn loopback_guard(request: Request, next: Next) -> Response {
+    let host = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if !host_is_loopback(host) {
+        return forbidden_origin(format!("host '{host}' is not loopback"));
+    }
+    if let Some(origin) = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    {
+        if !origin_is_loopback(origin) {
+            return forbidden_origin(format!("origin '{origin}' is not loopback"));
+        }
+    }
+    next.run(request).await
+}
+
+fn forbidden_origin(reason: String) -> Response {
+    tracing::warn!("rejected a non-loopback request: {reason}");
+    (StatusCode::FORBIDDEN, Json(json!({ "error": reason }))).into_response()
 }
 
 fn asset(path: &str, content_type: &str) -> Response {
@@ -716,5 +782,45 @@ impl IntoResponse for ApiError {
             }
         };
         (status, Json(json!({ "error": message }))).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_loopback_hosts() {
+        for host in [
+            "127.0.0.1",
+            "127.0.0.1:8899",
+            "localhost",
+            "localhost:8899",
+            "[::1]:8899",
+            "[::1]",
+        ] {
+            assert!(host_is_loopback(host), "{host} should be loopback");
+        }
+    }
+
+    #[test]
+    fn rejects_foreign_hosts() {
+        for host in [
+            "evil.test",
+            "evil.test:8899",
+            "10.0.0.5:8899",
+            "",
+            "0.0.0.0:8899",
+        ] {
+            assert!(!host_is_loopback(host), "{host} should not be loopback");
+        }
+    }
+
+    #[test]
+    fn accepts_only_loopback_origins() {
+        assert!(origin_is_loopback("http://127.0.0.1:8899"));
+        assert!(origin_is_loopback("http://localhost"));
+        assert!(!origin_is_loopback("http://evil.test"));
+        assert!(!origin_is_loopback("null"));
     }
 }
