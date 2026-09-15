@@ -95,7 +95,8 @@ the host at `http://127.0.0.1:<port>` (`host.containers.internal` and
 
 | make target | what it does |
 | --- | --- |
-| `make up` / `make down` / `make restart` | start / stop / restart the service (browser state is ephemeral) |
+| `make up` | rebuild and start; recreates the container when it predates this checkout |
+| `make down` / `make restart` | stop / hard restart (browser state is ephemeral) |
 | `make status` | container state, health, active sessions |
 | `make logs` | follow service logs |
 | `make shell` | shell inside the container |
@@ -117,7 +118,7 @@ Upgrading:
 
 ```bash
 git pull
-make build restart
+make up        # rebuilds; recreates the container only when it predates this checkout
 ```
 
 ## Develop and test

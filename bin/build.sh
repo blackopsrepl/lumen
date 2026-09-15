@@ -21,6 +21,7 @@ podman build \
   --pull="${PULL}" \
   "${NO_CACHE[@]}" \
   --build-arg "PLAYWRIGHT_IMAGE_VERSION=${PLAYWRIGHT_IMAGE_VERSION}" \
+  --build-arg "LUMEN_REVISION=${LUMEN_REVISION}" \
   -t "${IMAGE}" \
   -f "${PROJECT_DIR}/Containerfile" \
   "${PROJECT_DIR}"

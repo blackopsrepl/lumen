@@ -22,7 +22,20 @@ LUMEN_PORT="${LUMEN_PORT:-8899}"
 PW_WORKSPACE="${PW_WORKSPACE:-${PROJECT_DIR}/.workspace}"
 PW_CLI="${PW_CLI:-playwright-cli}"
 
-export PROJECT_DIR LUMEN_VERSION PLAYWRIGHT_IMAGE_VERSION IMAGE CONTAINER LUMEN_PORT PW_WORKSPACE PW_CLI
+# The image is stamped with this revision so a deploy can tell which checkout
+# the running container was built from. Image ids are not usable for that:
+# every rebuild produces a new one because the layers carry file mtimes.
+lumen_revision() {
+  local revision dirty=""
+  revision="$(git -C "${PROJECT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+  git -C "${PROJECT_DIR}" diff --quiet 2>/dev/null \
+    && git -C "${PROJECT_DIR}" diff --cached --quiet 2>/dev/null \
+    || dirty="-dirty"
+  printf '%s%s' "${revision}" "${dirty}"
+}
+LUMEN_REVISION="${LUMEN_REVISION:-$(lumen_revision)}"
+
+export PROJECT_DIR LUMEN_VERSION PLAYWRIGHT_IMAGE_VERSION IMAGE CONTAINER LUMEN_PORT PW_WORKSPACE PW_CLI LUMEN_REVISION
 
 log() { printf '[%s] %s\n' "${0##*/}" "$*" >&2; }
 die() { printf '[%s] error: %s\n' "${0##*/}" "$*" >&2; exit 1; }

@@ -32,6 +32,7 @@ A production `lumen` container usually runs on 8899 with host networking and liv
 
 - Config layering in `src/config.rs::Config::load`: `LUMEN_CONFIG` file (default `config/lumen.toml`), then `LUMEN_PORT` / `LUMEN_CHROME` env overrides.
 - `compose.yaml` must forward any config surface the service reads (`LUMEN_PORT`, `LUMEN_CHROME`) and the healthcheck must probe the same port — these were once out of sync.
+- `bin/up.sh` converges: it recreates the container only when the running image's `org.opencontainers.image.revision` label differs from the checkout's, because podman-compose otherwise keeps an old container serving a stale binary. Image ids cannot be compared directly — every rebuild produces a new one.
 - Container runs with `network_mode: host`: pages reach host dev servers at `http://127.0.0.1:<port>`; `host.containers.internal` / `host.docker.internal` are mapped to loopback via `extra_hosts`.
 - `bin/common.sh` sources `.env` and wraps `lumen`/`podman` helpers; host helper scripts honor `LUMEN_PORT`.
 

@@ -15,6 +15,7 @@ services:
       dockerfile: Containerfile
       args:
         PLAYWRIGHT_IMAGE_VERSION: ${PLAYWRIGHT_IMAGE_VERSION:-1.63.0}
+        LUMEN_REVISION: ${LUMEN_REVISION:-unknown}
     container_name: lumen
     hostname: lumen
     restart: unless-stopped

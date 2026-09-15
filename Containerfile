@@ -27,6 +27,11 @@ RUN find src ui -type f -exec touch {} + && cargo build --release --locked
 
 FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_IMAGE_VERSION}-noble
 
+# Stamp the checkout this image was built from, so `bin/up.sh` can recreate the
+# container when the running image predates the current revision.
+ARG LUMEN_REVISION=unknown
+LABEL org.opencontainers.image.revision=$LUMEN_REVISION
+
 RUN ln -sf "$(ls /ms-playwright/chromium-*/chrome-linux*/chrome | head -1)" /usr/local/bin/chromium \
  && chromium --version \
  && mkdir -p /data /etc/lumen \
