@@ -64,12 +64,22 @@ case "${cmd}" in
         [ -d "${session_dir}" ] && run_dir="${session_dir}"
         pw_in "${run_dir}" "$@" || rc=$?
         if [ "${cmd}" = "close" ]; then
+          # The service owns the browser and its profile, so ending the session
+          # is the service's call; the CLI close only unbinds this client.
+          lumen stop "${name}" >/dev/null 2>&1 || true
           rm -rf "${session_dir}"
+          printf '[lumen] session %s stopped\n' "${name}"
+          rc=0
         fi
         ;;
       close-all|kill-all)
         pw_in "${PW_ROOT}" "$@" || rc=$?
+        # Same rule for the bulk verbs: the CLI unbinds, the service reclaims.
+        lumen status 2>/dev/null | awk 'NF == 2 { print $1 }' | while IFS= read -r session; do
+          lumen stop "${session}" >/dev/null 2>&1 || true
+        done
         rm -rf "${PW_ROOT}/sessions"
+        rc=0
         ;;
     esac
     exit "${rc}"

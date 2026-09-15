@@ -64,6 +64,10 @@ creates from the viewer has no agent and its feedback goes unread — use
 
     $PW/pw.sh -s=<your-agent-name> close
 
+`close` ends the session: it stops the browser, reclaims its profile, and
+discards the session's artifacts. Read anything you still need before closing;
+detaching alone would leave the browser running.
+
 ## Notes
 
 - Sessions are isolated per agent; do not drive another agent's `-s=` name.
