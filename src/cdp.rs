@@ -510,7 +510,9 @@ impl CdpSession {
     /// Send a raw CDP command to the shared page and return its result.
     ///
     /// This is the escape hatch for protocol features Lumen has not wrapped;
-    /// it opens a short-lived DevTools socket to the page target.
+    /// it opens a short-lived DevTools socket to the page target. Every step is
+    /// bounded, because an unresponsive browser or half-open socket would
+    /// otherwise leave the caller's request pending forever.
     pub async fn raw_cdp(
         &self,
         endpoint: &str,
@@ -518,33 +520,41 @@ impl CdpSession {
         params: serde_json::Value,
     ) -> Result<serde_json::Value> {
         let ws_url = page_ws_url(endpoint, &self.target_id().await).await?;
-        let (mut socket, _) = tokio_tungstenite::connect_async(&ws_url)
-            .await
-            .with_context(|| format!("connecting to {ws_url}"))?;
+        let (mut socket, _) = tokio::time::timeout(
+            CDP_CONNECT_TIMEOUT,
+            tokio_tungstenite::connect_async(&ws_url),
+        )
+        .await
+        .with_context(|| format!("connecting to {ws_url} timed out"))?
+        .with_context(|| format!("connecting to {ws_url}"))?;
 
         let request = serde_json::json!({ "id": 1, "method": method, "params": params });
-        socket
-            .send(Message::Text(request.to_string().into()))
-            .await
-            .context("sending the CDP command")?;
+        tokio::time::timeout(CDP_COMMAND_TIMEOUT, async {
+            socket
+                .send(Message::Text(request.to_string().into()))
+                .await
+                .context("sending the CDP command")?;
 
-        while let Some(frame) = socket.next().await {
-            let frame = frame.context("reading the CDP response")?;
-            if let Message::Text(text) = frame {
-                let value: serde_json::Value =
-                    serde_json::from_str(text.as_str()).context("parsing the CDP response")?;
-                if value.get("id").and_then(serde_json::Value::as_i64) == Some(1) {
-                    if let Some(error) = value.get("error") {
-                        anyhow::bail!("CDP error: {error}");
+            while let Some(frame) = socket.next().await {
+                let frame = frame.context("reading the CDP response")?;
+                if let Message::Text(text) = frame {
+                    let value: serde_json::Value =
+                        serde_json::from_str(text.as_str()).context("parsing the CDP response")?;
+                    if value.get("id").and_then(serde_json::Value::as_i64) == Some(1) {
+                        if let Some(error) = value.get("error") {
+                            anyhow::bail!("CDP error: {error}");
+                        }
+                        return Ok(value
+                            .get("result")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null));
                     }
-                    return Ok(value
-                        .get("result")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null));
                 }
             }
-        }
-        anyhow::bail!("CDP socket closed before a response")
+            anyhow::bail!("CDP socket closed before a response")
+        })
+        .await
+        .with_context(|| format!("CDP command '{method}' timed out"))?
     }
 
     /// Give a tab Lumen is about to mediate a navigation-policy guard, so
@@ -650,14 +660,33 @@ async fn install_navigation_policy(
     })))
 }
 
+/// How long the DevTools HTTP target list and websocket handshake may take.
+const CDP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long one raw CDP command may take before it is abandoned.
+const CDP_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Resolve the DevTools websocket URL for one page target.
 async fn page_ws_url(endpoint: &str, target_id: &str) -> Result<String> {
-    let targets: Vec<serde_json::Value> = reqwest::get(format!("{endpoint}/json/list"))
-        .await
-        .context("fetching /json/list")?
-        .json()
-        .await
-        .context("parsing /json/list")?;
+    page_ws_url_within(endpoint, target_id, CDP_CONNECT_TIMEOUT).await
+}
+
+async fn page_ws_url_within(
+    endpoint: &str,
+    target_id: &str,
+    timeout: std::time::Duration,
+) -> Result<String> {
+    let targets: Vec<serde_json::Value> = tokio::time::timeout(timeout, async {
+        let response = reqwest::get(format!("{endpoint}/json/list"))
+            .await
+            .context("fetching /json/list")?;
+        response
+            .json::<Vec<serde_json::Value>>()
+            .await
+            .context("parsing /json/list")
+    })
+    .await
+    .context("timed out fetching /json/list")??;
+
     for target in targets {
         if target.get("id").and_then(serde_json::Value::as_str) == Some(target_id) {
             if let Some(url) = target
@@ -674,5 +703,39 @@ async fn page_ws_url(endpoint: &str, target_id: &str) -> Result<String> {
 impl Drop for CdpSession {
     fn drop(&mut self) {
         self.handler.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn target_list_fetch_gives_up_on_a_stalled_connection() {
+        // A socket that accepts and then never answers, like a half-open
+        // DevTools endpoint.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+
+        let started = std::time::Instant::now();
+        let result = page_ws_url_within(
+            &format!("http://{addr}"),
+            "target",
+            Duration::from_millis(200),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "should abandon the stalled fetch, took {:?}",
+            started.elapsed()
+        );
     }
 }
