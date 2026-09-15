@@ -39,8 +39,13 @@ enum Command {
     },
     /// List active sessions.
     Status,
-    /// Stop a session's browser.
-    Stop { name: String },
+    /// Stop a session's browser, or every session with --all.
+    Stop {
+        name: Option<String>,
+        /// Stop every active session.
+        #[arg(long)]
+        all: bool,
+    },
     /// Print a session's pending human feedback.
     Feedback {
         name: String,
@@ -60,7 +65,13 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Status => client::status(&cli.url),
-        Command::Stop { name } => client::stop(&cli.url, &name),
+        Command::Stop { name, all } => match (all, name) {
+            (true, _) => client::stop_all(&cli.url),
+            (false, Some(name)) => client::stop(&cli.url, &name),
+            (false, None) => {
+                anyhow::bail!("stop needs a session name, or --all to stop every session")
+            }
+        },
         Command::Feedback { name, consume } => client::feedback(&cli.url, &name, consume),
     }
 }

@@ -67,8 +67,11 @@ case "${cmd}" in
         pw_in "${run_dir}" "$@" || rc=$?
         if [ "${cmd}" = "close" ]; then
           # The service owns the browser and its profile, so ending the session
-          # is the service's call; the CLI close only unbinds this client.
-          lumen stop "${name}" >/dev/null 2>&1 || true
+          # is the service's call; the CLI close only unbinds this client. If
+          # that call fails the browser may still be running, so keep the local
+          # state and fail loudly instead of reporting a clean stop.
+          lumen stop "${name}" >/dev/null \
+            || die "could not stop session '${name}' (bin/status.sh)"
           rm -rf "${session_dir}"
           printf '[lumen] session %s stopped\n' "${name}"
           rc=0
@@ -77,9 +80,7 @@ case "${cmd}" in
       close-all|kill-all)
         pw_in "${PW_ROOT}" "$@" || rc=$?
         # Same rule for the bulk verbs: the CLI unbinds, the service reclaims.
-        lumen status 2>/dev/null | awk 'NF == 2 { print $1 }' | while IFS= read -r session; do
-          lumen stop "${session}" >/dev/null 2>&1 || true
-        done
+        lumen stop --all >/dev/null || die "could not stop every session (bin/status.sh)"
         rm -rf "${PW_ROOT}/sessions"
         rc=0
         ;;

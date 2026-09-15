@@ -68,13 +68,35 @@ pub fn status(base: &str) -> Result<()> {
 }
 
 /// Stop and forget a session's browser.
+///
+/// Stopping a session that is already gone is not an error: `close` may run
+/// twice, or after the service reaped a crashed browser.
 pub fn stop(base: &str, name: &str) -> Result<()> {
-    check(
-        client()?
-            .delete(format!("{base}/v1/sessions/{name}"))
-            .send()?,
-    )?;
+    let response = client()?
+        .delete(format!("{base}/v1/sessions/{name}"))
+        .send()?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        println!("session {name} not running");
+        return Ok(());
+    }
+    check(response)?;
     println!("stopped {name}");
+    Ok(())
+}
+
+/// Stop every active session.
+pub fn stop_all(base: &str) -> Result<()> {
+    let sessions: Vec<AgentInfo> = check(client()?.get(format!("{base}/v1/sessions")).send()?)
+        .context("connecting to lumen")?
+        .json()
+        .context("parsing sessions")?;
+    if sessions.is_empty() {
+        println!("no active sessions");
+        return Ok(());
+    }
+    for session in &sessions {
+        stop(base, &session.name)?;
+    }
     Ok(())
 }
 
