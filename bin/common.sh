@@ -53,8 +53,11 @@ lumen() {
   podman exec "${CONTAINER}" lumen --url "http://127.0.0.1:${LUMEN_PORT}" "$@"
 }
 
-# Run playwright-cli from the shared workspace so its session registry and
-# every agent's artifacts land in one predictable place.
+# Root of the CLI workspace. pw.sh owns everything under it: one directory per
+# session (`sessions/<name>/`) holding that session's artifacts and endpoint
+# binding. Keeping one marker at the root keeps every session in a single CLI
+# workspace; without it the CLI falls back to a global default it shares with
+# unrelated projects.
 pw() {
   mkdir -p "${PW_WORKSPACE}"
   ( cd "${PW_WORKSPACE}" && exec "${PW_CLI}" "$@" )

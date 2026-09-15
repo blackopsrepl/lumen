@@ -31,8 +31,10 @@ CDP automatically.
 `fill` / `hover` / `check` accept. Take one snapshot, then act on the refs.
 
 Every file a command produces (screenshots, pdfs, snapshots) is reported on a
-line like `[lumen] artifact /absolute/path.png`. Read exactly that path —
-never search the filesystem for it.
+line like `[lumen] artifact <session> /absolute/path.png`. Read exactly that
+path — never search the filesystem for it. Artifacts belong to the session:
+they live under that session's own directory and are removed when the session
+closes, so read what you need while the session is open.
 
 Useful extras: `go-back`, `reload`, `type`, `select`, `upload`, `tab-list`,
 `console`, `requests`, `eval`, `pdf`, `state-save`/`state-load`.
