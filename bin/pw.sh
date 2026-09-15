@@ -35,6 +35,8 @@ done
 cmd=""
 [ "${cmd_idx}" -ge 0 ] && cmd="${ARGS[$cmd_idx]}"
 name="${name:-${AGENT_NAME:-default}}"
+valid_session_name "${name}" \
+  || die "invalid session name '${name}' (use [A-Za-z0-9._-], 1-32 chars)"
 
 # Each session gets its own directory under the shared root:
 #   <root>/sessions/<name>/            the CLI's working directory

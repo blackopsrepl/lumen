@@ -40,6 +40,17 @@ export PROJECT_DIR LUMEN_VERSION PLAYWRIGHT_IMAGE_VERSION IMAGE CONTAINER LUMEN_
 log() { printf '[%s] %s\n' "${0##*/}" "$*" >&2; }
 die() { printf '[%s] error: %s\n' "${0##*/}" "$*" >&2; exit 1; }
 
+# A session name becomes a URL segment, a log field, and a directory component
+# under PW_WORKSPACE. This mirrors Supervisor::ensure's rule (src/supervisor.rs)
+# so a bad name can never reach the filesystem, where '..' would expand to the
+# workspace root and 'rm -rf' would delete it.
+valid_session_name() {
+  local name="$1"
+  [ -n "${name}" ] && [ "${name}" != "." ] && [ "${name}" != ".." ] \
+    && [ "${#name}" -le 32 ] \
+    && [[ "${name}" =~ ^[A-Za-z0-9._-]+$ ]]
+}
+
 compose() { ( cd "${PROJECT_DIR}" && exec podman compose -f "${PROJECT_DIR}/compose.yaml" "$@" ); }
 
 require_cli() {
