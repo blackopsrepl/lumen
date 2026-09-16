@@ -81,6 +81,7 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(index))
         .route("/app.js", get(app_js))
         .route("/style.css", get(style_css))
+        .route("/fonts/{*path}", get(font))
         .route("/healthz", get(healthz))
         .route("/v1/sessions", get(list_sessions).post(create_session))
         .route(
@@ -221,6 +222,19 @@ async fn app_js() -> Response {
 
 async fn style_css() -> Response {
     asset("style.css", "text/css; charset=utf-8")
+}
+
+/// Serve the vendored woff2 files under ui/fonts/. Only plain file names are
+/// accepted — no slashes, so the path can never escape the fonts directory.
+async fn font(Path(path): Path<String>) -> Response {
+    let plausible = path.ends_with(".woff2")
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if !plausible {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    asset(&format!("fonts/{path}"), "font/woff2")
 }
 
 async fn healthz(State(state): State<AppState>) -> Response {
