@@ -1,6 +1,6 @@
 [package]
 name = "lumen"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2021"
 description = "Single-binary browser service for agents and humans"
 license = "Apache-2.0"

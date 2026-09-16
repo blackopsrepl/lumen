@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.10.0](https://github.com/blackopsrepl/lumen/compare/v0.9.0...v0.10.0) (2026-09-16)
+
+### Features
+
+* **http:** serve vendored IBM Plex fonts ([118a35d](https://github.com/blackopsrepl/lumen/commit/118a35d3067f5c16242b7a7969fb592468a427c0))
+* **viewer:** restyle the console as a mono instrument panel ([6e5c7a3](https://github.com/blackopsrepl/lumen/commit/6e5c7a3018ae51caaed2317a26ee7010f642841d))
+
 ## 0.9.0 (2026-09-15)
 
 ### Features
