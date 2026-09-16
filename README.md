@@ -40,6 +40,10 @@ finishes with a black-box smoke test. When it prints *Bootstrap complete*, open:
 
 **http://localhost:8899**
 
+<p align="center">
+  <img src="docs/images/viewer-empty.png" alt="The viewer on first run: agent and manual sessions listed on the left, no session selected yet" width="920">
+</p>
+
 To run on a different port or with a different Chromium binary:
 
 ```bash
@@ -87,8 +91,16 @@ Tabs the browser opens on its own — a `target=_blank` link, a popup — are
 adopted automatically, so what you watch is always the tab the browser is
 actually showing.
 
+<p align="center">
+  <img src="docs/images/viewer-control.png" alt="While the human has control, an amber banner marks it and the button offers Release control" width="920">
+</p>
+
 To leave feedback, click **Comment** and drag a rectangle over the area — the
 agent sees the note and the exact region on its next `lumen feedback` call.
+
+<p align="center">
+  <img src="docs/images/viewer-annotate.png" alt="Annotating a region: the dragged rectangle frames the flaky-tests card and the composer holds the note for the agent" width="920">
+</p>
 
 Because the container shares the host network, pages can reach dev servers on
 the host at `http://127.0.0.1:<port>` (`host.containers.internal` and
