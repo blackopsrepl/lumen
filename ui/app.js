@@ -75,7 +75,7 @@ function setStatus(text, dot) {
 }
 
 function setControlsEnabled(enabled) {
-  for (const id of ["go", "url", "zoom-in", "zoom-out", "zoom-label", "fit", "fullscreen", "comment"]) {
+  for (const id of ["url", "zoom-label", "fit", "fullscreen", "comment"]) {
     el(id).disabled = !enabled;
   }
   el("control").disabled = !enabled;
@@ -101,16 +101,45 @@ function draw() {
   const { w, h } = stageSize();
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
+  frameMeta();
   if (!state.frame) return;
   const width = state.frameW * state.scale;
   const height = state.frameH * state.scale;
   ctx.save();
-  ctx.shadowColor = "rgba(0, 0, 0, 0.55)";
-  ctx.shadowBlur = 28;
-  ctx.shadowOffsetY = 6;
+  ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
+  ctx.shadowBlur = 20;
+  ctx.shadowOffsetY = 4;
   ctx.imageSmoothingEnabled = state.scale < 1;
   ctx.drawImage(state.frame, state.ox, state.oy, width, height);
   ctx.restore();
+  // Hairline frame around the page, like a monitor bezel.
+  ctx.strokeStyle = "rgba(232, 230, 225, 0.16)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(
+    Math.round(state.ox) + 0.5,
+    Math.round(state.oy) + 0.5,
+    Math.round(width) - 1,
+    Math.round(height) - 1,
+  );
+}
+
+// Keep the monitor readout pinned to the frame's bottom-right corner.
+function frameMeta() {
+  const meta = el("frame-meta");
+  if (!state.frame) {
+    meta.hidden = true;
+    return;
+  }
+  const { w, h } = stageSize();
+  const width = state.frameW * state.scale;
+  const height = state.frameH * state.scale;
+  meta.textContent = `${state.frameW}×${state.frameH} · ${Math.round(state.scale * 100)}%`;
+  let top = state.oy + height + 8;
+  if (top + 18 > h) top = state.oy + height - 20; // drop inside when the stage is tight
+  const right = Math.min(Math.max(state.ox + width, 120), w - 8);
+  meta.style.left = `${right}px`;
+  meta.style.top = `${Math.max(4, top)}px`;
+  meta.hidden = false;
 }
 
 function center() {
@@ -192,10 +221,12 @@ function drawOverlay() {
   const { w, h } = stageSize();
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
   octx.clearRect(0, 0, w, h);
+  // Both rects are human annotations: the saved note's region and the
+  // in-progress drag share the human brass, never the agent accent.
   if (state.highlight) {
     const { x, y, width, height } = state.highlight;
-    octx.fillStyle = "rgba(245, 184, 61, 0.12)";
-    octx.strokeStyle = "rgba(245, 184, 61, 0.9)";
+    octx.fillStyle = "rgba(216, 160, 78, 0.12)";
+    octx.strokeStyle = "rgba(216, 160, 78, 0.9)";
     octx.lineWidth = 1.5;
     octx.fillRect(x, y, width, height);
     octx.strokeRect(x, y, width, height);
@@ -205,8 +236,8 @@ function drawOverlay() {
   const y = Math.min(state.drawStart.y, state.drawEnd.y);
   const width = Math.abs(state.drawEnd.x - state.drawStart.x);
   const height = Math.abs(state.drawEnd.y - state.drawStart.y);
-  octx.fillStyle = "rgba(94, 234, 212, 0.15)";
-  octx.strokeStyle = "#5eead4";
+  octx.fillStyle = "rgba(216, 160, 78, 0.14)";
+  octx.strokeStyle = "#d8a04e";
   octx.lineWidth = 1.5;
   octx.fillRect(x, y, width, height);
   octx.strokeRect(x, y, width, height);
@@ -290,7 +321,9 @@ async function loadFeedback() {
   } catch {
     return;
   }
-  el("feedback-count").textContent = items.length;
+  const badge = el("feedback-count");
+  badge.textContent = items.length;
+  badge.hidden = items.length === 0;
 
   const signature = `${state.sessionOrigin}:${items.map((item) => item.id).join(",")}`;
   if (signature === state.feedbackSig) return;
@@ -418,12 +451,14 @@ async function loadSessions() {
     } else {
       const agents = sessions.filter((session) => session.origin === "agent");
       const manual = sessions.filter((session) => session.origin !== "agent");
+      // Group labels only earn their keep when both kinds are present.
+      const grouped = agents.length > 0 && manual.length > 0;
       if (agents.length) {
-        list.append(groupLabel(`Agent sessions · ${agents.length}`));
+        if (grouped) list.append(groupLabel(`Agent sessions · ${agents.length}`));
         list.append(...agents.map(sessionItem));
       }
       if (manual.length) {
-        list.append(groupLabel(`Manual · no agent · ${manual.length}`));
+        if (grouped) list.append(groupLabel(`Manual · no agent · ${manual.length}`));
         list.append(...manual.map(sessionItem));
       }
     }
@@ -461,6 +496,10 @@ function clearSession(name) {
   el("attach").hidden = true;
   el("spinner").hidden = true;
   el("empty").hidden = false;
+  el("page-title").textContent = "";
+  const badge = el("feedback-count");
+  badge.textContent = "0";
+  badge.hidden = true;
   setControlsEnabled(false);
   setState("empty");
   setStatus("idle", "off");
@@ -494,6 +533,8 @@ async function connect(name) {
   el("attach").hidden = true;
   el("empty").hidden = true;
   el("spinner").hidden = false;
+  el("page-title").textContent = "";
+  el("feedback-count").hidden = true;
   setAnnotating(false);
   setControlsEnabled(false);
   setState("connecting");
@@ -603,6 +644,7 @@ async function pollInfo() {
     if (!active) return;
     if (document.activeElement !== el("url")) el("url").value = active.url || "";
     el("url").title = active.url || "";
+    el("page-title").textContent = active.title || "";
     document.title = active.title ? `${active.title} · Lumen` : "Lumen";
   } catch (error) {
     if (error.status === 404) clearSession(session);
@@ -651,7 +693,6 @@ el("new-session").onsubmit = async (event) => {
   }
 };
 
-el("go").onclick = navigate;
 el("url").addEventListener("keydown", (event) => {
   if (event.key === "Enter") navigate();
 });
@@ -659,9 +700,15 @@ el("url").addEventListener("keydown", (event) => {
 el("control").onclick = () =>
   send({ type: "control", action: state.control === "human" ? "release" : "claim" });
 
-el("zoom-in").onclick = () => zoomCenter(1.2);
-el("zoom-out").onclick = () => zoomCenter(1 / 1.2);
 el("zoom-label").onclick = actualSize;
+el("zoom-label").addEventListener(
+  "wheel",
+  (event) => {
+    event.preventDefault();
+    zoomCenter(event.deltaY < 0 ? 1.1 : 1 / 1.1);
+  },
+  { passive: false },
+);
 el("fit").onclick = fitView;
 el("fullscreen").onclick = () => {
   if (document.fullscreenElement) document.exitFullscreen();

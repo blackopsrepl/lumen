@@ -24,7 +24,7 @@ test("streams a session, navigates it, and hands control back", async ({ page, r
     await createFromViewer(page, name);
 
     await page.locator("#url").fill("data:text/html,<title>E2E page</title><h1>viewer e2e</h1>");
-    await page.locator("#go").click();
+    await page.locator("#url").press("Enter");
     await expect.poll(() => page.locator("#url").inputValue()).toContain("data:text/html");
 
     await page.locator("#control").click();
@@ -74,7 +74,7 @@ test("reaches a host-loopback development server", async ({ page, request }) => 
   try {
     await createFromViewer(page, name);
     await page.locator("#url").fill(`http://127.0.0.1:${address.port}`);
-    await page.locator("#go").click();
+    await page.locator("#url").press("Enter");
     await expect(page.locator("#url")).toHaveValue(`http://127.0.0.1:${address.port}`);
     await expect
       .poll(async () => {

@@ -10,11 +10,8 @@
   <body data-state="empty">
     <aside id="sidebar">
       <header class="brand">
-        <span class="logo">L</span>
-        <span class="brand-text">
-          <strong>Lumen</strong>
-          <span id="conn-status" class="status">idle</span>
-        </span>
+        <span class="wordmark">lumen</span>
+        <span id="conn-status" class="status">idle</span>
         <span id="conn" class="dot" title="disconnected"></span>
       </header>
 
@@ -32,7 +29,7 @@
       <ul id="sessions" class="sessions"></ul>
 
       <div class="section">
-        Feedback <span id="feedback-count" class="badge">0</span>
+        Feedback <span id="feedback-count" class="badge" hidden>0</span>
       </div>
       <ul id="feedback-list" class="feedback"></ul>
 
@@ -51,17 +48,15 @@
           spellcheck="false"
           aria-label="address"
         />
-        <button id="go" class="ghost">Go</button>
-
-        <div class="divider"></div>
+        <span id="page-title" class="page-title"></span>
 
         <div class="group">
-          <button id="zoom-out" class="icon" title="Zoom out">−</button>
-          <button id="zoom-label" class="zoom" title="Reset to 100%">100%</button>
-          <button id="zoom-in" class="icon" title="Zoom in">+</button>
+          <button id="zoom-label" class="zoom" title="Actual size — scroll to zoom">100%</button>
           <button id="fit" class="ghost" title="Fit to window">Fit</button>
           <button id="fullscreen" class="icon" title="Fullscreen">⤢</button>
         </div>
+
+        <div class="divider"></div>
 
         <div class="group">
           <button id="comment" class="ghost" title="Annotate a region">Comment</button>
@@ -72,6 +67,8 @@
       <div id="stage">
         <canvas id="screen"></canvas>
         <canvas id="overlay"></canvas>
+
+        <div id="frame-meta" class="frame-meta" hidden></div>
 
         <div id="banner" class="banner" hidden>
           <span class="banner-dot"></span>
