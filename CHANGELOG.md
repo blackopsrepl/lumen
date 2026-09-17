@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.11.0](https://github.com/blackopsrepl/lumen/compare/v0.10.1...v0.11.0) (2026-09-17)
+
+
+### Features
+
+* **runtime:** support Docker as container runtime ([b840389](https://github.com/blackopsrepl/lumen/commit/b84038956fb603010c92f0c8e18185f557b93819))
+* **session:** supervise Quickshell desktop sessions ([153afe2](https://github.com/blackopsrepl/lumen/commit/153afe2d91c1d9fc36641d17106bd8c00cbca74c))
+* **viewer:** render Quickshell desktop sessions ([eaa9a2a](https://github.com/blackopsrepl/lumen/commit/eaa9a2a110e22253eb3baa823dbd5f9b456d4eb7))
+
 ## [0.10.1](https://github.com/blackopsrepl/lumen/compare/v0.10.0...v0.10.1) (2026-09-17)
 
 ### Bug Fixes
