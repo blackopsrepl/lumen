@@ -102,6 +102,7 @@ enum ViewSource {
     Test {
         starts: Arc<AtomicUsize>,
         stops: Arc<AtomicUsize>,
+        source_frames: watch::Sender<Option<Bytes>>,
     },
 }
 
@@ -193,6 +194,14 @@ impl ViewHub {
     }
 
     async fn start_locked(&self) {
+        // Subscribe before starting a desktop capture: a static surface may
+        // publish its only frame synchronously and never damage again.
+        let desktop_stream = match &self.source {
+            ViewSource::Desktop(session) => Some(session.frames()),
+            ViewSource::Browser(_) => None,
+            #[cfg(test)]
+            ViewSource::Test { source_frames, .. } => Some(source_frames.subscribe()),
+        };
         let (stream, page) = match &self.source {
             ViewSource::Browser(session) => {
                 let page = session.current_page().await;
@@ -217,17 +226,15 @@ impl ViewHub {
                 (None, None)
             }
             #[cfg(test)]
-            ViewSource::Test { starts, .. } => {
+            ViewSource::Test {
+                starts,
+                source_frames,
+                ..
+            } => {
                 starts.fetch_add(1, Ordering::SeqCst);
+                source_frames.send_replace(Some(Bytes::from_static(b"initial")));
                 (None, None)
             }
-        };
-
-        let desktop_stream = match &self.source {
-            ViewSource::Desktop(session) => Some(session.frames()),
-            ViewSource::Browser(_) => None,
-            #[cfg(test)]
-            ViewSource::Test { .. } => None,
         };
         #[cfg(test)]
         let test_source = matches!(&self.source, ViewSource::Test { .. });
@@ -303,10 +310,12 @@ mod tests {
         let stops = Arc::new(AtomicUsize::new(0));
         let (frames, _) = watch::channel(None);
         let (closed, _) = watch::channel(false);
+        let (source_frames, _) = watch::channel(None);
         let hub = Arc::new(ViewHub {
             source: ViewSource::Test {
                 starts: starts.clone(),
                 stops: stops.clone(),
+                source_frames,
             },
             frames,
             closed,
@@ -353,11 +362,20 @@ mod tests {
     async fn subscription_keeps_only_the_latest_frame() {
         let (hub, _, _) = test_hub();
         let mut subscription = hub.subscribe().await;
+        assert_eq!(subscription.next_frame().await.unwrap(), "initial");
         hub.frames.send_replace(Some(Bytes::from_static(b"one")));
         hub.frames.send_replace(Some(Bytes::from_static(b"two")));
         hub.frames.send_replace(Some(Bytes::from_static(b"three")));
 
         assert_eq!(subscription.next_frame().await.unwrap(), "three");
+    }
+
+    #[tokio::test]
+    async fn subscribes_before_a_source_publishes_its_initial_frame() {
+        let (hub, _, _) = test_hub();
+        let mut subscription = hub.subscribe().await;
+
+        assert_eq!(subscription.next_frame().await.unwrap(), "initial");
     }
 
     #[tokio::test]
