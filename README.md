@@ -93,10 +93,11 @@ do not have browser tabs, navigation, page scale, or CDP endpoints. The
 `LUMEN_SWAY`, `LUMEN_QUICKSHELL`, and `LUMEN_WTYPE` environment variables, select
 the runtime binaries.
 
-The stock Playwright runtime image includes Chromium but does not currently
-package Quickshell. To use desktop sessions in the container, build a runtime
-image that provides Quickshell and its Qt dependencies, or run Lumen in a host
-environment with Sway, Quickshell, and wtype installed.
+The runtime image includes Chromium, Sway, Quickshell, wtype, grim, and the Qt
+dependencies required by desktop sessions. The Quickshell package comes from
+the Avenge Media Dank Linux PPA and is installed from the Ubuntu 25.10 package
+repositories because Quickshell requires Qt 6.6 or newer. Host deployments may
+still override the binary paths through configuration or environment variables.
 
 The service also exposes the same capabilities over plain HTTP:
 

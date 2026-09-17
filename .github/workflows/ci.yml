@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +35,27 @@ jobs:
           npm ci
           # GitHub runners do not ship Chromium's runtime libraries.
           npx playwright install-deps chromium
+
+      - name: Desktop dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends software-properties-common sway wtype grim
+          sudo add-apt-repository -y ppa:avengemedia/danklinux
+          for source in /etc/apt/sources.list.d/*danklinux*.sources; do
+            sudo sed -i 's/noble/questing/g' "$source"
+          done
+          printf '%s\n' \
+            'deb http://archive.ubuntu.com/ubuntu/ questing main universe' \
+            'deb http://archive.ubuntu.com/ubuntu/ questing-updates main universe' \
+            'deb http://security.ubuntu.com/ubuntu questing-security main universe' \
+            | sudo tee /etc/apt/sources.list.d/ubuntu-questing.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends quickshell
+          command -v sway
+          command -v quickshell
+          command -v wtype
+          command -v grim
 
       - name: Gates
         run: make ci

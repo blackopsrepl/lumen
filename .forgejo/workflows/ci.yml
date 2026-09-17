@@ -9,15 +9,42 @@ on:
 jobs:
   check:
     runs-on: rust
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
     steps:
       - uses: actions/checkout@v4
 
-      # The runner image ships an old default toolchain without clippy; install a
-      # current stable one with the components the gate needs.
+      # Keep this job on the same Playwright/Ubuntu runtime as GitHub CI. The
+      # runner image only supplies the Docker executor and is not the test OS.
       - name: Toolchain
         run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl build-essential pkg-config
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
+
+      - name: Desktop dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get install -y --no-install-recommends software-properties-common sway wtype grim
+          add-apt-repository -y ppa:avengemedia/danklinux
+          for source in /etc/apt/sources.list.d/*danklinux*.sources; do
+            sed -i 's/noble/questing/g' "$source"
+          done
+          printf '%s\n' \
+            'deb http://archive.ubuntu.com/ubuntu/ questing main universe' \
+            'deb http://archive.ubuntu.com/ubuntu/ questing-updates main universe' \
+            'deb http://security.ubuntu.com/ubuntu questing-security main universe' \
+            > /etc/apt/sources.list.d/ubuntu-questing.list
+          apt-get update
+          apt-get install -y --no-install-recommends quickshell
+          command -v sway
+          command -v quickshell
+          command -v wtype
+          command -v grim
 
       - name: Format
         run: cargo fmt --all -- --check

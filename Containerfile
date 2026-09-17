@@ -2,8 +2,8 @@
 #
 # Multi-stage: compile the Rust service against a stub so dependency layers
 # cache, then copy only the binary onto the official Playwright image, which
-# already carries Chromium and every OS library it needs. Desktop sessions also
-# require Sway, Quickshell, wtype, and their dependencies in the runtime image.
+# already carries Chromium and every OS library it needs. Desktop sessions use
+# the Ubuntu 25.10 desktop packages because Quickshell requires Qt 6.6+.
 
 ARG PLAYWRIGHT_IMAGE_VERSION=1.63.0
 ARG RUST_IMAGE=rust:1.95-slim
@@ -33,7 +33,24 @@ FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_IMAGE_VERSION}-noble
 ARG LUMEN_REVISION=unknown
 LABEL org.opencontainers.image.revision=$LUMEN_REVISION
 
-RUN ln -sf "$(ls /ms-playwright/chromium-*/chrome-linux*/chrome | head -1)" /usr/local/bin/chromium \
+RUN export DEBIAN_FRONTEND=noninteractive \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends software-properties-common sway wtype grim \
+ && add-apt-repository -y ppa:avengemedia/danklinux \
+ && for source in /etc/apt/sources.list.d/*danklinux*.sources; do sed -i 's/noble/questing/g' "$source"; done \
+ && printf '%s\n' \
+      'deb http://archive.ubuntu.com/ubuntu/ questing main universe' \
+      'deb http://archive.ubuntu.com/ubuntu/ questing-updates main universe' \
+      'deb http://security.ubuntu.com/ubuntu questing-security main universe' \
+      > /etc/apt/sources.list.d/ubuntu-questing.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends quickshell \
+ && command -v sway \
+ && command -v quickshell \
+ && command -v wtype \
+ && command -v grim \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -sf "$(ls /ms-playwright/chromium-*/chrome-linux*/chrome | head -1)" /usr/local/bin/chromium \
  && chromium --version \
  && mkdir -p /data /etc/lumen \
  && chown -R ubuntu:ubuntu /data
