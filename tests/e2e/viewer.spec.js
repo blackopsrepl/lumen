@@ -66,6 +66,44 @@ test("streams a Quickshell desktop session", async ({ page, request }) => {
   }
 });
 
+test("coalesces frames while browser decoding is busy", async ({ page, request }) => {
+  const name = sessionName("decode");
+  await page.addInitScript(() => {
+    const decode = window.createImageBitmap.bind(window);
+    window.decodeStats = { active: 0, maxActive: 0, calls: 0 };
+    window.createImageBitmap = async (...args) => {
+      window.decodeStats.active += 1;
+      window.decodeStats.calls += 1;
+      window.decodeStats.maxActive = Math.max(
+        window.decodeStats.maxActive,
+        window.decodeStats.active,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      try {
+        return await decode(...args);
+      } finally {
+        window.decodeStats.active -= 1;
+      }
+    };
+  });
+  try {
+    await createFromViewer(page, name);
+    const before = await page.evaluate(() => window.decodeStats.calls);
+    const response = await request.post(`/v1/sessions/${name}/navigate`, {
+      data: {
+        url: "data:text/html,<script>let n=0;let t=setInterval(()=>{document.body.textContent=String(++n);document.body.style.background='hsl('+n*19+' 80% 50%)';if(n===20)clearInterval(t)},10)</script>",
+      },
+    });
+    expect(response.ok()).toBeTruthy();
+    await expect.poll(() => page.evaluate(() => window.decodeStats.calls)).toBeGreaterThan(before);
+    await expect.poll(() => page.evaluate(() => window.decodeStats.active)).toBe(0);
+    const stats = await page.evaluate(() => window.decodeStats);
+    expect(stats.maxActive).toBe(1);
+  } finally {
+    await deleteSession(request, name);
+  }
+});
+
 test("draws and sends a feedback annotation", async ({ page, request }) => {
   const name = sessionName("feedback");
   try {

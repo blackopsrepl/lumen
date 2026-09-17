@@ -33,6 +33,7 @@ const state = {
   pollInFlight: false,
   pollQueued: false,
   pointerButton: null,
+  decoder: null,
 };
 
 // --------------------------------------------------------------- utilities
@@ -528,6 +529,7 @@ async function connect(name) {
     state.ws.close();
   }
   state.ws = null;
+  state.decoder = { active: false, pending: null };
   state.session = name;
   state.sessionOrigin = null;
   state.sessionKind = null;
@@ -621,26 +623,47 @@ function onServerMessage(event) {
 }
 
 function onFrame(buffer) {
-  createImageBitmap(new Blob([buffer], { type: "image/jpeg" }))
-    .then((bitmap) => {
-      if (state.frame) state.frame.close();
-      state.frame = bitmap;
-      state.frameW = bitmap.width;
-      state.frameH = bitmap.height;
-      canvas.dataset.frameReady = "true";
-      canvas.dataset.frameWidth = String(bitmap.width);
-      canvas.dataset.frameHeight = String(bitmap.height);
-      if (!el("spinner").hidden) {
-        el("spinner").hidden = true;
-        el("empty").hidden = true;
-        setControlsEnabled(true);
-        setState("live");
-        setStatus(`live · ${state.session}`, "on");
-      }
-      if (state.fit) fitView();
-      else draw();
-    })
-    .catch(() => {});
+  const decoder = state.decoder;
+  if (!decoder) return;
+  if (decoder.active) {
+    decoder.pending = buffer;
+    return;
+  }
+  void decodeFrame(decoder, buffer);
+}
+
+async function decodeFrame(decoder, buffer) {
+  decoder.active = true;
+  try {
+    const bitmap = await createImageBitmap(new Blob([buffer], { type: "image/jpeg" }));
+    if (state.decoder !== decoder) {
+      bitmap.close();
+      return;
+    }
+    if (state.frame) state.frame.close();
+    state.frame = bitmap;
+    state.frameW = bitmap.width;
+    state.frameH = bitmap.height;
+    canvas.dataset.frameReady = "true";
+    canvas.dataset.frameWidth = String(bitmap.width);
+    canvas.dataset.frameHeight = String(bitmap.height);
+    if (!el("spinner").hidden) {
+      el("spinner").hidden = true;
+      el("empty").hidden = true;
+      setControlsEnabled(true);
+      setState("live");
+      setStatus(`live · ${state.session}`, "on");
+    }
+    if (state.fit) fitView();
+    else draw();
+  } catch {
+    // Ignore corrupt or superseded frames; a later frame can still recover.
+  } finally {
+    decoder.active = false;
+    const pending = decoder.pending;
+    decoder.pending = null;
+    if (pending && state.decoder === decoder) void decodeFrame(decoder, pending);
+  }
 }
 
 async function pollInfo() {
