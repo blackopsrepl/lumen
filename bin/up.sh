@@ -2,7 +2,7 @@
 #
 # Start the Lumen service, converging a running container onto this checkout.
 #
-# podman-compose leaves an existing container in place when only the image
+# compose leaves an existing container in place when only the image
 # changed, which silently keeps an old binary serving. The image is stamped
 # with the revision it was built from, so compare that: recreate only when the
 # running container predates this checkout, and make `git pull && bin/up.sh` a
@@ -14,7 +14,7 @@ set -euo pipefail
 log "building ${IMAGE} (revision ${LUMEN_REVISION})"
 compose build
 
-running_revision="$(podman inspect "${CONTAINER}" \
+running_revision="$(ctr inspect "${CONTAINER}" \
   --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null || true)"
 
 if [ -n "${running_revision}" ] && [ "${running_revision}" != "${LUMEN_REVISION}" ]; then

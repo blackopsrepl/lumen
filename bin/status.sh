@@ -5,8 +5,8 @@
 set -euo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
-if podman container exists "${CONTAINER}"; then
-  podman ps -a --filter "name=^${CONTAINER}$" \
+if container_exists "${CONTAINER}"; then
+  ctr ps -a --filter "name=^${CONTAINER}$" \
     --format 'container: {{.Names}}  state: {{.Status}}'
 else
   log "container ${CONTAINER} is not present"

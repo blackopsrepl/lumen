@@ -17,8 +17,16 @@ for arg in "$@"; do
 done
 
 log "building ${IMAGE} (playwright ${PLAYWRIGHT_IMAGE_VERSION})"
-podman build \
-  --pull="${PULL}" \
+# `docker build` only knows `--pull` (always pull) while podman also accepts
+# `--pull=newer`; both map to a refresh here, so either runtime re-pulls base
+# layers by default and `--pull` forces it explicitly.
+PULL_FLAG=()
+case "${CTR}" in
+  docker) PULL_FLAG=(--pull) ;;
+  *) PULL_FLAG=(--pull="${PULL}") ;;
+esac
+ctr build \
+  "${PULL_FLAG[@]}" \
   "${NO_CACHE[@]}" \
   --build-arg "PLAYWRIGHT_IMAGE_VERSION=${PLAYWRIGHT_IMAGE_VERSION}" \
   --build-arg "LUMEN_REVISION=${LUMEN_REVISION}" \
@@ -27,4 +35,4 @@ podman build \
   "${PROJECT_DIR}"
 
 log "built ${IMAGE}"
-podman image inspect "${IMAGE}" --format '  size: {{.Size}} bytes  created: {{.Created}}'
+ctr image inspect "${IMAGE}" --format '  size: {{.Size}} bytes  created: {{.Created}}'

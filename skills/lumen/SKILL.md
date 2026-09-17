@@ -60,7 +60,7 @@ Feedback is non-blocking: check your inbox between steps and adjust.
     lumen feedback <your-agent-name> --consume  # print and acknowledge them
 
 (The `lumen` client runs inside the service container; use
-`podman exec lumen lumen feedback <name>` if `lumen` is not on your PATH.)
+`podman exec lumen lumen feedback <name>` (or `docker exec …`) if `lumen` is not on your PATH.)
 
 Never block waiting for a human unless you are explicitly asked to.
 

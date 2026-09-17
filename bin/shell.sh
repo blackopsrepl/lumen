@@ -5,4 +5,4 @@
 set -euo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
-podman exec -it "${CONTAINER}" bash
+ctr exec -it "${CONTAINER}" bash
