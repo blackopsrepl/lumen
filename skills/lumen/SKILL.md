@@ -3,12 +3,13 @@ name: lumen
 description: Use when you need to drive a real web browser — navigate, click, type, fill forms, take screenshots, or scrape pages — or to read human feedback left on the shared viewer. Front-loads concrete tooling (lumen, pw.sh, playwright-cli, snapshot, browser automation).
 ---
 
-# Lumen (browser service)
+# Lumen (session service)
 
-Lumen is a single service that gives each agent an isolated Chromium and gives
-the human a live, controllable view of it. Your browser runs in the container,
-which shares the host network, so a dev server on the host is reachable at
-`http://127.0.0.1:<port>` from inside the page.
+Lumen is a single service that gives each agent an isolated Chromium or
+Quickshell desktop session and gives the human a live, controllable view of it.
+Browser sessions run in the container, which shares the host network, so a dev
+server on the host is reachable at `http://127.0.0.1:<port>` from inside the
+page.
 
 Set a short handle once:
 
@@ -29,6 +30,14 @@ CDP automatically.
 
 `snapshot` prints an accessibility tree with refs (`e1`, `e2`, …) that `click` /
 `fill` / `hover` / `check` accept. Take one snapshot, then act on the refs.
+
+For a Quickshell surface, register the absolute QML path instead of attaching
+Playwright:
+
+    lumen ensure <your-session-name> --quickshell /absolute/path/to/shell.qml --owner <your-agent>
+
+The viewer provides the live Wayland surface and native mouse, wheel, and text
+input. Quickshell sessions do not expose browser navigation, tabs, or CDP.
 
 Every file a command produces (screenshots, pdfs, snapshots) is reported on a
 line like `[lumen] artifact <session> /absolute/path.png`. Read exactly that

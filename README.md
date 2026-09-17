@@ -8,17 +8,19 @@
   <img src="docs/images/viewer.png" alt="The Lumen viewer: a live browser session on the right, sessions and feedback on the left" width="920">
 </p>
 
-One service that gives every agent its own isolated Chromium and gives the human a
-live, controllable view of the same browser. Agents drive real pages over a
-capability API or CDP; the human watches the active tab, can take over the mouse
-and keyboard at any moment, and leaves annotated feedback the agent reads back.
+One service that gives every agent its own isolated Chromium or Quickshell desktop
+surface and gives the human a live, controllable view of the same session. Agents
+drive real pages over a capability API or CDP; the human watches the active tab or
+desktop, can take over input at any moment, and leaves annotated feedback the
+agent reads back.
 
 ## How it fits together
 
-- **Control plane** — an HTTP/JSON API (`/v1/...`) for sessions, navigation,
-  tabs, viewport, screenshots, and raw CDP.
-- **View plane** — the browser is screencasted over WebSocket and rendered to a
-  canvas, so agent and human always look at the same tab. Zoom is view-only.
+- **Control plane** — an HTTP/JSON API (`/v1/...`) for sessions, browser
+  navigation, tabs, viewport, screenshots, and raw CDP.
+- **View plane** — browser sessions use CDP screencasting; Quickshell sessions use
+  native Wayland screencopy. Both are rendered to the same viewer canvas, and
+  zoom is view-only.
 - **Feedback** — humans drag a rectangle, type a note; it lands in SQLite and
   the agent picks it up with one command. No watcher, no polling surface files.
 
@@ -67,6 +69,28 @@ podman exec lumen lumen feedback alice --consume   # read + ack human notes
 marked **agent-owned** in the viewer, so the human knows someone is reading the
 feedback. `make install-skill` gives opencode agents the full playbook.
 
+## Run a Quickshell surface
+
+Quickshell sessions run one headless Sway compositor and one Quickshell process
+per session. The path must be an absolute path to `shell.qml` or its containing
+directory, and it must be readable by the Lumen process:
+
+```bash
+lumen ensure dashboard --quickshell /srv/app/dashboard/shell.qml --owner dashboard-agent
+```
+
+The viewer can also create a Quickshell session with the session-type selector.
+Desktop sessions support native screenshots, mouse, wheel, and text input. They
+do not have browser tabs, navigation, page scale, or CDP endpoints. The
+`sway_bin`, `quickshell_bin`, and `wtype_bin` settings, or the corresponding
+`LUMEN_SWAY`, `LUMEN_QUICKSHELL`, and `LUMEN_WTYPE` environment variables, select
+the runtime binaries.
+
+The stock Playwright runtime image includes Chromium but does not currently
+package Quickshell. To use desktop sessions in the container, build a runtime
+image that provides Quickshell and its Qt dependencies, or run Lumen in a host
+environment with Sway, Quickshell, and wtype installed.
+
 The service also exposes the same capabilities over plain HTTP:
 
 | Capability | Endpoint |
@@ -83,8 +107,8 @@ The service also exposes the same capabilities over plain HTTP:
 
 ## Watch and steer as a human
 
-Every session is listed on the left of the viewer. The canvas is a live
-screencast of the session's active tab at its native viewport size. Use
+Every session is listed on the left of the viewer. The canvas is a live view of
+the browser's active tab or the Quickshell output at its native viewport size. Use
 **Take control** to forward your mouse, wheel, and typing into the page;
 **Escape** hands control back to the agent. Zoom and fullscreen are view-only.
 Tabs the browser opens on its own — a `target=_blank` link, a popup — are
@@ -119,8 +143,9 @@ the host at `http://127.0.0.1:<port>` (`host.containers.internal` and
 | `make version` | show version and ports |
 | `make help` | every target, grouped |
 
-Configuration lives in `config/lumen.toml`; `LUMEN_CONFIG`, `LUMEN_PORT`, and
-`LUMEN_CHROME` override it, and `LUMEN_LOG` sets the service's log level (see
+Configuration lives in `config/lumen.toml`; `LUMEN_CONFIG`, `LUMEN_PORT`,
+`LUMEN_CHROME`, `LUMEN_SWAY`, `LUMEN_QUICKSHELL`, and `LUMEN_WTYPE` override it,
+and `LUMEN_LOG` sets the service's log level (see
 `.env.example`). A globally exported `RUST_LOG` is deliberately ignored so a
 shell setting cannot silently change the container's verbosity. The systemd
 user unit (`make install-systemd`) keeps the service running across logouts via
@@ -186,13 +211,17 @@ The audit trail (`GET /v1/audit`) records navigations, tab operations, raw CDP
 calls, and feedback that pass through Lumen's API. Actions an agent takes
 directly over CDP do not pass through Lumen and are not audited.
 
+Quickshell configuration is executable QML supplied by the caller. Lumen
+validates that the path is absolute and exists, but does not sandbox the QML or
+its child processes; only pass paths trusted by the service operator.
+
 ## Layout
 
 ```
 Containerfile          multi-stage image: Rust builder -> Playwright runtime
 compose.yaml           one service (host network, /data volume)
 config/lumen.toml      the only config file
-src/                   supervisor, cdp, capabilities, view, feedback, client, http
+src/                   supervisor, cdp, desktop, capabilities, view, feedback, client, http
 ui/                    no-build viewer (ES modules + CSS), embedded in the binary
 tests/e2e/             Playwright suite (viewer, API, lifecycle)
 docs/                  screenshots and images

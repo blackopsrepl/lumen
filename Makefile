@@ -30,7 +30,7 @@ LUMEN_TEST_PORT ?= 18899
 # ============== Banner & Meta ==============
 
 banner:
-	@printf "$(CYAN)$(BOLD)◆ Lumen$(RESET) $(GRAY)v$(VERSION)$(RESET) $(GRAY)— browsers for agents, eyes for humans$(RESET)\n\n"
+	@printf "$(CYAN)$(BOLD)◆ Lumen$(RESET) $(GRAY)v$(VERSION)$(RESET) $(GRAY)— sessions for agents, eyes for humans$(RESET)\n\n"
 
 version: banner
 	@printf "$(CYAN)Service version:$(RESET) $(YELLOW)$(BOLD)v$(VERSION)$(RESET)\n"
