@@ -9,7 +9,7 @@ use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
@@ -33,6 +33,7 @@ const WAYLAND_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(10);
 const WAYLAND_POLL_TIMEOUT_MS: i32 = 100;
+const STREAM_FRAME_INTERVAL: Duration = Duration::from_millis(100);
 
 /// A mouse event expressed in output pixels.
 #[derive(Debug, Clone, Copy)]
@@ -359,6 +360,130 @@ enum DesktopCommand {
 
 type FrameResult = std::result::Result<Vec<u8>, String>;
 
+struct RawFrame {
+    pixels: Vec<u8>,
+    format: Format,
+    width: u32,
+    height: u32,
+    stride: u32,
+    invert_y: bool,
+}
+
+struct EncodeJob {
+    frame: RawFrame,
+    stream: bool,
+    screenshot: Option<SyncSender<FrameResult>>,
+}
+
+struct EncoderState {
+    pending: Option<EncodeJob>,
+    shutdown: bool,
+}
+
+struct EncoderWorker {
+    state: Arc<(Mutex<EncoderState>, Condvar)>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl EncoderWorker {
+    fn new(frames: watch::Sender<Option<Bytes>>) -> Result<Self> {
+        let state = Arc::new((
+            Mutex::new(EncoderState {
+                pending: None,
+                shutdown: false,
+            }),
+            Condvar::new(),
+        ));
+        let worker_state = state.clone();
+        let thread = std::thread::Builder::new()
+            .name("lumen-desktop-encoder".into())
+            .spawn(move || run_encoder(worker_state, frames))
+            .context("starting desktop encoder thread")?;
+        Ok(Self {
+            state,
+            thread: Some(thread),
+        })
+    }
+
+    fn submit(&self, job: EncodeJob) {
+        let (state, wake) = &*self.state;
+        let mut state = state.lock().expect("encoder mutex poisoned");
+        if state.shutdown {
+            if let Some(reply) = job.screenshot {
+                let _ = reply.send(Err("desktop encoder is shutting down".into()));
+            }
+            return;
+        }
+        if state
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.screenshot.is_some())
+        {
+            if let Some(reply) = job.screenshot {
+                let _ = reply.send(Err("desktop screenshot encoder is busy".into()));
+            }
+            return;
+        }
+        state.pending = Some(job);
+        wake.notify_one();
+    }
+}
+
+impl Drop for EncoderWorker {
+    fn drop(&mut self) {
+        let (state, wake) = &*self.state;
+        let mut state = state.lock().expect("encoder mutex poisoned");
+        state.shutdown = true;
+        if let Some(job) = state.pending.take() {
+            if let Some(reply) = job.screenshot {
+                let _ = reply.send(Err("desktop encoder is shutting down".into()));
+            }
+        }
+        wake.notify_one();
+        drop(state);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn run_encoder(state: Arc<(Mutex<EncoderState>, Condvar)>, frames: watch::Sender<Option<Bytes>>) {
+    loop {
+        let job = {
+            let (state, wake) = &*state;
+            let mut state = state.lock().expect("encoder mutex poisoned");
+            while state.pending.is_none() && !state.shutdown {
+                state = wake.wait(state).expect("encoder mutex poisoned");
+            }
+            if state.shutdown {
+                return;
+            }
+            state.pending.take().expect("pending encode job")
+        };
+
+        match convert_frame(&job.frame) {
+            Ok(rgb) => {
+                if job.stream {
+                    match encode_jpeg(&rgb, job.frame.width, job.frame.height) {
+                        Ok(frame) => {
+                            frames.send_replace(Some(Bytes::from(frame)));
+                        }
+                        Err(err) => tracing::warn!("encoding desktop frame failed: {err}"),
+                    }
+                }
+                if let Some(reply) = job.screenshot {
+                    let _ = reply.send(encode_png(&rgb, job.frame.width, job.frame.height));
+                }
+            }
+            Err(err) => {
+                if let Some(reply) = job.screenshot {
+                    let _ = reply.send(Err(err.to_string()));
+                }
+            }
+        }
+    }
+}
+
 type SyncReply<T> = (
     SyncSender<std::result::Result<T, String>>,
     Receiver<std::result::Result<T, String>>,
@@ -497,8 +622,8 @@ fn run_wayland_inner(
     let output = first_output(&globals, &qh)?;
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).context("binding wl_shm")?;
     let screencopy: ZwlrScreencopyManagerV1 = globals
-        .bind(&qh, 1..=3, ())
-        .context("binding zwlr_screencopy_manager_v1")?;
+        .bind(&qh, 3..=3, ())
+        .context("binding zwlr_screencopy_manager_v1 version 3")?;
     let pointer_manager: ZwlrVirtualPointerManagerV1 = globals
         .bind(&qh, 1..=2, ())
         .context("binding zwlr_virtual_pointer_manager_v1")?;
@@ -514,8 +639,11 @@ fn run_wayland_inner(
         pending: None,
         invert_y: false,
         streaming: false,
+        stream_has_frame: false,
+        damage_copy: false,
+        next_stream_capture: Instant::now(),
         screenshot_waiter: None,
-        frames,
+        encoder: EncoderWorker::new(frames)?,
         width,
         height,
         started: Instant::now(),
@@ -586,14 +714,18 @@ fn process_commands(
     while let Ok(command) = commands.try_recv() {
         match command {
             DesktopCommand::Start => {
-                state.streaming = true;
+                if !state.streaming {
+                    state.streaming = true;
+                    state.stream_has_frame = false;
+                    state.next_stream_capture = Instant::now();
+                }
                 request_capture(state, qh);
             }
             DesktopCommand::Stop => {
                 state.streaming = false;
-                state.screenshot_waiter = None;
-                if let Some(frame) = state.frame.take() {
-                    frame.destroy();
+                state.stream_has_frame = false;
+                if state.screenshot_waiter.is_none() {
+                    cancel_capture(state);
                 }
             }
             DesktopCommand::Mouse {
@@ -611,7 +743,14 @@ fn process_commands(
                 let _ = reply.send(result.map_err(|err| err.to_string()));
             }
             DesktopCommand::Screenshot(reply) => {
+                if state.screenshot_waiter.is_some() {
+                    let _ = reply.send(Err("desktop screenshot already in progress".into()));
+                    continue;
+                }
                 state.screenshot_waiter = Some(reply);
+                if state.damage_copy {
+                    cancel_capture(state);
+                }
                 request_capture(state, qh);
             }
             DesktopCommand::Shutdown => return Ok(true),
@@ -627,9 +766,23 @@ fn request_capture(state: &mut WaylandState, qh: &QueueHandle<WaylandState>) {
     {
         return;
     }
+    let screenshot = state.screenshot_waiter.is_some();
+    if !screenshot && Instant::now() < state.next_stream_capture {
+        return;
+    }
     state.pending = None;
     state.invert_y = false;
+    state.damage_copy = state.streaming && state.stream_has_frame && !screenshot;
     state.frame = Some(state.screencopy.capture_output(1, &state.output, qh, ()));
+}
+
+fn cancel_capture(state: &mut WaylandState) {
+    if let Some(frame) = state.frame.take() {
+        frame.destroy();
+    }
+    state.buffer = None;
+    state.pending = None;
+    state.damage_copy = false;
 }
 
 fn send_mouse(
@@ -713,8 +866,11 @@ struct WaylandState {
     pending: Option<BufferDescription>,
     invert_y: bool,
     streaming: bool,
+    stream_has_frame: bool,
+    damage_copy: bool,
+    next_stream_capture: Instant,
     screenshot_waiter: Option<SyncSender<FrameResult>>,
-    frames: watch::Sender<Option<Bytes>>,
+    encoder: EncoderWorker,
     width: u32,
     height: u32,
     started: Instant,
@@ -737,6 +893,12 @@ struct ShmBuffer {
     stride: u32,
     released: bool,
     ready: bool,
+}
+
+impl Drop for ShmBuffer {
+    fn drop(&mut self) {
+        self.proxy.destroy();
+    }
 }
 
 struct Mmap {
@@ -945,36 +1107,34 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for WaylandState {
                 };
                 match create_shm_buffer(state, &description, qh) {
                     Ok(buffer) => {
-                        proxy.copy(&buffer.proxy);
+                        if state.damage_copy {
+                            proxy.copy_with_damage(&buffer.proxy);
+                        } else {
+                            proxy.copy(&buffer.proxy);
+                        }
                         state.buffer = Some(buffer);
                     }
                     Err(err) => fail_frame(state, proxy, &err.to_string()),
                 }
             }
             zwlr_screencopy_frame_v1::Event::Ready { .. } => {
-                let (frame_width, frame_height) = state
-                    .buffer
-                    .as_ref()
-                    .map(|buffer| (buffer.width, buffer.height))
-                    .unwrap_or((state.width, state.height));
                 let result = state
                     .buffer
                     .as_ref()
-                    .map(|buffer| encode_buffer(buffer, state.invert_y))
+                    .map(|buffer| copy_frame(buffer, state.invert_y))
                     .unwrap_or_else(|| Err(anyhow!("Wayland frame was ready without a buffer")));
                 match result {
-                    Ok(rgb) => {
+                    Ok(frame) => {
                         if state.streaming {
-                            match encode_jpeg(&rgb, frame_width, frame_height) {
-                                Ok(frame) => {
-                                    state.frames.send_replace(Some(Bytes::from(frame)));
-                                }
-                                Err(err) => tracing::warn!("encoding desktop frame failed: {err}"),
-                            }
+                            state.stream_has_frame = true;
+                            state.next_stream_capture =
+                                Instant::now().checked_add(STREAM_FRAME_INTERVAL).unwrap();
                         }
-                        if let Some(waiter) = state.screenshot_waiter.take() {
-                            let _ = waiter.send(encode_png(&rgb, frame_width, frame_height));
-                        }
+                        state.encoder.submit(EncodeJob {
+                            frame,
+                            stream: state.streaming,
+                            screenshot: state.screenshot_waiter.take(),
+                        });
                     }
                     Err(err) => {
                         if let Some(waiter) = state.screenshot_waiter.take() {
@@ -984,6 +1144,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for WaylandState {
                 }
                 proxy.destroy();
                 state.frame = None;
+                state.damage_copy = false;
                 if let Some(buffer) = state.buffer.as_mut() {
                     buffer.ready = true;
                     if buffer.released {
@@ -1006,7 +1167,9 @@ fn fail_frame(state: &mut WaylandState, frame: &ZwlrScreencopyFrameV1, message: 
     }
     frame.destroy();
     state.frame = None;
+    state.buffer = None;
     state.pending = None;
+    state.damage_copy = false;
 }
 
 fn is_supported_format(format: Format) -> bool {
@@ -1060,22 +1223,38 @@ fn memfd(size: usize) -> Result<File> {
     Ok(file)
 }
 
-fn encode_buffer(buffer: &ShmBuffer, invert_y: bool) -> Result<Vec<u8>> {
-    let source = buffer.mapping.bytes();
-    let row_len = buffer.width as usize * 3;
-    let mut rgb = vec![0u8; row_len * buffer.height as usize];
-    for y in 0..buffer.height as usize {
-        let source_y = if invert_y {
-            buffer.height as usize - 1 - y
+fn copy_frame(buffer: &ShmBuffer, invert_y: bool) -> Result<RawFrame> {
+    let expected = (buffer.stride as usize)
+        .checked_mul(buffer.height as usize)
+        .context("Wayland frame size overflow")?;
+    if buffer.mapping.bytes().len() < expected {
+        bail!("Wayland frame buffer is shorter than its dimensions");
+    }
+    Ok(RawFrame {
+        pixels: buffer.mapping.bytes()[..expected].to_vec(),
+        format: buffer.format,
+        width: buffer.width,
+        height: buffer.height,
+        stride: buffer.stride,
+        invert_y,
+    })
+}
+
+fn convert_frame(frame: &RawFrame) -> Result<Vec<u8>> {
+    let row_len = frame.width as usize * 3;
+    let mut rgb = vec![0u8; row_len * frame.height as usize];
+    for y in 0..frame.height as usize {
+        let source_y = if frame.invert_y {
+            frame.height as usize - 1 - y
         } else {
             y
         };
-        let source_row = &source[source_y * buffer.stride as usize..];
+        let source_row = &frame.pixels[source_y * frame.stride as usize..];
         let target_row = &mut rgb[y * row_len..(y + 1) * row_len];
-        for x in 0..buffer.width as usize {
+        for x in 0..frame.width as usize {
             let source_pixel = &source_row[x * 4..x * 4 + 4];
             let target_pixel = &mut target_row[x * 3..x * 3 + 3];
-            match buffer.format {
+            match frame.format {
                 Format::Xrgb8888 | Format::Argb8888 => {
                     target_pixel.copy_from_slice(&[
                         source_pixel[2],
@@ -1129,4 +1308,23 @@ async fn terminate_process_group(child: &mut Child) {
         libc::kill(-pgid, libc::SIGKILL);
     }
     let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_bgra_pixels_and_inverts_rows() {
+        let frame = RawFrame {
+            pixels: vec![3, 2, 1, 0, 6, 5, 4, 0],
+            format: Format::Xrgb8888,
+            width: 1,
+            height: 2,
+            stride: 4,
+            invert_y: true,
+        };
+
+        assert_eq!(convert_frame(&frame).unwrap(), [4, 5, 6, 1, 2, 3]);
+    }
 }
