@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.11.5](https://github.com/blackopsrepl/lumen/compare/v0.11.4...v0.11.5) (2026-09-17)
+
+### Bug Fixes
+
+* **runtime:** use the FHS root for desktop projects ([9cb11ab](https://github.com/blackopsrepl/lumen/commit/9cb11ab5fa6d33136646df17a88b25cac2ea9569))
+
 ## [0.11.4](https://github.com/blackopsrepl/lumen/compare/v0.11.3...v0.11.4) (2026-09-17)
 
 ### Bug Fixes
