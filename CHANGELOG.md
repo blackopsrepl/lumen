@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.11.3](https://github.com/blackopsrepl/lumen/compare/v0.11.2...v0.11.3) (2026-09-17)
+
+### Bug Fixes
+
+* **ci:** install complete Wayland desktop runtime ([2396a7b](https://github.com/blackopsrepl/lumen/commit/2396a7b1ab3a501aa95d1784e9ff80aa4c1df0ba))
+* **container:** install Qt Quick QML modules ([ff12345](https://github.com/blackopsrepl/lumen/commit/ff12345ec1eaa82c3642c3157aefc43cf06f98c6))
+
 ## [0.11.2](https://github.com/blackopsrepl/lumen/compare/v0.11.1...v0.11.2) (2026-09-17)
 
 ### Bug Fixes
