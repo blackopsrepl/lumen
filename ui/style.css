@@ -160,8 +160,23 @@ textarea:focus-visible {
 
 .new {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 12px 14px 6px;
+}
+
+.new input:first-child {
+  min-width: 0;
+  flex: 1 1 130px;
+}
+
+.new select {
+  flex: 1 1 96px;
+}
+
+.new .path {
+  flex: 1 1 100%;
+  min-width: 0;
 }
 
 .section {
@@ -185,6 +200,7 @@ textarea:focus-visible {
 }
 
 input,
+select,
 button,
 textarea {
   font: inherit;
@@ -199,6 +215,7 @@ textarea {
 
 /* Text entry is a hairline underline, not a box. */
 input,
+select,
 textarea {
   border-color: transparent;
   border-bottom-color: var(--line);
@@ -208,6 +225,10 @@ textarea {
 input::placeholder,
 textarea::placeholder {
   color: var(--faint);
+}
+
+select {
+  color: var(--text);
 }
 
 input:focus,

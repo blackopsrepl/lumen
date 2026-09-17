@@ -28,6 +28,7 @@ const state = {
   feedbackSig: null,
   sessionsSig: null,
   sessionOrigin: null,
+  sessionKind: null,
   reconnectTimer: null,
   pollInFlight: false,
   pollQueued: false,
@@ -76,9 +77,10 @@ function setStatus(text, dot) {
 }
 
 function setControlsEnabled(enabled) {
-  for (const id of ["url", "zoom-label", "fit", "fullscreen", "comment"]) {
+  for (const id of ["zoom-label", "fit", "fullscreen", "comment"]) {
     el(id).disabled = !enabled;
   }
+  el("url").disabled = !enabled || state.sessionKind === "quickshell";
   el("control").disabled = !enabled;
 }
 
@@ -408,7 +410,9 @@ function sessionItem(session) {
 
   const sub = document.createElement("span");
   sub.className = "sub";
-  sub.textContent = session.cdp_endpoint.replace(/^https?:\/\//, "");
+  sub.textContent = session.kind === "quickshell"
+    ? `quickshell · ${session.path || "unknown path"}`
+    : session.cdp_endpoint.replace(/^https?:\/\//, "");
 
   li.append(row, sub);
   li.onclick = () => connect(session.name);
@@ -438,7 +442,7 @@ async function loadSessions() {
   }
   const list = el("sessions");
   const signature = sessions
-    .map((session) => `${session.name}:${session.origin}:${session.owner || ""}`)
+    .map((session) => `${session.name}:${session.kind}:${session.path || ""}:${session.origin}:${session.owner || ""}`)
     .join("\n");
 
   if (signature !== state.sessionsSig) {
@@ -490,6 +494,7 @@ function clearSession(name) {
   state.ws = null;
   state.session = null;
   state.sessionOrigin = null;
+  state.sessionKind = null;
   state.frame?.close();
   state.frame = null;
   canvas.dataset.frameReady = "false";
@@ -525,6 +530,7 @@ async function connect(name) {
   state.ws = null;
   state.session = name;
   state.sessionOrigin = null;
+  state.sessionKind = null;
   state.frame?.close();
   state.frame = null;
   canvas.dataset.frameReady = "false";
@@ -558,9 +564,15 @@ async function connect(name) {
   }
   if (state.session !== name) return;
 
-  el("cdp").textContent = info.cdp_endpoint;
-  el("cdp").title = info.cdp_endpoint;
-  el("attach").textContent = `attach: bin/pw.sh -s=${name}`;
+  state.sessionKind = info.kind;
+  const endpoint = info.kind === "quickshell"
+    ? `quickshell · ${info.path || "unknown path"}`
+    : info.cdp_endpoint;
+  el("cdp").textContent = endpoint;
+  el("cdp").title = endpoint;
+  el("attach").textContent = info.kind === "quickshell"
+    ? `agent: lumen ensure ${name} --quickshell ${info.path || "<path>"}`
+    : `attach: bin/pw.sh -s=${name}`;
   el("attach").hidden = false;
   state.sessionOrigin = info.origin;
   state.feedbackSig = null;
@@ -633,6 +645,13 @@ function onFrame(buffer) {
 
 async function pollInfo() {
   if (!state.session) return;
+  if (state.sessionKind === "quickshell") {
+    el("url").value = "";
+    el("url").title = "Quickshell sessions do not have browser navigation";
+    el("page-title").textContent = "Quickshell desktop";
+    document.title = `Quickshell · ${state.session} · Lumen`;
+    return;
+  }
   if (state.pollInFlight) {
     state.pollQueued = true;
     return;
@@ -677,17 +696,29 @@ async function navigate() {
   }
 }
 
+el("new-kind").onchange = () => {
+  el("new-path").hidden = el("new-kind").value !== "quickshell";
+};
+
 el("new-session").onsubmit = async (event) => {
   event.preventDefault();
   const name = el("new-name").value.trim();
   if (!name) return;
+  const kind = el("new-kind").value;
+  const path = el("new-path").value.trim();
+  if (kind === "quickshell" && !path) {
+    toast("Quickshell sessions need a shell.qml path", "error");
+    el("new-path").focus();
+    return;
+  }
   try {
     await api("/v1/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, kind, ...(kind === "quickshell" ? { path } : {}) }),
     });
     el("new-name").value = "";
+    el("new-path").value = "";
     await loadSessions();
     connect(name);
   } catch (error) {
@@ -726,6 +757,17 @@ el("comment-text").addEventListener("keydown", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA") return;
+  if (
+    state.control === "human" &&
+    event.key.length === 1 &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey
+  ) {
+    send({ type: "text", text: event.key });
+    event.preventDefault();
+    return;
+  }
   if (event.key === "Escape") {
     if (state.annotating) setAnnotating(false);
     else if (state.control === "human") send({ type: "control", action: "release" });
@@ -740,6 +782,7 @@ canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
 canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture(event.pointerId);
+  canvas.focus();
   if (state.control === "human") {
     const { x, y } = toPage(event.clientX, event.clientY);
     state.pointerButton = event.button === 2 ? "right" : event.button === 1 ? "middle" : "left";

@@ -1,4 +1,6 @@
 const fs = require("node:fs");
+const crypto = require("node:crypto");
+const path = require("node:path");
 const { test, expect } = require("@playwright/test");
 
 const PROFILES = process.env.LUMEN_PROFILES_DIR || "/tmp/lumen-e2e-agents/run";
@@ -31,6 +33,74 @@ test("reports an invalid session name as a bad request, not a server error", asy
   for (const [path, data] of calls) {
     const response = await request.post(`/v1/sessions/${tooLong}/${path}`, { data });
     expect(response.status(), `${path} should reject the name`).toBe(400);
+  }
+});
+
+test("creates and screenshots a Quickshell session", async ({ page, request }) => {
+  const name = sessionName("quickshell");
+  const shell = path.resolve("tests/fixtures/quickshell.qml");
+  try {
+    const created = await request.post("/v1/sessions", {
+      data: { name, kind: "quickshell", path: shell },
+    });
+    const createdBody = await created.text();
+    expect(created.ok(), createdBody).toBeTruthy();
+    const info = JSON.parse(createdBody);
+    expect(info.kind).toBe("quickshell");
+    expect(info.path).toBe(shell);
+    expect(info.cdp_endpoint).toBe("");
+
+    const before = crypto
+      .createHash("sha256")
+      .update(await (await request.post(`/v1/sessions/${name}/screenshot`)).body())
+      .digest("hex");
+    await page.goto("/");
+    await page.evaluate(
+      ({ name, text }) =>
+        new Promise((resolve, reject) => {
+          const protocol = location.protocol === "https:" ? "wss" : "ws";
+          const ws = new WebSocket(`${protocol}://${location.host}/v1/sessions/${name}/stream`);
+          const timeout = setTimeout(() => {
+            ws.close();
+            reject(new Error("timed out sending desktop text"));
+          }, 5000);
+          ws.onerror = () => reject(new Error("desktop WebSocket failed"));
+          ws.onopen = () => {
+            ws.send(JSON.stringify({ type: "control", action: "claim" }));
+            setTimeout(() => {
+              ws.send(JSON.stringify({ type: "text", text }));
+              setTimeout(() => ws.close(), 300);
+            }, 100);
+          };
+          ws.onclose = () => {
+            clearTimeout(timeout);
+            resolve();
+          };
+        }),
+      { name, text: "native input" },
+    );
+    const screenshot = await request.post(`/v1/sessions/${name}/screenshot`);
+    expect(screenshot.ok()).toBeTruthy();
+    expect(screenshot.headers()["content-type"]).toContain("image/png");
+    const screenshotBody = await screenshot.body();
+    expect(screenshotBody.subarray(0, 8)).toEqual(
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    );
+    expect(crypto.createHash("sha256").update(screenshotBody).digest("hex")).not.toBe(before);
+    const tabs = await request.get(`/v1/sessions/${name}/tabs`);
+    expect(tabs.status(), await tabs.text()).toBe(409);
+  } finally {
+    await request.delete(`/v1/sessions/${name}`);
+  }
+});
+
+test("rejects invalid Quickshell paths as bad requests", async ({ request }) => {
+  const name = sessionName("quickshell-path");
+  for (const pathValue of ["tests/fixtures/quickshell.qml", "/tmp/lumen-no-such-shell.qml"]) {
+    const response = await request.post("/v1/sessions", {
+      data: { name, kind: "quickshell", path: pathValue },
+    });
+    expect(response.status(), await response.text()).toBe(400);
   }
 });
 
