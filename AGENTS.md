@@ -32,9 +32,9 @@ A production `lumen` container usually runs on 8899 with host networking and liv
 
 - Config layering in `src/config.rs::Config::load`: `LUMEN_CONFIG` file (default `config/lumen.toml`), then `LUMEN_PORT` / `LUMEN_CHROME` env overrides.
 - `compose.yaml` must forward any config surface the service reads (`LUMEN_PORT`, `LUMEN_CHROME`) and the healthcheck must probe the same port — these were once out of sync. The container's log level is `LUMEN_LOG`; never interpolate the host's `RUST_LOG`, which leaks in from the operator's shell.
-- `bin/up.sh` converges: it recreates the container only when the running image's `org.opencontainers.image.revision` label differs from the checkout's, because podman-compose otherwise keeps an old container serving a stale binary. Image ids cannot be compared directly — every rebuild produces a new one.
+- `bin/up.sh` converges: it recreates the container only when the running image's `org.opencontainers.image.revision` label differs from the checkout's, because compose otherwise keeps an old container serving a stale binary. Image ids cannot be compared directly — every rebuild produces a new one.
 - Container runs with `network_mode: host`: pages reach host dev servers at `http://127.0.0.1:<port>`; `host.containers.internal` / `host.docker.internal` are mapped to loopback via `extra_hosts`.
-- `bin/common.sh` sources `.env` and wraps `lumen`/`podman` helpers; host helper scripts honor `LUMEN_PORT`.
+- `bin/common.sh` sources `.env` and wraps `lumen`/container-runtime helpers (`LUMEN_RUNTIME`: podman or docker, podman-preferred auto-detect; `LUMEN_DOCKER_SUDO`: auto/1/0 controls sudo elevation when the user cannot reach the docker daemon); host helper scripts honor `LUMEN_PORT`. `make` targets reach the runtime through `bin/ctr.sh`, never a bare `docker`/`podman` call.
 
 ## Code invariants
 

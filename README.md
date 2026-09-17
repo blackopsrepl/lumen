@@ -24,7 +24,7 @@ and keyboard at any moment, and leaves annotated feedback the agent reads back.
 
 ## Install
 
-You need Linux with rootless Podman (including `podman-compose`) and `make`.
+You need Linux with Podman or Docker (including compose support) and `make`.
 Node.js 20+ is only required to run the browser test-suite and the host agent
 CLI, Rust only to hack on the service itself — the image build handles the rest.
 
@@ -51,6 +51,13 @@ cp .env.example .env       # set LUMEN_PORT and/or LUMEN_CHROME
 make restart
 ```
 
+Docker permission: on distros where your user cannot reach the system daemon
+(the socket is `root:docker` and you are in no `docker` group), Lumen runs
+`docker` via passwordless `sudo` automatically. Alternatives: join the group
+(`sudo usermod -aG docker $USER`, then log out/in), set `LUMEN_DOCKER_SUDO=1`
+to allow a sudo password prompt, or point `DOCKER_HOST` at a daemon you own
+(e.g. rootless).
+
 ## Drive a browser as an agent
 
 ```bash
@@ -59,7 +66,7 @@ bin/pw.sh -s=alice snapshot              # accessibility tree with element refs
 bin/pw.sh -s=alice click e12
 bin/pw.sh -s=alice fill e7 "hello"
 bin/pw.sh -s=alice screenshot
-podman exec lumen lumen feedback alice --consume   # read + ack human notes
+podman exec lumen lumen feedback alice --consume   # or: docker exec …; read + ack human notes
 ```
 
 `bin/pw.sh` asks Lumen to ensure the session's browser, attaches
