@@ -503,6 +503,7 @@ impl AgentBrowser {
 
     /// Stop this agent's session and reclaim its ephemeral runtime directory.
     pub async fn shutdown(&self) {
+        self.view.shutdown().await;
         match &self.backend {
             SessionBackend::Browser(_) => {
                 if let Some(child) = self.child.lock().await.as_mut() {

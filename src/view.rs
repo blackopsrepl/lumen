@@ -26,6 +26,7 @@ pub enum Control {
 pub struct ViewHub {
     source: ViewSource,
     frames: watch::Sender<Option<Bytes>>,
+    closed: watch::Sender<bool>,
     started: Arc<AtomicBool>,
     subscribers: AtomicUsize,
     lifecycle: Mutex<()>,
@@ -39,12 +40,16 @@ pub struct ViewHub {
 /// releases the source even when its WebSocket ended through cancellation.
 pub struct ViewSubscription {
     frames: watch::Receiver<Option<Bytes>>,
+    closed: watch::Receiver<bool>,
     hub: Weak<ViewHub>,
     initial: bool,
 }
 
 impl ViewSubscription {
     pub async fn next_frame(&mut self) -> Option<Bytes> {
+        if *self.closed.borrow() {
+            return None;
+        }
         if self.initial {
             self.initial = false;
             if let Some(frame) = self.frames.borrow_and_update().clone() {
@@ -52,7 +57,16 @@ impl ViewSubscription {
             }
         }
         loop {
-            self.frames.changed().await.ok()?;
+            tokio::select! {
+                changed = self.frames.changed() => changed.ok()?,
+                changed = self.closed.changed() => {
+                    changed.ok()?;
+                    if *self.closed.borrow_and_update() {
+                        return None;
+                    }
+                    continue;
+                }
+            }
             if let Some(frame) = self.frames.borrow_and_update().clone() {
                 return Some(frame);
             }
@@ -94,9 +108,11 @@ enum ViewSource {
 impl ViewHub {
     pub fn new(session: Arc<CdpSession>) -> Self {
         let (frames, _) = watch::channel(None);
+        let (closed, _) = watch::channel(false);
         Self {
             source: ViewSource::Browser(session),
             frames,
+            closed,
             started: Arc::new(AtomicBool::new(false)),
             subscribers: AtomicUsize::new(0),
             lifecycle: Mutex::new(()),
@@ -107,9 +123,11 @@ impl ViewHub {
 
     pub fn new_desktop(session: Arc<DesktopSession>) -> Self {
         let (frames, _) = watch::channel(None);
+        let (closed, _) = watch::channel(false);
         Self {
             source: ViewSource::Desktop(session),
             frames,
+            closed,
             started: Arc::new(AtomicBool::new(false)),
             subscribers: AtomicUsize::new(0),
             lifecycle: Mutex::new(()),
@@ -123,6 +141,7 @@ impl ViewHub {
         self.subscribers.fetch_add(1, Ordering::SeqCst);
         let subscription = ViewSubscription {
             frames: self.frames.subscribe(),
+            closed: self.closed.subscribe(),
             hub: Arc::downgrade(self),
             initial: true,
         };
@@ -130,10 +149,9 @@ impl ViewHub {
         subscription
     }
 
-    /// Turn the screencast on or off. Off frees the browser from encoding frames
-    /// nobody is watching.
+    /// Suspend or resume capture while at least one viewer is connected.
     pub async fn set_visible(&self, visible: bool) {
-        if visible {
+        if visible && self.subscribers.load(Ordering::SeqCst) > 0 {
             self.ensure_started().await;
         } else {
             let _lifecycle = self.lifecycle.lock().await;
@@ -151,6 +169,13 @@ impl ViewHub {
         self.start_locked().await;
     }
 
+    /// Permanently close this hub and release every connected viewer.
+    pub async fn shutdown(&self) {
+        self.closed.send_replace(true);
+        let _lifecycle = self.lifecycle.lock().await;
+        self.stop_locked().await;
+    }
+
     pub async fn control(&self) -> Control {
         *self.control.lock().await
     }
@@ -161,7 +186,7 @@ impl ViewHub {
 
     async fn ensure_started(&self) {
         let _lifecycle = self.lifecycle.lock().await;
-        if self.started.load(Ordering::SeqCst) {
+        if *self.closed.borrow() || self.started.load(Ordering::SeqCst) {
             return;
         }
         self.start_locked().await;
@@ -240,7 +265,9 @@ impl ViewHub {
     }
 
     async fn stop_locked(&self) {
-        self.started.store(false, Ordering::SeqCst);
+        if !self.started.swap(false, Ordering::SeqCst) {
+            return;
+        }
         if let Some(pump) = self.pump.lock().await.take() {
             pump.abort();
         }
@@ -275,12 +302,14 @@ mod tests {
         let starts = Arc::new(AtomicUsize::new(0));
         let stops = Arc::new(AtomicUsize::new(0));
         let (frames, _) = watch::channel(None);
+        let (closed, _) = watch::channel(false);
         let hub = Arc::new(ViewHub {
             source: ViewSource::Test {
                 starts: starts.clone(),
                 stops: stops.clone(),
             },
             frames,
+            closed,
             started: Arc::new(AtomicBool::new(false)),
             subscribers: AtomicUsize::new(0),
             lifecycle: Mutex::new(()),
@@ -329,5 +358,16 @@ mod tests {
         hub.frames.send_replace(Some(Bytes::from_static(b"three")));
 
         assert_eq!(subscription.next_frame().await.unwrap(), "three");
+    }
+
+    #[tokio::test]
+    async fn shutdown_releases_subscribers() {
+        let (hub, _, stops) = test_hub();
+        let mut subscription = hub.subscribe().await;
+
+        hub.shutdown().await;
+
+        assert!(subscription.next_frame().await.is_none());
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
     }
 }
