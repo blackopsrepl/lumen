@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.10.1](https://github.com/blackopsrepl/lumen/compare/v0.10.0...v0.10.1) (2026-09-17)
+
+### Bug Fixes
+
+* **viewer:** freeze the annotation rectangle when the pointer is released ([82c31af](https://github.com/blackopsrepl/lumen/commit/82c31af5cdba4e948ebfbc23879f2429d7520e41))
+
 ## [0.10.0](https://github.com/blackopsrepl/lumen/compare/v0.9.0...v0.10.0) (2026-09-16)
 
 ### Features
