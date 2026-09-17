@@ -68,7 +68,7 @@ bin/pw.sh -s=alice snapshot              # accessibility tree with element refs
 bin/pw.sh -s=alice click e12
 bin/pw.sh -s=alice fill e7 "hello"
 bin/pw.sh -s=alice screenshot
-podman exec lumen lumen feedback alice --consume   # or: docker exec …; read + ack human notes
+bin/ctr.sh exec lumen lumen feedback alice --consume   # selected runtime; read + ack human notes
 ```
 
 `bin/pw.sh` asks Lumen to ensure the session's browser, attaches
@@ -142,7 +142,7 @@ the host at `http://127.0.0.1:<port>` (`host.containers.internal` and
 | make target | what it does |
 | --- | --- |
 | `make up` | rebuild and start; recreates the container when it predates this checkout |
-| `make down` / `make restart` | stop / hard restart (browser state is ephemeral) |
+| `make down` / `make restart` | stop / hard restart (session state is ephemeral) |
 | `make status` | container state, health, active sessions |
 | `make logs` | follow service logs |
 | `make shell` | shell inside the container |

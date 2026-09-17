@@ -7,9 +7,10 @@ description: Use when you need to drive a real web browser — navigate, click, 
 
 Lumen is a single service that gives each agent an isolated Chromium or
 Quickshell desktop session and gives the human a live, controllable view of it.
-Browser sessions run in the container, which shares the host network, so a dev
-server on the host is reachable at `http://127.0.0.1:<port>` from inside the
-page.
+Browser and desktop sessions run in the selected container runtime, which shares
+the host network, so a dev server on the host is reachable at
+`http://127.0.0.1:<port>` from inside the page. `LUMEN_RUNTIME` selects Podman or
+Docker; Podman is preferred when neither is configured.
 
 Set a short handle once:
 
@@ -60,7 +61,7 @@ Feedback is non-blocking: check your inbox between steps and adjust.
     lumen feedback <your-agent-name> --consume  # print and acknowledge them
 
 (The `lumen` client runs inside the service container; use
-`podman exec lumen lumen feedback <name>` (or `docker exec …`) if `lumen` is not on your PATH.)
+`$PW/ctr.sh exec lumen lumen feedback <name>` if `lumen` is not on your PATH.)
 
 Never block waiting for a human unless you are explicitly asked to.
 
