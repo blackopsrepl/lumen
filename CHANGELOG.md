@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.11.1](https://github.com/blackopsrepl/lumen/compare/v0.11.0...v0.11.1) (2026-09-17)
+
+### Bug Fixes
+
+* **ci:** provide the desktop runtime in release gates ([8d676c8](https://github.com/blackopsrepl/lumen/commit/8d676c87939a0057b2c576f4888d98923b1883b8))
+
 ## [0.11.0](https://github.com/blackopsrepl/lumen/compare/v0.10.1...v0.11.0) (2026-09-17)
 
 
