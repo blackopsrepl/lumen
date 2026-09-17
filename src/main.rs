@@ -9,7 +9,7 @@ use std::future::IntoFuture;
 #[command(
     name = "lumen",
     version,
-    about = "Single-binary browser service for agents and humans"
+    about = "Single-binary session service for agents and humans"
 )]
 struct Cli {
     /// Base URL of a running Lumen.
@@ -29,16 +29,19 @@ struct Cli {
 enum Command {
     /// Run the service (default when no subcommand is given).
     Serve,
-    /// Ensure a session's browser exists and print its CDP endpoint.
+    /// Ensure a session exists and print its endpoint or desktop path.
     Ensure {
         name: String,
         /// Human-readable label for the agent owning this session.
         #[arg(long)]
         owner: Option<String>,
+        /// Start a Quickshell session from this file or configuration directory.
+        #[arg(long, value_name = "PATH")]
+        quickshell: Option<String>,
     },
     /// List active sessions.
     Status,
-    /// Stop a session's browser, or every session with --all.
+    /// Stop a session, or every session with --all.
     Stop {
         name: Option<String>,
         /// Stop every active session.
@@ -58,9 +61,23 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command.unwrap_or(Command::Serve) {
         Command::Serve => serve(),
-        Command::Ensure { name, owner } => {
-            let info = client::ensure(&cli.url, &name, owner.as_deref())?;
-            println!("{}", info.cdp_endpoint);
+        Command::Ensure {
+            name,
+            owner,
+            quickshell,
+        } => {
+            let info = match quickshell {
+                Some(path) => client::ensure_quickshell(&cli.url, &name, &path, owner.as_deref())?,
+                None => client::ensure(&cli.url, &name, owner.as_deref())?,
+            };
+            if info.kind == "quickshell" {
+                println!(
+                    "quickshell {}",
+                    info.path.as_deref().unwrap_or("(unknown path)")
+                );
+            } else {
+                println!("{}", info.cdp_endpoint);
+            }
             Ok(())
         }
         Command::Status => client::status(&cli.url),
@@ -130,7 +147,7 @@ async fn serve_async() -> anyhow::Result<()> {
         }
     };
 
-    tracing::info!("stopping agent browsers");
+    tracing::info!("stopping agent sessions");
     supervisor.shutdown_all().await;
     outcome
 }

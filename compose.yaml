@@ -49,6 +49,9 @@ services:
       LUMEN_CONFIG: /etc/lumen/lumen.toml
       LUMEN_PORT: ${LUMEN_PORT:-8899}
       LUMEN_CHROME: ${LUMEN_CHROME:-chromium}
+      LUMEN_SWAY: ${LUMEN_SWAY:-sway}
+      LUMEN_QUICKSHELL: ${LUMEN_QUICKSHELL:-quickshell}
+      LUMEN_WTYPE: ${LUMEN_WTYPE:-wtype}
       # Deliberately not ${RUST_LOG}: a globally exported RUST_LOG in the
       # operator's shell would silently override the service's log level.
       RUST_LOG: ${LUMEN_LOG:-lumen=info}

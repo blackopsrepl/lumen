@@ -2,7 +2,7 @@
 name = "lumen"
 version = "0.10.1"
 edition = "2021"
-description = "Single-binary browser service for agents and humans"
+description = "Single-binary session service for agents and humans"
 license = "Apache-2.0"
 repository = "http://vigilance:3002/blackopsrepl/lumen"
 
@@ -13,7 +13,9 @@ base64 = "0.23.1"
 chromiumoxide = "0.9.1"
 clap = { version = "4.6.6", features = ["derive", "env"] }
 futures = "0.3.34"
+jpeg-encoder = "0.7.1"
 libc = "0.2"
+png = "0.18.1"
 reqwest = { version = "0.13.5", features = ["json", "blocking"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 rust-embed = "8.12.0"
@@ -25,3 +27,5 @@ toml = "1.1.6"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
+wayland-client = "0.31.15"
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
