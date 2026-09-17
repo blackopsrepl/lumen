@@ -756,7 +756,7 @@ fn lock_profile_root(root: &Path) -> Result<std::fs::File> {
     Ok(file)
 }
 
-/// Create a unique, service-generated profile directory for one browser.
+/// Create a unique, service-generated profile directory for one session.
 ///
 /// The path never derives from API input, so no session name can escape the
 /// root, and the suffix keeps a fresh browser from reusing a profile left

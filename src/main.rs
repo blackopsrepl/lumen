@@ -140,7 +140,7 @@ async fn serve_async() -> anyhow::Result<()> {
             tokio::time::sleep(DRAIN_GRACE).await;
         } => {
             tracing::warn!(
-                "http plane did not drain within {}s; stopping browsers anyway",
+                "http plane did not drain within {}s; stopping sessions anyway",
                 DRAIN_GRACE.as_secs()
             );
             Ok(())

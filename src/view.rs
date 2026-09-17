@@ -17,11 +17,11 @@ pub enum Control {
     Human,
 }
 
-/// Fans one browser's screencast out to any number of viewers.
+/// Fans one browser or desktop session's frames out to any number of viewers.
 ///
-/// The screencast starts on the first subscriber and streams the shared page at
-/// its native size; every viewer sees the same frames, and the hub is the single
-/// place that acknowledges frames back to Chromium for flow control.
+/// Capture starts on the first subscriber and streams the shared session at its
+/// native size; every viewer sees the same frames, and browser frame events are
+/// acknowledged by the hub for flow control.
 pub struct ViewHub {
     source: ViewSource,
     frames: broadcast::Sender<Arc<Vec<u8>>>,
@@ -67,7 +67,7 @@ impl ViewHub {
         }
     }
 
-    /// Join the frame stream, starting the screencast if this is the first viewer.
+    /// Join the frame stream, starting capture if this is the first viewer.
     pub async fn subscribe(&self) -> broadcast::Receiver<Arc<Vec<u8>>> {
         let receiver = self.frames.subscribe();
         self.ensure_started().await;

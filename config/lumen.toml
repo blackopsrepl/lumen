@@ -3,7 +3,7 @@ port = 8899
 max_agents = 8
 # Root for ephemeral per-session profiles. Lumen owns <data_dir>/run: one
 # directory per session, removed when the session ends and cleared at startup.
-# Browser state (cookies, logins) therefore never outlives a session.
+# Runtime state therefore never outlives a session.
 data_dir = "/data/agents"
 chrome_bin = "chromium"
 sway_bin = "sway"

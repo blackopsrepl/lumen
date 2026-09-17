@@ -46,10 +46,10 @@ finishes with a black-box smoke test. When it prints *Bootstrap complete*, open:
   <img src="docs/images/viewer-empty.png" alt="The viewer on first run: agent and manual sessions listed on the left, no session selected yet" width="920">
 </p>
 
-To run on a different port or with a different Chromium binary:
+To run on a different port or with different runtime binaries:
 
 ```bash
-cp .env.example .env       # set LUMEN_PORT and/or LUMEN_CHROME
+cp .env.example .env       # set LUMEN_PORT, LUMEN_CHROME, or desktop binaries
 make restart
 ```
 
@@ -151,11 +151,11 @@ shell setting cannot silently change the container's verbosity. The systemd
 user unit (`make install-systemd`) keeps the service running across logouts via
 linger.
 
-Browser profiles are ephemeral. Lumen gives each browser instance a private
-profile directory under `<data_dir>/run` and reclaims it when that browser ends
-— on session delete, on a crash, and at the next start — so no browser state
-survives a session and nothing accumulates. The feedback database lives at
-`<data_dir>/feedback.db` and does persist.
+Session profiles are ephemeral. Lumen gives each browser or desktop instance a
+private profile directory under `<data_dir>/run` and reclaims it when that
+session ends — on session delete, on a crash, and at the next start — so no
+runtime state survives a session and nothing accumulates. The feedback database
+lives at `<data_dir>/feedback.db` and does persist.
 
 Upgrading:
 

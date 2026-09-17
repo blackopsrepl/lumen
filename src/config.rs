@@ -28,7 +28,7 @@ pub struct Config {
     pub quickshell_bin: String,
     /// wtype binary used for desktop text input.
     pub wtype_bin: String,
-    /// Viewport every browser starts at, before any explicit override.
+    /// Viewport every browser or desktop session starts at, before any explicit override.
     pub default_viewport: Viewport,
     /// SQLite database holding human feedback for each session.
     pub feedback_db: PathBuf,

@@ -2,8 +2,10 @@
 #
 # End-to-end smoke test for Lumen.
 #
-# Proves: the service is healthy and serving its viewer; two agents get
-# isolated browsers; navigation, screenshots, and the feedback round-trip work.
+# Proves the browser path: the service is healthy and serving its viewer; two
+# agents get isolated browsers; navigation, screenshots, and feedback work.
+# Quickshell runtime coverage belongs to the disposable Playwright E2E suite,
+# which runs where Sway and Quickshell are installed.
 #
 set -euo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"

@@ -1,5 +1,5 @@
 [Unit]
-Description=Lumen browser service (rootless Podman Compose)
+Description=Lumen session service (rootless Podman Compose)
 Documentation=file://__PROJECT_DIR__/README.md
 Wants=podman-user-wait-network-online.service
 After=podman-user-wait-network-online.service

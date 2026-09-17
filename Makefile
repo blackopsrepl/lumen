@@ -66,7 +66,7 @@ up: ## Start the service (detached)
 	@printf "$(ARROW) Starting service...\n"
 	@$(BIN)/up.sh && printf "$(GREEN)$(CHECK) Lumen: http://127.0.0.1:$${LUMEN_PORT:-8899}/$(RESET)\n\n"
 
-down: ## Stop the service (browser profiles are ephemeral; /data is kept)
+down: ## Stop the service (session profiles are ephemeral; /data is kept)
 	@printf "$(ARROW) Stopping service...\n"
 	@$(BIN)/down.sh && printf "$(GREEN)$(CHECK) Stopped$(RESET)\n\n"
 
@@ -176,7 +176,7 @@ help: banner
 	@printf "$(CYAN)$(BOLD)Service:$(RESET)\n"
 	@printf "  $(GREEN)make build$(RESET)            Build the container image\n"
 	@printf "  $(GREEN)make up$(RESET)               Start the service\n"
-	@printf "  $(GREEN)make down$(RESET)             Stop the service (browser profiles are ephemeral; /data is kept)\n"
+	@printf "  $(GREEN)make down$(RESET)             Stop the service (session profiles are ephemeral; /data is kept)\n"
 	@printf "  $(GREEN)make restart$(RESET)          Restart the service\n"
 	@printf "  $(GREEN)make status$(RESET)           Container state, health, sessions\n"
 	@printf "  $(GREEN)make logs$(RESET)             Follow service logs\n"
