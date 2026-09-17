@@ -1,8 +1,9 @@
-# Lumen — single-binary browser service.
+# Lumen — single-binary browser and desktop session service.
 #
 # Multi-stage: compile the Rust service against a stub so dependency layers
 # cache, then copy only the binary onto the official Playwright image, which
-# already carries Chromium and every OS library it needs.
+# already carries Chromium and every OS library it needs. Desktop sessions also
+# require Sway, Quickshell, wtype, and their dependencies in the runtime image.
 
 ARG PLAYWRIGHT_IMAGE_VERSION=1.63.0
 ARG RUST_IMAGE=rust:1.95-slim

@@ -20,6 +20,8 @@ BIN := ./bin
 AGENT ?= default
 ARGS ?=
 LUMEN_TEST_PORT ?= 18899
+# Container access goes through bin/ctr.sh so make targets share bin/common.sh's
+# resolution (runtime auto-detect plus docker-via-sudo when the daemon needs it).
 
 .DEFAULT_GOAL := help
 
@@ -30,7 +32,7 @@ LUMEN_TEST_PORT ?= 18899
 # ============== Banner & Meta ==============
 
 banner:
-	@printf "$(CYAN)$(BOLD)◆ Lumen$(RESET) $(GRAY)v$(VERSION)$(RESET) $(GRAY)— browsers for agents, eyes for humans$(RESET)\n\n"
+	@printf "$(CYAN)$(BOLD)◆ Lumen$(RESET) $(GRAY)v$(VERSION)$(RESET) $(GRAY)— sessions for agents, eyes for humans$(RESET)\n\n"
 
 version: banner
 	@printf "$(CYAN)Service version:$(RESET) $(YELLOW)$(BOLD)v$(VERSION)$(RESET)\n"
@@ -66,7 +68,7 @@ up: ## Start the service (detached)
 	@printf "$(ARROW) Starting service...\n"
 	@$(BIN)/up.sh && printf "$(GREEN)$(CHECK) Lumen: http://127.0.0.1:$${LUMEN_PORT:-8899}/$(RESET)\n\n"
 
-down: ## Stop the service (browser profiles are ephemeral; /data is kept)
+down: ## Stop the service (session profiles are ephemeral; /data is kept)
 	@printf "$(ARROW) Stopping service...\n"
 	@$(BIN)/down.sh && printf "$(GREEN)$(CHECK) Stopped$(RESET)\n\n"
 
@@ -89,7 +91,7 @@ pw: ## Run playwright-cli: make pw ARGS="-s=alice snapshot"
 	@$(BIN)/pw.sh $(ARGS)
 
 feedback: ## Read a session's feedback: make feedback AGENT=alice
-	@podman exec lumen lumen feedback $(AGENT) $(ARGS)
+	@$(BIN)/ctr.sh exec lumen lumen feedback $(AGENT) $(ARGS)
 
 # ============== Quality Gates ==============
 
@@ -161,7 +163,7 @@ ci: ## Local mirror of the Forgejo CI gates, in CI order
 
 clean: ## Remove the container image
 	@printf "$(ARROW) Removing container image...\n"
-	@-podman rmi localhost/lumen:$${LUMEN_VERSION:-0.10.1}
+	@-$(BIN)/ctr.sh rmi localhost/lumen:$${LUMEN_VERSION:-0.10.1}
 	@printf "$(GREEN)$(CHECK) Clean complete$(RESET)\n\n"
 
 # ============== Help ==============
@@ -176,7 +178,7 @@ help: banner
 	@printf "$(CYAN)$(BOLD)Service:$(RESET)\n"
 	@printf "  $(GREEN)make build$(RESET)            Build the container image\n"
 	@printf "  $(GREEN)make up$(RESET)               Start the service\n"
-	@printf "  $(GREEN)make down$(RESET)             Stop the service (browser profiles are ephemeral; /data is kept)\n"
+	@printf "  $(GREEN)make down$(RESET)             Stop the service (session profiles are ephemeral; /data is kept)\n"
 	@printf "  $(GREEN)make restart$(RESET)          Restart the service\n"
 	@printf "  $(GREEN)make status$(RESET)           Container state, health, sessions\n"
 	@printf "  $(GREEN)make logs$(RESET)             Follow service logs\n"

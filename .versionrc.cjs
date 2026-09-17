@@ -7,7 +7,7 @@
 //   Cargo.toml          the service version (read and written)
 //   Cargo.lock          the same version, so `cargo build --locked` is happy
 //   bin/common.sh       LUMEN_VERSION default that tags the image
-//   compose.yaml        the same default for `podman compose`
+//   compose.yaml        the same default for `podman/docker compose`
 //   Makefile            the same default for `make clean`
 //   .env.example        the value users copy, and the commented image name
 //

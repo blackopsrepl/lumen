@@ -75,13 +75,16 @@ async fn main() -> Result<()> {
 
     let agent = supervisor.ensure("spike").await?;
     println!("agent 'spike' CDP endpoint: {}", agent.cdp_endpoint);
+    let session = agent
+        .backend
+        .browser()
+        .context("spike session is not a browser")?;
 
-    agent.session.goto(PAGE).await?;
+    session.goto(PAGE).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
-    agent.session.start_screencast().await?;
+    session.start_screencast().await?;
 
-    let mut frames = agent
-        .session
+    let mut frames = session
         .current_page()
         .await
         .event_listener::<EventScreencastFrame>()
@@ -92,20 +95,19 @@ async fn main() -> Result<()> {
         .await
         .context("waiting for the first frame")?
         .context("screencast stream ended early")?;
-    save_frame(&agent.session, &out_dir, 0, &first).await?;
+    save_frame(&session, &out_dir, 0, &first).await?;
 
     for (index, script) in MUTATIONS.iter().enumerate() {
-        agent.session.current_page().await.evaluate(*script).await?;
+        session.current_page().await.evaluate(*script).await?;
         let frame = tokio::time::timeout_at(deadline, frames.next())
             .await
             .with_context(|| format!("waiting for frame {} after a mutation", index + 1))?
             .context("screencast stream ended early")?;
-        save_frame(&agent.session, &out_dir, index + 1, &frame).await?;
+        save_frame(&session, &out_dir, index + 1, &frame).await?;
     }
 
-    agent.session.click(80.0, 100.0).await?;
-    let title = agent
-        .session
+    session.click(80.0, 100.0).await?;
+    let title = session
         .current_page()
         .await
         .evaluate("document.title")

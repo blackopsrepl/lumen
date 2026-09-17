@@ -18,9 +18,21 @@
       <form id="new-session" class="new" autocomplete="off">
         <input
           id="new-name"
-          placeholder="new browser session"
+          placeholder="new session"
           spellcheck="false"
           aria-label="new session name"
+        />
+        <select id="new-kind" aria-label="session type">
+          <option value="browser">Browser</option>
+          <option value="quickshell">Quickshell</option>
+        </select>
+        <input
+          id="new-path"
+          class="path"
+          placeholder="shell.qml or directory"
+          spellcheck="false"
+          aria-label="Quickshell path"
+          hidden
         />
         <button type="submit" title="Create session" aria-label="Create session">+</button>
       </form>
@@ -65,7 +77,7 @@
       </div>
 
       <div id="stage">
-        <canvas id="screen"></canvas>
+          <canvas id="screen" tabindex="0" aria-label="session screen"></canvas>
         <canvas id="overlay"></canvas>
 
         <div id="frame-meta" class="frame-meta" hidden></div>

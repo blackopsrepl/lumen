@@ -1,4 +1,5 @@
 const http = require("node:http");
+const path = require("node:path");
 const { test, expect } = require("@playwright/test");
 
 function sessionName(label) {
@@ -34,6 +35,32 @@ test("streams a session, navigates it, and hands control back", async ({ page, r
     await page.keyboard.press("Escape");
     await expect(page.locator("body")).not.toHaveClass(/controlling/);
     await expect(page.locator("#control")).toHaveText("Take control");
+  } finally {
+    await deleteSession(request, name);
+  }
+});
+
+test("streams a Quickshell desktop session", async ({ page, request }) => {
+  const name = sessionName("quickshell");
+  try {
+    await page.goto("/");
+    await page.locator("#new-name").fill(name);
+    await page.locator("#new-kind").selectOption("quickshell");
+    await page.locator("#new-path").fill(path.resolve("tests/fixtures/quickshell.qml"));
+    await page.locator("#new-session button").click();
+    await expect(page.locator(`[data-name="${name}"]`)).toBeVisible();
+    await expect(page.locator("#conn-status")).toHaveText(`live · ${name}`);
+    await expect(page.locator("#screen")).toHaveAttribute("data-frame-ready", "true");
+    await expect(page.locator("#url")).toBeDisabled();
+    await expect(page.locator("#page-title")).toHaveText("Quickshell desktop");
+
+    await page.locator("#control").click();
+    await expect(page.locator("body")).toHaveClass(/controlling/);
+    const screen = await page.locator("#screen").boundingBox();
+    expect(screen).not.toBeNull();
+    await page.mouse.click(screen.x + screen.width / 2, screen.y + screen.height / 2);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("body")).not.toHaveClass(/controlling/);
   } finally {
     await deleteSession(request, name);
   }

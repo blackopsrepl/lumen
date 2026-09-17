@@ -1,11 +1,14 @@
-# Lumen: one service, one binary, one port.
+# Lumen: one service, one binary, one port, with browser and desktop sessions.
 #
 # Host networking is required so the loopback DevTools ports of each agent's
-# Chromium stay reachable by the host-side `playwright-cli`, which attaches to
-# the same browsers Lumen manages.
+# Chromium stay reachable by the host-side `playwright-cli`, and so pages can
+# reach host development servers. Quickshell sessions additionally require the
+# configured compositor, Quickshell, and input binaries in the image.
 
 x-podman:
   in_pod: false
+  # Podman-only extension; Docker Compose ignores `x-*` blocks, so this file
+  # works with both runtimes.
 
 services:
   lumen:
@@ -49,6 +52,9 @@ services:
       LUMEN_CONFIG: /etc/lumen/lumen.toml
       LUMEN_PORT: ${LUMEN_PORT:-8899}
       LUMEN_CHROME: ${LUMEN_CHROME:-chromium}
+      LUMEN_SWAY: ${LUMEN_SWAY:-sway}
+      LUMEN_QUICKSHELL: ${LUMEN_QUICKSHELL:-quickshell}
+      LUMEN_WTYPE: ${LUMEN_WTYPE:-wtype}
       # Deliberately not ${RUST_LOG}: a globally exported RUST_LOG in the
       # operator's shell would silently override the service's log level.
       RUST_LOG: ${LUMEN_LOG:-lumen=info}

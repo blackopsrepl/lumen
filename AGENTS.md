@@ -1,6 +1,8 @@
 # AGENTS.md
 
-Single-binary Rust/Axum service that supervises per-agent Chromium browsers and serves a live viewer. Node exists only for Playwright E2E tests and the container healthcheck.
+Single-binary Rust/Axum service that supervises per-agent Chromium or Quickshell
+desktop sessions and serves a live viewer. Node exists only for Playwright E2E
+tests and the container healthcheck.
 
 ## Verification gates
 
@@ -30,18 +32,19 @@ A production `lumen` container usually runs on 8899 with host networking and liv
 
 ## Config and deployment facts
 
-- Config layering in `src/config.rs::Config::load`: `LUMEN_CONFIG` file (default `config/lumen.toml`), then `LUMEN_PORT` / `LUMEN_CHROME` env overrides.
-- `compose.yaml` must forward any config surface the service reads (`LUMEN_PORT`, `LUMEN_CHROME`) and the healthcheck must probe the same port — these were once out of sync. The container's log level is `LUMEN_LOG`; never interpolate the host's `RUST_LOG`, which leaks in from the operator's shell.
-- `bin/up.sh` converges: it recreates the container only when the running image's `org.opencontainers.image.revision` label differs from the checkout's, because podman-compose otherwise keeps an old container serving a stale binary. Image ids cannot be compared directly — every rebuild produces a new one.
+- Config layering in `src/config.rs::Config::load`: `LUMEN_CONFIG` file (default `config/lumen.toml`), then `LUMEN_PORT`, `LUMEN_CHROME`, `LUMEN_SWAY`, `LUMEN_QUICKSHELL`, and `LUMEN_WTYPE` env overrides.
+- `compose.yaml` must forward every config surface the service reads and the healthcheck must probe the same port — these were once out of sync. The container's log level is `LUMEN_LOG`; never interpolate the host's `RUST_LOG`, which leaks in from the operator's shell.
+- `bin/up.sh` converges: it recreates the container only when the running image's `org.opencontainers.image.revision` label differs from the checkout's, because compose otherwise keeps an old container serving a stale binary. Image ids cannot be compared directly — every rebuild produces a new one.
 - Container runs with `network_mode: host`: pages reach host dev servers at `http://127.0.0.1:<port>`; `host.containers.internal` / `host.docker.internal` are mapped to loopback via `extra_hosts`.
-- `bin/common.sh` sources `.env` and wraps `lumen`/`podman` helpers; host helper scripts honor `LUMEN_PORT`.
+- `bin/common.sh` sources `.env` and wraps `lumen`/container-runtime helpers (`LUMEN_RUNTIME`: podman or docker, podman-preferred auto-detect; `LUMEN_DOCKER_SUDO`: auto/1/0 controls sudo elevation when the user cannot reach the docker daemon); host helper scripts honor `LUMEN_PORT`. `make` targets reach the runtime through `bin/ctr.sh`, never a bare `docker`/`podman` call.
 
 ## Code invariants
 
 - `Policy::check` (`src/config.rs`) is the single navigation-policy predicate, enforced at two points: Lumen's HTTP preflight (403) and a per-tab CDP `Fetch.enable` interception (`ERR_BLOCKED_BY_CLIENT`). Never add a second check. Enforcement scope (covers every tab Lumen mediates; not a sandbox for agent-created tabs) is documented in README "Security" — read it before reasoning about "bypass".
 - Exactly one managed page per `CdpSession` (`src/cdp.rs`); tab activation replaces it and stops the old screencast. Activation happens through the API and through the supervisor watcher that adopts tabs the browser opens itself (`target=_blank`, popups). `ViewHub::rebind` must follow every managed-page swap, wherever it happens.
-- Browser profiles are ephemeral and owned by one instance: `<data_dir>/run/<name>-<suffix>` exists only while that browser is alive. Shutdown, reaping, and startup reconciliation remove them; the path is service-generated so deletion never derives from API input.
+- Session profiles are ephemeral and owned by one instance: `<data_dir>/run/<name>-<suffix>` exists only while that browser or desktop session is alive. Shutdown, reaping, and startup reconciliation remove them; the path is service-generated so deletion never derives from API input. Desktop Wayland sockets use a short service-generated symlink because Unix socket paths have a platform length limit.
 - `chromiumoxide::Page::close(self)` consumes the page — clone `target_id` before closing if you need it afterwards.
+- Quickshell paths are executable QML supplied by the caller. Validate that they are absolute and existing, but do not treat the check as sandboxing.
 - UI assets are embedded via `rust-embed` (`src/http.rs`): debug builds read `ui/` from disk, release builds embed. Verify UI changes under `cargo run`, rebuild the image for release behavior.
 
 ## Conventions

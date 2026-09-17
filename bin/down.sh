@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Stop the Lumen service. The /data volume (feedback database) is kept;
-# browser profiles are ephemeral and are cleared on the next start.
+# session profiles are ephemeral and are cleared on the next start.
 #
 set -euo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"

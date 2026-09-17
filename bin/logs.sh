@@ -5,4 +5,4 @@
 set -euo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
-podman logs -f "${CONTAINER}"
+ctr logs -f "${CONTAINER}"

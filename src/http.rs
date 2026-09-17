@@ -1,7 +1,11 @@
 use crate::cdp::{CdpSession, NavigationBlocked, OnlyManagedTab, TabInfo};
 use crate::config::{Config, Viewport};
+use crate::desktop::{DesktopSession, MouseAction};
 use crate::feedback::{AuditEntry, Feedback, FeedbackStore, Region};
-use crate::supervisor::{is_valid_agent_name, AgentInfo, InvalidAgentName, Origin, Supervisor};
+use crate::supervisor::{
+    is_valid_agent_name, AgentBrowser, AgentInfo, InvalidAgentName, InvalidQuickshellPath, Origin,
+    SessionBackend, SessionConflict, SessionKind, Supervisor,
+};
 use crate::view::{Control, ViewHub};
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -252,9 +256,35 @@ async fn list_sessions(State(state): State<AppState>) -> Json<Vec<AgentInfo>> {
     Json(state.supervisor.list().await)
 }
 
+fn browser_session(agent: &AgentBrowser) -> Result<Arc<CdpSession>, ApiError> {
+    agent
+        .backend
+        .browser()
+        .ok_or_else(|| ApiError::conflict("operation is only available for browser sessions"))
+}
+
+fn desktop_session(agent: &AgentBrowser) -> Result<Arc<DesktopSession>, ApiError> {
+    agent
+        .backend
+        .desktop()
+        .ok_or_else(|| ApiError::conflict("operation is only available for Quickshell sessions"))
+}
+
+async fn view_session(supervisor: &Supervisor, name: &str) -> Result<Arc<AgentBrowser>, ApiError> {
+    match supervisor.existing(name).await {
+        Some(agent) => Ok(agent),
+        None => Ok(supervisor.ensure(name).await?),
+    }
+}
+
 #[derive(Deserialize)]
 struct CreateSession {
     name: String,
+    #[serde(default)]
+    kind: SessionKind,
+    /// Quickshell accepts either a shell.qml file or its containing directory.
+    #[serde(default)]
+    path: Option<std::path::PathBuf>,
     /// Who is registering the session. Omitted means a human created it from
     /// the viewer; agents send `agent` (optionally with an owner label).
     #[serde(default)]
@@ -272,11 +302,21 @@ async fn create_session(
             "invalid agent name (use [A-Za-z0-9._-], 1-32 chars)",
         ));
     }
+    if body.kind == SessionKind::Browser && body.path.is_some() {
+        return Err(ApiError::bad_request(
+            "browser sessions do not accept a path",
+        ));
+    }
+    if body.kind == SessionKind::Quickshell && body.path.is_none() {
+        return Err(ApiError::bad_request(
+            "Quickshell sessions require a path to shell.qml",
+        ));
+    }
     let origin = body.origin.unwrap_or(Origin::Manual);
     let owner = body.owner.filter(|value| !value.trim().is_empty());
     let agent = state
         .supervisor
-        .ensure_as(&body.name, Some((origin, owner)))
+        .ensure_kind_as(&body.name, body.kind, body.path, Some((origin, owner)))
         .await?;
     Ok(Json(agent.info().await))
 }
@@ -332,7 +372,8 @@ async fn navigate(
         .check(&body.url)
         .map_err(|err| ApiError::forbidden(err.to_string()))?;
     let agent = state.supervisor.ensure(&name).await?;
-    if let Err(err) = agent.session.goto(&body.url).await {
+    let session = browser_session(&agent)?;
+    if let Err(err) = session.goto(&body.url).await {
         if err.downcast_ref::<NavigationBlocked>().is_some() {
             return Err(ApiError::forbidden(err.to_string()));
         }
@@ -359,7 +400,9 @@ async fn set_viewport(
         return Err(ApiError::bad_request("width and height must be positive"));
     }
     let agent = state.supervisor.ensure(&name).await?;
-    agent.session.set_viewport(body.width, body.height).await?;
+    browser_session(&agent)?
+        .set_viewport(body.width, body.height)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -369,7 +412,7 @@ async fn reset_viewport(
 ) -> Result<StatusCode, ApiError> {
     let agent = state.supervisor.ensure(&name).await?;
     let Viewport { width, height } = state.config.default_viewport;
-    agent.session.set_viewport(width, height).await?;
+    browser_session(&agent)?.set_viewport(width, height).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -385,7 +428,7 @@ async fn list_tabs(
         .existing(&name)
         .await
         .ok_or_else(|| ApiError::not_found(format!("session '{name}' not found")))?;
-    Ok(Json(agent.session.tabs().await?))
+    Ok(Json(browser_session(&agent)?.tabs().await?))
 }
 
 #[derive(Deserialize)]
@@ -409,7 +452,7 @@ async fn open_tab(
         .check(&body.url)
         .map_err(|err| ApiError::forbidden(err.to_string()))?;
     let agent = state.supervisor.ensure(&name).await?;
-    if let Err(err) = agent.session.open_tab(&body.url).await {
+    if let Err(err) = browser_session(&agent)?.open_tab(&body.url).await {
         if err.downcast_ref::<NavigationBlocked>().is_some() {
             return Err(ApiError::forbidden(err.to_string()));
         }
@@ -427,7 +470,7 @@ async fn activate_tab(
     Path((name, index)): Path<(String, usize)>,
 ) -> Result<StatusCode, ApiError> {
     let agent = state.supervisor.ensure(&name).await?;
-    if !agent.session.activate_tab(index).await? {
+    if !browser_session(&agent)?.activate_tab(index).await? {
         return Err(ApiError::not_found(format!("tab {index} not found")));
     }
     agent.view.rebind().await;
@@ -439,7 +482,7 @@ async fn close_tab(
     Path((name, index)): Path<(String, usize)>,
 ) -> Result<StatusCode, ApiError> {
     let agent = state.supervisor.ensure(&name).await?;
-    match agent.session.close_tab(index).await {
+    match browser_session(&agent)?.close_tab(index).await {
         Ok(Some(changed)) => {
             if changed {
                 agent.view.rebind().await;
@@ -467,8 +510,17 @@ async fn screenshot(
     Path(name): Path<String>,
     Query(query): Query<ScreenshotQuery>,
 ) -> Result<Response, ApiError> {
-    let agent = state.supervisor.ensure(&name).await?;
-    let png = agent.session.screenshot(query.full).await?;
+    let agent = view_session(&state.supervisor, &name).await?;
+    let png = if let Some(session) = agent.backend.browser() {
+        session.screenshot(query.full).await?
+    } else {
+        if query.full {
+            return Err(ApiError::conflict(
+                "full-page screenshots are only available for browser sessions",
+            ));
+        }
+        desktop_session(&agent)?.screenshot().await?
+    };
     Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response())
 }
 
@@ -482,7 +534,7 @@ async fn set_visibility(
     Path(name): Path<String>,
     Json(body): Json<VisibilityBody>,
 ) -> Result<StatusCode, ApiError> {
-    let agent = state.supervisor.ensure(&name).await?;
+    let agent = view_session(&state.supervisor, &name).await?;
     agent.view.set_visible(body.visible).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -501,7 +553,7 @@ async fn set_page_scale(
         return Err(ApiError::bad_request("scale must be within (0, 10]"));
     }
     let agent = state.supervisor.ensure(&name).await?;
-    agent.session.set_page_scale(body.scale).await?;
+    browser_session(&agent)?.set_page_scale(body.scale).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -596,8 +648,8 @@ async fn raw_cdp(
     Json(body): Json<CdpBody>,
 ) -> Result<Json<Value>, ApiError> {
     let agent = state.supervisor.ensure(&name).await?;
-    let result = agent
-        .session
+    let session = browser_session(&agent)?;
+    let result = session
         .raw_cdp(&agent.cdp_endpoint, &body.method, body.params)
         .await?;
     if let Err(err) = state.feedback.record(&name, "cdp", &body.method).await {
@@ -641,7 +693,7 @@ async fn stream_session(socket: WebSocket, state: AppState, name: String) {
     }
     let mut shutdown = state.shutdown.subscribe();
     let hub: Arc<ViewHub> = agent.view.clone();
-    let session: Arc<CdpSession> = agent.session.clone();
+    let backend = agent.backend.clone();
     let mut frames = hub.subscribe().await;
 
     let (mut ws_tx, mut ws_rx) = socket.split();
@@ -696,7 +748,7 @@ async fn stream_session(socket: WebSocket, state: AppState, name: String) {
         };
         match message {
             Message::Text(text) => {
-                if let Some(event) = handle_command(&hub, &session, &text).await {
+                if let Some(event) = handle_command(&hub, &backend, &text).await {
                     if out_tx.send(event).await.is_err() {
                         break;
                     }
@@ -735,7 +787,7 @@ enum Command {
     },
 }
 
-async fn handle_command(hub: &ViewHub, session: &CdpSession, raw: &str) -> Option<Message> {
+async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> Option<Message> {
     let command: Command = match serde_json::from_str(raw) {
         Ok(command) => command,
         Err(err) => return Some(error_event(format!("bad command: {err}"))),
@@ -760,18 +812,33 @@ async fn handle_command(hub: &ViewHub, session: &CdpSession, raw: &str) -> Optio
             if hub.control().await != Control::Human {
                 return None;
             }
-            let kind = match action.as_str() {
-                "down" => DispatchMouseEventType::MousePressed,
-                "up" => DispatchMouseEventType::MouseReleased,
-                "move" => DispatchMouseEventType::MouseMoved,
+            let action = match action.as_str() {
+                "down" => MouseAction::Down,
+                "up" => MouseAction::Up,
+                "move" => MouseAction::Move,
                 other => return Some(error_event(format!("unknown mouse action '{other}'"))),
             };
-            let button = match button.as_deref() {
-                Some("right") => MouseButton::Right,
-                Some("middle") => MouseButton::Middle,
-                _ => MouseButton::Left,
+            let result = match backend {
+                SessionBackend::Browser(session) => {
+                    let kind = match action {
+                        MouseAction::Down => DispatchMouseEventType::MousePressed,
+                        MouseAction::Up => DispatchMouseEventType::MouseReleased,
+                        MouseAction::Move => DispatchMouseEventType::MouseMoved,
+                    };
+                    let button = match button.as_deref() {
+                        Some("right") => MouseButton::Right,
+                        Some("middle") => MouseButton::Middle,
+                        _ => MouseButton::Left,
+                    };
+                    session.mouse(kind, x, y, button).await
+                }
+                SessionBackend::Quickshell(session) => {
+                    session
+                        .mouse(action, x, y, button.as_deref().unwrap_or("left"))
+                        .await
+                }
             };
-            match session.mouse(kind, x, y, button).await {
+            match result {
                 Ok(()) => None,
                 Err(err) => Some(error_event(err.to_string())),
             }
@@ -780,7 +847,11 @@ async fn handle_command(hub: &ViewHub, session: &CdpSession, raw: &str) -> Optio
             if hub.control().await != Control::Human {
                 return None;
             }
-            match session.wheel(x, y, dx, dy).await {
+            let result = match backend {
+                SessionBackend::Browser(session) => session.wheel(x, y, dx, dy).await,
+                SessionBackend::Quickshell(session) => session.wheel(dx, dy).await,
+            };
+            match result {
                 Ok(()) => None,
                 Err(err) => Some(error_event(err.to_string())),
             }
@@ -789,7 +860,11 @@ async fn handle_command(hub: &ViewHub, session: &CdpSession, raw: &str) -> Optio
             if hub.control().await != Control::Human {
                 return None;
             }
-            match session.insert_text(&text).await {
+            let result = match backend {
+                SessionBackend::Browser(session) => session.insert_text(&text).await,
+                SessionBackend::Quickshell(session) => session.text(&text).await,
+            };
+            match result {
                 Ok(()) => None,
                 Err(err) => Some(error_event(err.to_string())),
             }
@@ -841,6 +916,12 @@ impl From<anyhow::Error> for ApiError {
         // A malformed session name is a caller error, not a service failure.
         if let Some(invalid) = err.downcast_ref::<InvalidAgentName>() {
             return Self::BadRequest(invalid.to_string());
+        }
+        if let Some(invalid) = err.downcast_ref::<InvalidQuickshellPath>() {
+            return Self::BadRequest(invalid.to_string());
+        }
+        if let Some(conflict) = err.downcast_ref::<SessionConflict>() {
+            return Self::Conflict(conflict.to_string());
         }
         Self::Internal(err)
     }

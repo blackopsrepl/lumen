@@ -14,15 +14,21 @@ pub struct Config {
     pub host: String,
     /// Port for the HTTP control/view plane.
     pub port: u16,
-    /// Maximum concurrently running agent browsers.
+    /// Maximum concurrently running agent sessions.
     pub max_agents: usize,
-    /// Root for ephemeral per-session browser profiles. Lumen owns
-    /// `<data_dir>/run`: it creates one profile per browser instance and
-    /// removes it when that browser ends, and clears the tree at startup.
+    /// Root for ephemeral per-session runtime profiles. Lumen owns
+    /// `<data_dir>/run`: it creates one profile per session and removes it when
+    /// that session ends, and clears the tree at startup.
     pub data_dir: PathBuf,
     /// Chromium binary executed by the supervisor.
     pub chrome_bin: String,
-    /// Viewport every browser starts at, before any explicit override.
+    /// Sway compositor binary used for headless desktop sessions.
+    pub sway_bin: String,
+    /// Quickshell binary executed inside a desktop session.
+    pub quickshell_bin: String,
+    /// wtype binary used for desktop text input.
+    pub wtype_bin: String,
+    /// Viewport every browser or desktop session starts at, before any explicit override.
     pub default_viewport: Viewport,
     /// SQLite database holding human feedback for each session.
     pub feedback_db: PathBuf,
@@ -110,6 +116,9 @@ impl Default for Config {
             max_agents: 8,
             data_dir: PathBuf::from("/data/agents"),
             chrome_bin: "chromium".into(),
+            sway_bin: "sway".into(),
+            quickshell_bin: "quickshell".into(),
+            wtype_bin: "wtype".into(),
             default_viewport: Viewport {
                 width: 1440,
                 height: 900,
@@ -142,6 +151,15 @@ impl Config {
         }
         if let Ok(chrome_bin) = std::env::var("LUMEN_CHROME") {
             config.chrome_bin = chrome_bin;
+        }
+        if let Ok(sway_bin) = std::env::var("LUMEN_SWAY") {
+            config.sway_bin = sway_bin;
+        }
+        if let Ok(quickshell_bin) = std::env::var("LUMEN_QUICKSHELL") {
+            config.quickshell_bin = quickshell_bin;
+        }
+        if let Ok(wtype_bin) = std::env::var("LUMEN_WTYPE") {
+            config.wtype_bin = wtype_bin;
         }
 
         Ok(config)

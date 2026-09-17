@@ -4,7 +4,9 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct AgentInfo {
     pub name: String,
+    pub kind: String,
     pub cdp_endpoint: String,
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,14 +42,39 @@ fn check(response: reqwest::blocking::Response) -> Result<reqwest::blocking::Res
     bail!("lumen returned {status}: {body}");
 }
 
-/// Ensure a session's browser exists and return its CDP endpoint.
+/// Ensure a browser session exists and return its CDP endpoint.
 ///
 /// This registers the session as agent-owned, so the viewer can tell it apart
 /// from a browser a human created with nobody attached.
 pub fn ensure(base: &str, name: &str, owner: Option<&str>) -> Result<AgentInfo> {
+    ensure_session(base, name, "browser", None, owner)
+}
+
+pub fn ensure_quickshell(
+    base: &str,
+    name: &str,
+    path: &str,
+    owner: Option<&str>,
+) -> Result<AgentInfo> {
+    ensure_session(base, name, "quickshell", Some(path), owner)
+}
+
+fn ensure_session(
+    base: &str,
+    name: &str,
+    kind: &str,
+    path: Option<&str>,
+    owner: Option<&str>,
+) -> Result<AgentInfo> {
     let response = client()?
         .post(format!("{base}/v1/sessions"))
-        .json(&serde_json::json!({ "name": name, "origin": "agent", "owner": owner }))
+        .json(&serde_json::json!({
+            "name": name,
+            "kind": kind,
+            "path": path,
+            "origin": "agent",
+            "owner": owner
+        }))
         .send()
         .context("connecting to lumen")?;
     check(response)?.json().context("parsing session")
@@ -62,12 +89,20 @@ pub fn status(base: &str) -> Result<()> {
         println!("no active sessions");
     }
     for session in sessions {
-        println!("{:<24} {}", session.name, session.cdp_endpoint);
+        if session.kind == "quickshell" {
+            println!(
+                "{:<24} quickshell {}",
+                session.name,
+                session.path.as_deref().unwrap_or("(unknown path)")
+            );
+        } else {
+            println!("{:<24} {}", session.name, session.cdp_endpoint);
+        }
     }
     Ok(())
 }
 
-/// Stop and forget a session's browser.
+/// Stop and forget a session.
 ///
 /// Stopping a session that is already gone is not an error: `close` may run
 /// twice, or after the service reaped a crashed browser.

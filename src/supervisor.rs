@@ -16,19 +16,20 @@ use tokio::sync::Mutex;
 
 use crate::cdp::CdpSession;
 use crate::config::Config;
+use crate::desktop::DesktopSession;
 use crate::view::ViewHub;
 
-/// Subdirectory of `data_dir` that holds ephemeral browser profiles.
+/// Subdirectory of `data_dir` that holds ephemeral session profiles.
 ///
 /// Lumen owns this tree: it creates one directory per browser instance and
 /// removes it when that browser ends. Keeping it in a dedicated subtree means a
 /// misconfigured `data_dir` can never make startup reconciliation destructive.
 const PROFILE_SUBDIR: &str = "run";
 
-/// Marks a directory as created by Lumen for ephemeral browser profiles. The
+/// Marks a directory as created by Lumen for ephemeral session profiles. The
 /// destructive startup reconciliation only runs inside a tree that carries it.
 const PROFILE_MARKER: &str = ".lumen-profile-root";
-const PROFILE_MARKER_CONTENT: &str = "lumen ephemeral browser profiles; safe to clear\n";
+const PROFILE_MARKER_CONTENT: &str = "lumen ephemeral session profiles; safe to clear\n";
 
 /// Advisory lock held for the life of the process, so two instances can never
 /// manage — and delete — each other's profiles.
@@ -39,7 +40,7 @@ const PROFILE_SWEEP_INTERVAL: Duration = Duration::from_secs(300);
 
 static PROFILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Owns every agent browser: launch, isolation, discovery, and teardown.
+/// Owns every agent session: launch, isolation, discovery, and teardown.
 pub struct Supervisor {
     config: Arc<Config>,
     agents: Mutex<HashMap<String, Arc<AgentBrowser>>>,
@@ -48,20 +49,58 @@ pub struct Supervisor {
     _lock: std::fs::File,
 }
 
-/// One isolated Chromium and the CDP session bound to its managed page.
+/// One isolated browser or desktop session and its managed view.
 pub struct AgentBrowser {
     pub name: String,
-    /// Loopback HTTP endpoint (`http://127.0.0.1:<port>`) that both the agent's
-    /// `playwright-cli` and Lumen's own CDP session attach to.
+    pub backend: SessionBackend,
+    /// Loopback CDP endpoint for browser sessions; empty for desktop sessions.
     pub cdp_endpoint: String,
-    pub session: Arc<CdpSession>,
     pub view: Arc<ViewHub>,
     /// Ephemeral profile directory owned by this browser instance. It is
     /// removed on shutdown, and reclaimed at startup if this process died
     /// first; it is never reused by another instance.
     profile: PathBuf,
     meta: Mutex<SessionMeta>,
-    child: Mutex<Child>,
+    child: Mutex<Option<Child>>,
+}
+
+/// The kind of surface Lumen supervises.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionKind {
+    #[default]
+    Browser,
+    Quickshell,
+}
+
+/// The live backend behind a session.
+#[derive(Clone)]
+pub enum SessionBackend {
+    Browser(Arc<CdpSession>),
+    Quickshell(Arc<DesktopSession>),
+}
+
+impl SessionBackend {
+    pub fn kind(&self) -> SessionKind {
+        match self {
+            Self::Browser(_) => SessionKind::Browser,
+            Self::Quickshell(_) => SessionKind::Quickshell,
+        }
+    }
+
+    pub fn browser(&self) -> Option<Arc<CdpSession>> {
+        match self {
+            Self::Browser(session) => Some(session.clone()),
+            Self::Quickshell(_) => None,
+        }
+    }
+
+    pub fn desktop(&self) -> Option<Arc<DesktopSession>> {
+        match self {
+            Self::Browser(_) => None,
+            Self::Quickshell(session) => Some(session.clone()),
+        }
+    }
 }
 
 /// Where a session came from, so the human can tell an attended browser from a
@@ -78,15 +117,31 @@ pub enum Origin {
 struct SessionMeta {
     origin: Origin,
     owner: Option<String>,
+    kind: SessionKind,
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentInfo {
     pub name: String,
+    pub kind: SessionKind,
+    /// Empty for desktop sessions, which do not expose a CDP endpoint.
     pub cdp_endpoint: String,
+    pub path: Option<PathBuf>,
     pub origin: Origin,
     pub owner: Option<String>,
 }
+
+#[derive(Debug)]
+pub struct SessionConflict(pub String);
+
+impl fmt::Display for SessionConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SessionConflict {}
 
 /// A session name that would be unsafe as a URL segment, a log field, or a
 /// directory component.
@@ -108,12 +163,25 @@ impl fmt::Display for InvalidAgentName {
 
 impl std::error::Error for InvalidAgentName {}
 
+#[derive(Debug)]
+pub struct InvalidQuickshellPath(pub String);
+
+impl fmt::Display for InvalidQuickshellPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for InvalidQuickshellPath {}
+
 impl AgentBrowser {
     pub async fn info(&self) -> AgentInfo {
         let meta = self.meta.lock().await;
         AgentInfo {
             name: self.name.clone(),
+            kind: meta.kind,
             cdp_endpoint: self.cdp_endpoint.clone(),
+            path: meta.path.clone(),
             origin: meta.origin,
             owner: meta.owner.clone(),
         }
@@ -154,7 +222,8 @@ impl Supervisor {
     /// Return the agent's browser, launching it on first use. Provenance is
     /// left unchanged.
     pub async fn ensure(&self, name: &str) -> Result<Arc<AgentBrowser>> {
-        self.ensure_as(name, None).await
+        self.ensure_kind_as(name, SessionKind::Browser, None, None)
+            .await
     }
 
     /// Return the agent's browser, recording who registered it.
@@ -168,13 +237,40 @@ impl Supervisor {
         name: &str,
         provenance: Option<(Origin, Option<String>)>,
     ) -> Result<Arc<AgentBrowser>> {
+        self.ensure_kind_as(name, SessionKind::Browser, None, provenance)
+            .await
+    }
+
+    pub async fn ensure_kind_as(
+        &self,
+        name: &str,
+        kind: SessionKind,
+        path: Option<PathBuf>,
+        provenance: Option<(Origin, Option<String>)>,
+    ) -> Result<Arc<AgentBrowser>> {
         if !is_valid_agent_name(name) {
             return Err(InvalidAgentName(name.to_string()).into());
         }
+        let path = match kind {
+            SessionKind::Browser if path.is_some() => {
+                return Err(SessionConflict("browser sessions do not accept a path".into()).into())
+            }
+            SessionKind::Browser => None,
+            SessionKind::Quickshell => Some(validate_quickshell_path(path)?),
+        };
 
         self.reap_dead().await;
         let mut agents = self.agents.lock().await;
         if let Some(existing) = agents.get(name).cloned() {
+            let meta = existing.meta.lock().await;
+            if meta.kind != kind || meta.path != path {
+                return Err(SessionConflict(format!(
+                    "session '{name}' already exists as {:?}",
+                    meta.kind
+                ))
+                .into());
+            }
+            drop(meta);
             if let Some((origin, owner)) = provenance {
                 if origin == Origin::Agent {
                     let mut meta = existing.meta.lock().await;
@@ -192,12 +288,13 @@ impl Supervisor {
 
         // Launching while holding the lock is what makes the sweeper safe: a
         // browser directory is never visible without its map entry.
-        let agent = self.launch(name).await?;
+        let agent = self.launch(name, kind, path.clone()).await?;
         if let Some((origin, owner)) = provenance {
             let mut meta = agent.meta.lock().await;
             meta.origin = origin;
             meta.owner = owner;
         }
+        agent.meta.lock().await.path = path;
         agents.insert(name.to_string(), agent.clone());
         Ok(agent)
     }
@@ -227,7 +324,7 @@ impl Supervisor {
         None
     }
 
-    /// Stop and forget a session's browser. Returns whether it existed.
+    /// Stop and forget a session. Returns whether it existed.
     pub async fn remove(&self, name: &str) -> bool {
         let agent = self.agents.lock().await.remove(name);
         match agent {
@@ -239,7 +336,7 @@ impl Supervisor {
         }
     }
 
-    /// Stop every session's browser.
+    /// Stop every session.
     ///
     /// Service shutdown calls this so no browser outlives the supervisor,
     /// wherever the service runs. Relies on nothing else re-inserting agents
@@ -254,65 +351,98 @@ impl Supervisor {
         }
     }
 
-    async fn launch(&self, name: &str) -> Result<Arc<AgentBrowser>> {
+    async fn launch(
+        &self,
+        name: &str,
+        kind: SessionKind,
+        path: Option<PathBuf>,
+    ) -> Result<Arc<AgentBrowser>> {
         let profile = create_profile_dir(&profile_root(&self.config.data_dir), name)?;
         // Until the browser is registered, an error path would leak the profile.
         let mut guard = ProfileGuard::new(profile.clone());
 
         let viewport = self.config.default_viewport;
-        let mut child = Command::new(&self.config.chrome_bin)
-            .arg("--remote-debugging-port=0")
-            .arg(format!("--user-data-dir={}", profile.display()))
-            .arg(format!(
-                "--window-size={},{}",
-                viewport.width, viewport.height
-            ))
-            .args([
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-dev-shm-usage",
-                "--disable-background-networking",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--headless=new",
-                // A single explicit page; without it Chromium opens a new-tab
-                // page alongside about:blank and the drivers disagree on which
-                // tab is "the" browser.
-                "about:blank",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            // Give Chromium its own process group so teardown can signal every
-            // descendant (renderers, GPU, crashpad), not just the parent.
-            .process_group(0)
-            .spawn()
-            .with_context(|| format!("spawning {}", self.config.chrome_bin))?;
+        let (backend, cdp_endpoint, child) = match kind {
+            SessionKind::Browser => {
+                let mut child = Command::new(&self.config.chrome_bin)
+                    .arg("--remote-debugging-port=0")
+                    .arg(format!("--user-data-dir={}", profile.display()))
+                    .arg(format!(
+                        "--window-size={},{}",
+                        viewport.width, viewport.height
+                    ))
+                    .args([
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                        "--disable-dev-shm-usage",
+                        "--disable-background-networking",
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--headless=new",
+                        // A single explicit page; without it Chromium opens a new-tab
+                        // page alongside about:blank and the drivers disagree on which
+                        // tab is "the" browser.
+                        "about:blank",
+                    ])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true)
+                    // Give Chromium its own process group so teardown can signal every
+                    // descendant (renderers, GPU, crashpad), not just the parent.
+                    .process_group(0)
+                    .spawn()
+                    .with_context(|| format!("spawning {}", self.config.chrome_bin))?;
 
-        let stderr = child.stderr.take().context("chromium stderr unavailable")?;
-        let port = discover_port(stderr).await?;
-        let cdp_endpoint = format!("http://127.0.0.1:{port}");
+                let stderr = child.stderr.take().context("chromium stderr unavailable")?;
+                let port = discover_port(stderr).await?;
+                let cdp_endpoint = format!("http://127.0.0.1:{port}");
 
-        let session =
-            CdpSession::connect_with_policy(&cdp_endpoint, self.config.policy.clone()).await?;
-        session
-            .set_viewport(viewport.width, viewport.height)
-            .await?;
-        let view = Arc::new(ViewHub::new(session.clone()));
-        spawn_tab_watcher(session.clone(), view.clone());
+                let session =
+                    CdpSession::connect_with_policy(&cdp_endpoint, self.config.policy.clone())
+                        .await?;
+                session
+                    .set_viewport(viewport.width, viewport.height)
+                    .await?;
+                (SessionBackend::Browser(session), cdp_endpoint, Some(child))
+            }
+            SessionKind::Quickshell => {
+                let path = path.as_deref().expect("validated Quickshell path");
+                let session = DesktopSession::launch(
+                    &self.config.sway_bin,
+                    &self.config.quickshell_bin,
+                    &self.config.wtype_bin,
+                    path,
+                    &profile,
+                    viewport.width,
+                    viewport.height,
+                )
+                .await?;
+                (SessionBackend::Quickshell(session), String::new(), None)
+            }
+        };
+        let view = match &backend {
+            SessionBackend::Browser(session) => {
+                let view = Arc::new(ViewHub::new(session.clone()));
+                spawn_tab_watcher(session.clone(), view.clone());
+                view
+            }
+            SessionBackend::Quickshell(session) => Arc::new(ViewHub::new_desktop(session.clone())),
+        };
 
-        tracing::info!(agent = name, %cdp_endpoint, profile = %profile.display(), "agent browser ready");
+        tracing::info!(agent = name, ?kind, profile = %profile.display(), "agent session ready");
         let profile = guard.disarm();
         Ok(Arc::new(AgentBrowser {
             name: name.to_string(),
+            backend,
             cdp_endpoint,
-            session,
             view,
             profile,
             meta: Mutex::new(SessionMeta {
                 origin: Origin::Manual,
                 owner: None,
+                kind,
+                path,
             }),
             child: Mutex::new(child),
         }))
@@ -359,23 +489,33 @@ impl Supervisor {
 
 impl AgentBrowser {
     pub async fn is_alive(&self) -> bool {
-        if !self.session.is_alive() {
-            return false;
+        match &self.backend {
+            SessionBackend::Browser(session) => {
+                let child_alive = match self.child.lock().await.as_mut() {
+                    Some(child) => child.try_wait().is_ok_and(|status| status.is_none()),
+                    None => false,
+                };
+                session.is_alive() && child_alive
+            }
+            SessionBackend::Quickshell(session) => session.is_alive().await,
         }
-        matches!(self.child.lock().await.try_wait(), Ok(None))
     }
 
-    /// Stop this agent's Chromium and reclaim its profile directory.
+    /// Stop this agent's session and reclaim its ephemeral runtime directory.
     pub async fn shutdown(&self) {
-        {
-            let mut child = self.child.lock().await;
-            terminate_process_group(&mut child).await;
+        match &self.backend {
+            SessionBackend::Browser(_) => {
+                if let Some(child) = self.child.lock().await.as_mut() {
+                    terminate_process_group(child).await;
+                }
+            }
+            SessionBackend::Quickshell(session) => session.shutdown().await,
         }
         let _ = purge_profile(self.profile.clone()).await;
     }
 }
 
-/// Stop a browser and everything it spawned.
+/// Stop a browser or desktop compositor and everything it spawned.
 ///
 /// `Child::kill` signals only the Chromium parent; its renderer, GPU, and
 /// crashpad children can outlive it and keep writing into the profile. Since
@@ -616,7 +756,7 @@ fn lock_profile_root(root: &Path) -> Result<std::fs::File> {
     Ok(file)
 }
 
-/// Create a unique, service-generated profile directory for one browser.
+/// Create a unique, service-generated profile directory for one session.
 ///
 /// The path never derives from API input, so no session name can escape the
 /// root, and the suffix keeps a fresh browser from reusing a profile left
@@ -654,7 +794,7 @@ fn remove_path(path: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Remove a profile, retrying briefly around Chromium's surviving children.
+/// Remove a profile, retrying briefly around surviving child processes.
 ///
 /// Chromium's crashpad, GPU, and renderer processes can outlive the browser
 /// process for a moment and keep writing into the profile, which makes a
@@ -703,11 +843,11 @@ async fn purge_profile(path: PathBuf) -> Option<u64> {
     .await
     {
         Ok(Ok(bytes)) => {
-            tracing::info!(profile = %shown.display(), bytes, "removed browser profile");
+            tracing::info!(profile = %shown.display(), bytes, "removed session profile");
             Some(bytes)
         }
         Ok(Err(err)) => {
-            tracing::warn!(profile = %shown.display(), "removing browser profile failed: {err}");
+            tracing::warn!(profile = %shown.display(), "removing session profile failed: {err}");
             None
         }
         Err(err) => {
@@ -717,7 +857,7 @@ async fn purge_profile(path: PathBuf) -> Option<u64> {
     }
 }
 
-/// Remove every profile left by a previous process, keeping the root's own
+/// Remove every session profile left by a previous process, keeping the root's own
 /// marker and lock.
 fn reconcile_profile_root(root: &Path) -> Result<()> {
     prepare_profile_root(root)?;
@@ -744,7 +884,7 @@ fn reconcile_profile_root(root: &Path) -> Result<()> {
         }
     }
     if removed > 0 {
-        tracing::info!(removed, bytes, root = %root.display(), "reconciled stale browser profiles");
+        tracing::info!(removed, bytes, root = %root.display(), "reconciled stale session profiles");
     }
     Ok(())
 }
@@ -802,6 +942,29 @@ pub fn is_valid_agent_name(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+fn validate_quickshell_path(path: Option<PathBuf>) -> Result<PathBuf> {
+    let path = path.ok_or_else(|| {
+        InvalidQuickshellPath("Quickshell sessions require a path to shell.qml".into())
+    })?;
+    if !path.is_absolute() {
+        return Err(InvalidQuickshellPath("Quickshell path must be absolute".into()).into());
+    }
+    let metadata = std::fs::metadata(&path).map_err(|err| {
+        InvalidQuickshellPath(format!("reading Quickshell path {}: {err}", path.display()))
+    })?;
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(
+            InvalidQuickshellPath("Quickshell path must be a file or directory".into()).into(),
+        );
+    }
+    Ok(std::fs::canonicalize(&path).map_err(|err| {
+        InvalidQuickshellPath(format!(
+            "resolving Quickshell path {}: {err}",
+            path.display()
+        ))
+    })?)
 }
 
 #[cfg(test)]
