@@ -1,6 +1,7 @@
 //! Isolated headless Wayland sessions for Quickshell and other desktop surfaces.
 
 use anyhow::{anyhow, bail, Context, Result};
+use bytes::Bytes;
 use jpeg_encoder::{ColorType, Encoder};
 use std::fs::File;
 use std::io;
@@ -12,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
-use tokio::sync::broadcast;
+use tokio::sync::watch;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_buffer::WlBuffer;
 use wayland_client::protocol::wl_output::WlOutput;
@@ -51,7 +52,7 @@ pub struct DesktopSession {
     commands: mpsc::Sender<DesktopCommand>,
     thread: Mutex<Option<JoinHandle<()>>>,
     alive: Arc<std::sync::atomic::AtomicBool>,
-    frames: broadcast::Sender<Arc<Vec<u8>>>,
+    frames: watch::Sender<Option<Bytes>>,
     sway: Mutex<Option<Child>>,
     quickshell: Mutex<Option<Child>>,
 }
@@ -150,7 +151,7 @@ impl DesktopSession {
 
         let (commands, command_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-        let (frames, _) = broadcast::channel(8);
+        let (frames, _) = watch::channel(None);
         let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let thread_alive = alive.clone();
         let thread_frames = frames.clone();
@@ -209,7 +210,7 @@ impl DesktopSession {
         Ok(session)
     }
 
-    pub fn frames(&self) -> broadcast::Receiver<Arc<Vec<u8>>> {
+    pub fn frames(&self) -> watch::Receiver<Option<Bytes>> {
         self.frames.subscribe()
     }
 
@@ -416,7 +417,7 @@ struct WaylandRun {
     width: u32,
     height: u32,
     commands: Receiver<DesktopCommand>,
-    frames: broadcast::Sender<Arc<Vec<u8>>>,
+    frames: watch::Sender<Option<Bytes>>,
     alive: Arc<std::sync::atomic::AtomicBool>,
     ready: SyncSender<Result<(), String>>,
 }
@@ -451,7 +452,7 @@ fn run_wayland_inner(
     width: u32,
     height: u32,
     commands: Receiver<DesktopCommand>,
-    frames: broadcast::Sender<Arc<Vec<u8>>>,
+    frames: watch::Sender<Option<Bytes>>,
     ready: SyncSender<Result<(), String>>,
 ) -> Result<()> {
     let socket = runtime_dir.join(&display);
@@ -713,7 +714,7 @@ struct WaylandState {
     invert_y: bool,
     streaming: bool,
     screenshot_waiter: Option<SyncSender<FrameResult>>,
-    frames: broadcast::Sender<Arc<Vec<u8>>>,
+    frames: watch::Sender<Option<Bytes>>,
     width: u32,
     height: u32,
     started: Instant,
@@ -966,7 +967,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for WaylandState {
                         if state.streaming {
                             match encode_jpeg(&rgb, frame_width, frame_height) {
                                 Ok(frame) => {
-                                    let _ = state.frames.send(Arc::new(frame));
+                                    state.frames.send_replace(Some(Bytes::from(frame)));
                                 }
                                 Err(err) => tracing::warn!("encoding desktop frame failed: {err}"),
                             }

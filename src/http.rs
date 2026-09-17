@@ -7,7 +7,6 @@ use crate::supervisor::{
     SessionBackend, SessionConflict, SessionKind, Supervisor,
 };
 use crate::view::{Control, ViewHub};
-use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, StatusCode};
@@ -694,45 +693,25 @@ async fn stream_session(socket: WebSocket, state: AppState, name: String) {
     let mut shutdown = state.shutdown.subscribe();
     let hub: Arc<ViewHub> = agent.view.clone();
     let backend = agent.backend.clone();
-    let mut frames = hub.subscribe().await;
-
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let (out_tx, mut out_rx) = mpsc::channel::<Message>(64);
+    let (out_tx, mut out_rx) = mpsc::channel::<Message>(8);
+    let mut subscription = hub.subscribe().await;
 
-    let writer = tokio::spawn(async move {
-        while let Some(message) = out_rx.recv().await {
+    let mut writer = tokio::spawn(async move {
+        loop {
+            let message = tokio::select! {
+                biased;
+                message = out_rx.recv() => message,
+                frame = subscription.next_frame() => frame.map(Message::Binary),
+            };
+            let Some(message) = message else {
+                break;
+            };
             if ws_tx.send(message).await.is_err() {
                 break;
             }
         }
     });
-
-    let frame_tx = out_tx.clone();
-    let frame_task = tokio::spawn(async move {
-        loop {
-            match frames.recv().await {
-                Ok(bytes) => {
-                    if frame_tx
-                        .send(Message::Binary(Bytes::from(bytes.to_vec())))
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break,
-            }
-        }
-    });
-
-    // A page only screencasts on change; hand the joiner the last known frame
-    // so an idle page does not leave the viewer staring at an empty canvas.
-    if let Some(latest) = hub.latest_frame().await {
-        let _ = out_tx
-            .send(Message::Binary(Bytes::from(latest.to_vec())))
-            .await;
-    }
 
     let _ = out_tx
         .send(Message::Text(control_event(hub.control().await).into()))
@@ -742,6 +721,7 @@ async fn stream_session(socket: WebSocket, state: AppState, name: String) {
         let message = tokio::select! {
             message = ws_rx.next() => message,
             _ = shutdown.recv() => break,
+            _ = &mut writer => break,
         };
         let Some(Ok(message)) = message else {
             break;
@@ -759,7 +739,6 @@ async fn stream_session(socket: WebSocket, state: AppState, name: String) {
         }
     }
 
-    frame_task.abort();
     writer.abort();
 }
 

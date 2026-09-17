@@ -1,12 +1,13 @@
 use crate::cdp::CdpSession;
 use crate::desktop::DesktopSession;
 use base64::Engine as _;
+use bytes::Bytes;
 use chromiumoxide::cdp::browser_protocol::page::EventScreencastFrame;
 use futures::StreamExt;
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
+use tokio::sync::{watch, Mutex};
 use tokio::task::JoinHandle;
 
 /// Who currently owns the input path.
@@ -24,30 +25,80 @@ pub enum Control {
 /// acknowledged by the hub for flow control.
 pub struct ViewHub {
     source: ViewSource,
-    frames: broadcast::Sender<Arc<Vec<u8>>>,
-    /// The most recent frame, so a viewer joining an idle page paints
-    /// immediately instead of waiting for the content to change.
-    latest: Arc<Mutex<Option<Arc<Vec<u8>>>>>,
+    frames: watch::Sender<Option<Bytes>>,
     started: Arc<AtomicBool>,
+    subscribers: AtomicUsize,
     lifecycle: Mutex<()>,
     pump: Mutex<Option<JoinHandle<()>>>,
     control: Mutex<Control>,
+}
+
+/// One viewer's claim on the shared capture source.
+///
+/// The receiver stores only the newest frame. Dropping the final subscription
+/// releases the source even when its WebSocket ended through cancellation.
+pub struct ViewSubscription {
+    frames: watch::Receiver<Option<Bytes>>,
+    hub: Weak<ViewHub>,
+    initial: bool,
+}
+
+impl ViewSubscription {
+    pub async fn next_frame(&mut self) -> Option<Bytes> {
+        if self.initial {
+            self.initial = false;
+            if let Some(frame) = self.frames.borrow_and_update().clone() {
+                return Some(frame);
+            }
+        }
+        loop {
+            self.frames.changed().await.ok()?;
+            if let Some(frame) = self.frames.borrow_and_update().clone() {
+                return Some(frame);
+            }
+        }
+    }
+}
+
+impl Drop for ViewSubscription {
+    fn drop(&mut self) {
+        let Some(hub) = self.hub.upgrade() else {
+            return;
+        };
+        let previous = hub.subscribers.fetch_sub(1, Ordering::SeqCst);
+        debug_assert!(previous > 0, "view subscriber count underflow");
+        if previous != 1 {
+            return;
+        }
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                hub.stop_if_unused().await;
+            });
+        } else if let ViewSource::Desktop(session) = &hub.source {
+            let _ = session.set_streaming(false);
+        }
+    }
 }
 
 #[derive(Clone)]
 enum ViewSource {
     Browser(Arc<CdpSession>),
     Desktop(Arc<DesktopSession>),
+    #[cfg(test)]
+    Test {
+        starts: Arc<AtomicUsize>,
+        stops: Arc<AtomicUsize>,
+    },
 }
 
 impl ViewHub {
     pub fn new(session: Arc<CdpSession>) -> Self {
-        let (frames, _) = broadcast::channel(8);
+        let (frames, _) = watch::channel(None);
         Self {
             source: ViewSource::Browser(session),
             frames,
-            latest: Arc::new(Mutex::new(None)),
             started: Arc::new(AtomicBool::new(false)),
+            subscribers: AtomicUsize::new(0),
             lifecycle: Mutex::new(()),
             pump: Mutex::new(None),
             control: Mutex::new(Control::Agent),
@@ -55,12 +106,12 @@ impl ViewHub {
     }
 
     pub fn new_desktop(session: Arc<DesktopSession>) -> Self {
-        let (frames, _) = broadcast::channel(8);
+        let (frames, _) = watch::channel(None);
         Self {
             source: ViewSource::Desktop(session),
             frames,
-            latest: Arc::new(Mutex::new(None)),
             started: Arc::new(AtomicBool::new(false)),
+            subscribers: AtomicUsize::new(0),
             lifecycle: Mutex::new(()),
             pump: Mutex::new(None),
             control: Mutex::new(Control::Agent),
@@ -68,15 +119,15 @@ impl ViewHub {
     }
 
     /// Join the frame stream, starting capture if this is the first viewer.
-    pub async fn subscribe(&self) -> broadcast::Receiver<Arc<Vec<u8>>> {
-        let receiver = self.frames.subscribe();
+    pub async fn subscribe(self: &Arc<Self>) -> ViewSubscription {
+        self.subscribers.fetch_add(1, Ordering::SeqCst);
+        let subscription = ViewSubscription {
+            frames: self.frames.subscribe(),
+            hub: Arc::downgrade(self),
+            initial: true,
+        };
         self.ensure_started().await;
-        receiver
-    }
-
-    /// The most recent frame, if any screencast has produced one.
-    pub async fn latest_frame(&self) -> Option<Arc<Vec<u8>>> {
-        self.latest.lock().await.clone()
+        subscription
     }
 
     /// Turn the screencast on or off. Off frees the browser from encoding frames
@@ -140,14 +191,22 @@ impl ViewHub {
                 }
                 (None, None)
             }
+            #[cfg(test)]
+            ViewSource::Test { starts, .. } => {
+                starts.fetch_add(1, Ordering::SeqCst);
+                (None, None)
+            }
         };
 
         let desktop_stream = match &self.source {
             ViewSource::Desktop(session) => Some(session.frames()),
             ViewSource::Browser(_) => None,
+            #[cfg(test)]
+            ViewSource::Test { .. } => None,
         };
+        #[cfg(test)]
+        let test_source = matches!(&self.source, ViewSource::Test { .. });
         let frames = self.frames.clone();
-        let latest = self.latest.clone();
         let started = self.started.clone();
         let pump = tokio::spawn(async move {
             if let Some(mut stream) = stream {
@@ -155,9 +214,7 @@ impl ViewHub {
                     let encoded: &str = frame.data.as_ref();
                     match base64::engine::general_purpose::STANDARD.decode(encoded) {
                         Ok(bytes) => {
-                            let frame = Arc::new(bytes);
-                            *latest.lock().await = Some(frame.clone());
-                            let _ = frames.send(frame);
+                            frames.send_replace(Some(Bytes::from(bytes)));
                         }
                         Err(err) => tracing::warn!("screencast frame decode failed: {err}"),
                     }
@@ -166,10 +223,15 @@ impl ViewHub {
                     }
                 }
             } else if let Some(mut stream) = desktop_stream {
-                while let Ok(frame) = stream.recv().await {
-                    *latest.lock().await = Some(frame.clone());
-                    let _ = frames.send(frame);
+                while stream.changed().await.is_ok() {
+                    if let Some(frame) = stream.borrow_and_update().clone() {
+                        frames.send_replace(Some(frame));
+                    }
                 }
+            }
+            #[cfg(test)]
+            if test_source {
+                std::future::pending::<()>().await;
             }
             started.store(false, Ordering::SeqCst);
         });
@@ -189,6 +251,83 @@ impl ViewHub {
             ViewSource::Desktop(session) => {
                 let _ = session.set_streaming(false);
             }
+            #[cfg(test)]
+            ViewSource::Test { stops, .. } => {
+                stops.fetch_add(1, Ordering::SeqCst);
+            }
         }
+    }
+
+    async fn stop_if_unused(&self) {
+        let _lifecycle = self.lifecycle.lock().await;
+        if self.subscribers.load(Ordering::SeqCst) == 0 {
+            self.stop_locked().await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn test_hub() -> (Arc<ViewHub>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        let starts = Arc::new(AtomicUsize::new(0));
+        let stops = Arc::new(AtomicUsize::new(0));
+        let (frames, _) = watch::channel(None);
+        let hub = Arc::new(ViewHub {
+            source: ViewSource::Test {
+                starts: starts.clone(),
+                stops: stops.clone(),
+            },
+            frames,
+            started: Arc::new(AtomicBool::new(false)),
+            subscribers: AtomicUsize::new(0),
+            lifecycle: Mutex::new(()),
+            pump: Mutex::new(None),
+            control: Mutex::new(Control::Agent),
+        });
+        (hub, starts, stops)
+    }
+
+    async fn wait_for(counter: &AtomicUsize, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while counter.load(Ordering::SeqCst) != expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("counter did not reach expected value");
+    }
+
+    #[tokio::test]
+    async fn capture_lives_from_first_until_last_subscriber() {
+        let (hub, starts, stops) = test_hub();
+        let first = hub.subscribe().await;
+        let second = hub.subscribe().await;
+
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        drop(first);
+        tokio::task::yield_now().await;
+        assert_eq!(stops.load(Ordering::SeqCst), 0);
+
+        drop(second);
+        wait_for(&stops, 1).await;
+
+        let third = hub.subscribe().await;
+        assert_eq!(starts.load(Ordering::SeqCst), 2);
+        drop(third);
+        wait_for(&stops, 2).await;
+    }
+
+    #[tokio::test]
+    async fn subscription_keeps_only_the_latest_frame() {
+        let (hub, _, _) = test_hub();
+        let mut subscription = hub.subscribe().await;
+        hub.frames.send_replace(Some(Bytes::from_static(b"one")));
+        hub.frames.send_replace(Some(Bytes::from_static(b"two")));
+        hub.frames.send_replace(Some(Bytes::from_static(b"three")));
+
+        assert_eq!(subscription.next_frame().await.unwrap(), "three");
     }
 }
