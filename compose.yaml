@@ -6,6 +6,8 @@
 
 x-podman:
   in_pod: false
+  # Podman-only extension; Docker Compose ignores `x-*` blocks, so this file
+  # works with both runtimes.
 
 services:
   lumen:

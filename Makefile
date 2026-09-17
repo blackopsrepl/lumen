@@ -20,6 +20,8 @@ BIN := ./bin
 AGENT ?= default
 ARGS ?=
 LUMEN_TEST_PORT ?= 18899
+# Container access goes through bin/ctr.sh so make targets share bin/common.sh's
+# resolution (runtime auto-detect plus docker-via-sudo when the daemon needs it).
 
 .DEFAULT_GOAL := help
 
@@ -89,7 +91,7 @@ pw: ## Run playwright-cli: make pw ARGS="-s=alice snapshot"
 	@$(BIN)/pw.sh $(ARGS)
 
 feedback: ## Read a session's feedback: make feedback AGENT=alice
-	@podman exec lumen lumen feedback $(AGENT) $(ARGS)
+	@$(BIN)/ctr.sh exec lumen lumen feedback $(AGENT) $(ARGS)
 
 # ============== Quality Gates ==============
 
@@ -161,7 +163,7 @@ ci: ## Local mirror of the Forgejo CI gates, in CI order
 
 clean: ## Remove the container image
 	@printf "$(ARROW) Removing container image...\n"
-	@-podman rmi localhost/lumen:$${LUMEN_VERSION:-0.10.1}
+	@-$(BIN)/ctr.sh rmi localhost/lumen:$${LUMEN_VERSION:-0.10.1}
 	@printf "$(GREEN)$(CHECK) Clean complete$(RESET)\n\n"
 
 # ============== Help ==============
