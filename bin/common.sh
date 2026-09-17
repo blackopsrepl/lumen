@@ -45,34 +45,43 @@ _detect_runtime() {
     die "no container runtime found; install podman or docker"
   fi
 }
-CONTAINER_RUNTIME="$(_detect_runtime)"
-CTR="${CTR:-${CONTAINER_RUNTIME}}"
-export CONTAINER_RUNTIME CTR
-
-# Docker elevation: on many distros the user cannot reach the system daemon
-# (/var/run/docker.sock is root:docker and the user is in no docker group).
-# Resolve whether to prefix docker with sudo. LUMEN_DOCKER_SUDO=1 forces it,
-# =0 forbids it, and the default (auto) uses passwordless sudo only when
-# direct access fails, so scripts never surprise you with a password prompt
-# unless you opted in. A reachable DOCKER_HOST (e.g. rootless) just works.
+# Resolve the runtime only when a caller actually needs container operations.
+# Runtime-independent helpers, such as the disposable E2E suite, also source
+# this file and must work inside environments without Podman or Docker.
+RUNTIME_READY=0
 CTR_SUDO=()
-if [ "${CTR}" = "docker" ]; then
-  case "${LUMEN_DOCKER_SUDO:-auto}" in
-    1|true|yes) CTR_SUDO=(sudo) ;;
-    0|false|no) CTR_SUDO=() ;;
-    auto|"")
-      if docker info >/dev/null 2>&1; then
-        CTR_SUDO=()
-      elif sudo -n docker info >/dev/null 2>&1; then
-        log "docker needs privilege here; using 'sudo docker' (override with LUMEN_DOCKER_SUDO=0)"
-        CTR_SUDO=(sudo)
-      else
-        die "docker daemon not reachable and no passwordless sudo for docker. Fix one of: add yourself to the docker group ('sudo usermod -aG docker ${USER}' + re-login, or 'newgrp docker'); set LUMEN_DOCKER_SUDO=1 in .env to allow a sudo password prompt; or point DOCKER_HOST at a daemon you can reach (e.g. rootless unix://\${XDG_RUNTIME_DIR}/docker.sock)"
-      fi
-      ;;
-    *) die "unsupported LUMEN_DOCKER_SUDO: ${LUMEN_DOCKER_SUDO} (expected 1, 0, or auto)" ;;
-  esac
-fi
+ensure_runtime() {
+  [ "${RUNTIME_READY}" -eq 1 ] && return
+
+  CONTAINER_RUNTIME="$(_detect_runtime)"
+  CTR="${CTR:-${CONTAINER_RUNTIME}}"
+  export CONTAINER_RUNTIME CTR
+
+  # Docker elevation: on many distros the user cannot reach the system daemon
+  # (/var/run/docker.sock is root:docker and the user is in no docker group).
+  # Resolve whether to prefix docker with sudo. LUMEN_DOCKER_SUDO=1 forces it,
+  # =0 forbids it, and the default (auto) uses passwordless sudo only when
+  # direct access fails, so scripts never surprise you with a password prompt
+  # unless you opted in. A reachable DOCKER_HOST (e.g. rootless) just works.
+  if [ "${CTR}" = "docker" ]; then
+    case "${LUMEN_DOCKER_SUDO:-auto}" in
+      1|true|yes) CTR_SUDO=(sudo) ;;
+      0|false|no) CTR_SUDO=() ;;
+      auto|"")
+        if docker info >/dev/null 2>&1; then
+          CTR_SUDO=()
+        elif sudo -n docker info >/dev/null 2>&1; then
+          log "docker needs privilege here; using 'sudo docker' (override with LUMEN_DOCKER_SUDO=0)"
+          CTR_SUDO=(sudo)
+        else
+          die "docker daemon not reachable and no passwordless sudo for docker. Fix one of: add yourself to the docker group ('sudo usermod -aG docker ${USER}' + re-login, or 'newgrp docker'); set LUMEN_DOCKER_SUDO=1 in .env to allow a sudo password prompt; or point DOCKER_HOST at a daemon you can reach (e.g. rootless unix://\${XDG_RUNTIME_DIR}/docker.sock)"
+        fi
+        ;;
+      *) die "unsupported LUMEN_DOCKER_SUDO: ${LUMEN_DOCKER_SUDO} (expected 1, 0, or auto)" ;;
+    esac
+  fi
+  RUNTIME_READY=1
+}
 
 # Keep the workspace absolute so the artifact paths pw.sh reports are
 # resolvable from wherever the agent runs, not only from the checkout's parent.
@@ -112,6 +121,7 @@ valid_session_name() {
 sed_escape() { printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'; }
 
 compose() {
+  ensure_runtime
   case "${CTR}" in
     podman)
       # Prefer the `podman compose` plugin; fall back to the standalone
@@ -133,7 +143,10 @@ compose() {
 # `inspect` when the container exists.
 container_exists() { ctr inspect "$1" >/dev/null 2>&1; }
 
-ctr() { "${CTR_SUDO[@]}" "${CTR}" "$@"; }
+ctr() {
+  ensure_runtime
+  "${CTR_SUDO[@]}" "${CTR}" "$@"
+}
 
 require_cli() {
   command -v "${PW_CLI}" >/dev/null 2>&1 \

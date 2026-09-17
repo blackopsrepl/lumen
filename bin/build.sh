@@ -17,6 +17,7 @@ for arg in "$@"; do
 done
 
 log "building ${IMAGE} (playwright ${PLAYWRIGHT_IMAGE_VERSION})"
+ensure_runtime
 # `docker build` only knows `--pull` (always pull) while podman also accepts
 # `--pull=newer`; both map to a refresh here, so either runtime re-pulls base
 # layers by default and `--pull` forces it explicitly.

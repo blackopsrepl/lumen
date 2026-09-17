@@ -9,6 +9,7 @@ set -euo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 command -v systemctl >/dev/null 2>&1 || die "systemctl not found"
+ensure_runtime
 
 # Resolve an absolute compose command for the systemd unit. ExecStart splits
 # on spaces, so "…/podman compose" and "…/docker compose" work as binary + arg,
