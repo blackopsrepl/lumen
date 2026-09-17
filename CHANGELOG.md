@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.11.2](https://github.com/blackopsrepl/lumen/compare/v0.11.1...v0.11.2) (2026-09-17)
+
+### Bug Fixes
+
+* **ci:** defer container runtime detection ([23abea8](https://github.com/blackopsrepl/lumen/commit/23abea8478bd36d34a9d28ee782cd216a6ebd7d6))
+* **runtime:** expose host Quickshell projects ([db5ffe7](https://github.com/blackopsrepl/lumen/commit/db5ffe79d9ed5c19dfc4fd4f70c8b502928489b3))
+
 ## [0.11.1](https://github.com/blackopsrepl/lumen/compare/v0.11.0...v0.11.1) (2026-09-17)
 
 ### Bug Fixes
