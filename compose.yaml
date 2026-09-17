@@ -65,8 +65,8 @@ services:
       # root and container target identical so QML imports and assets resolve
       # without rewriting the caller's path.
       - type: bind
-        source: ${LUMEN_QUICKSHELL_ROOT:-/srv/lab/tools}
-        target: ${LUMEN_QUICKSHELL_ROOT:-/srv/lab/tools}
+        source: ${LUMEN_QUICKSHELL_ROOT:-/var/lib/lumen/projects}
+        target: ${LUMEN_QUICKSHELL_ROOT:-/var/lib/lumen/projects}
         read_only: true
 
 volumes:

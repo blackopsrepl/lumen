@@ -83,7 +83,7 @@ per session. The path must be an absolute path to `shell.qml` or its containing
 directory, and it must be readable by the Lumen process:
 
 ```bash
-lumen ensure dashboard --quickshell /srv/app/dashboard/shell.qml --owner dashboard-agent
+lumen ensure dashboard --quickshell /var/lib/lumen/projects/dashboard/shell.qml --owner dashboard-agent
 ```
 
 When Lumen runs in the production container, configure
@@ -92,12 +92,13 @@ mounts that directory read-only at the same absolute path inside the container,
 so imports and sibling assets continue to resolve without path translation:
 
 ```bash
-LUMEN_QUICKSHELL_ROOT=/srv/lab/tools
-lumen ensure dashboard --quickshell /srv/lab/tools/codexbar-sway/frontend/quickshell/shell.qml
+sudo install -d -o "$USER" -g "$(id -gn)" /var/lib/lumen/projects
+LUMEN_QUICKSHELL_ROOT=/var/lib/lumen/projects
+lumen ensure dashboard --quickshell /var/lib/lumen/projects/dashboard/shell.qml
 ```
 
-The default root is `/srv/lab/tools`; override it in `.env` when the host keeps
-QML projects elsewhere.
+The default root is the FHS application-data path `/var/lib/lumen/projects`;
+override it in `.env` when the host keeps QML projects elsewhere.
 
 The viewer can also create a Quickshell session with the session-type selector.
 Desktop sessions support native screenshots, mouse, wheel, and text input. They
