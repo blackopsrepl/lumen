@@ -23,6 +23,7 @@ const state = {
   annotating: false,
   drawStart: null,
   drawEnd: null,
+  drawing: false,
   highlight: null,
   feedbackSig: null,
   sessionsSig: null,
@@ -250,6 +251,7 @@ function setAnnotating(on) {
   if (!on) {
     state.drawStart = null;
     state.drawEnd = null;
+    state.drawing = false;
     el("composer").hidden = true;
     drawOverlay();
   }
@@ -804,26 +806,46 @@ canvas.addEventListener(
 overlay.addEventListener("pointerdown", (event) => {
   if (!state.annotating) return;
   overlay.setPointerCapture(event.pointerId);
+  state.drawing = true;
   state.drawStart = overlayPos(event);
   state.drawEnd = state.drawStart;
+  el("composer").hidden = true;
   drawOverlay();
 });
 
 overlay.addEventListener("pointermove", (event) => {
-  if (!state.annotating || !state.drawStart) return;
+  if (!state.annotating || !state.drawing) return;
   state.drawEnd = overlayPos(event);
   drawOverlay();
 });
 
-overlay.addEventListener("pointerup", (event) => {
-  if (!state.annotating || !state.drawStart) return;
-  state.drawEnd = overlayPos(event);
+// Freeze the rectangle at release and open the composer for a usable region.
+// Guarded by `drawing` so a pointer that keeps moving after release can no
+// longer drag the selection or corrupt the region the agent reads.
+function finishSelection(point) {
+  if (!state.annotating || !state.drawing) return;
+  state.drawing = false;
+  if (point) state.drawEnd = point;
   drawOverlay();
   const region = currentRegion();
   if (region && region.width > 8 && region.height > 8) {
     el("composer").hidden = false;
     el("comment-text").focus();
+  } else {
+    state.drawStart = null;
+    state.drawEnd = null;
+    drawOverlay();
   }
+}
+
+overlay.addEventListener("pointerup", (event) => {
+  if (overlay.hasPointerCapture(event.pointerId)) overlay.releasePointerCapture(event.pointerId);
+  finishSelection(overlayPos(event));
+});
+
+overlay.addEventListener("pointercancel", (event) => {
+  if (overlay.hasPointerCapture(event.pointerId)) overlay.releasePointerCapture(event.pointerId);
+  finishSelection(null);
 });
 
 window.addEventListener("resize", () => {

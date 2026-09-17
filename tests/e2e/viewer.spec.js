@@ -51,14 +51,28 @@ test("draws and sends a feedback annotation", async ({ page, request }) => {
     const end = { x: start.x + 140, y: start.y + 90 };
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
-    await page.mouse.move(end.x, end.y);
+    await page.mouse.move(end.x, end.y, { steps: 8 });
     await page.mouse.up();
+
+    // Releasing must freeze the rectangle: moving the pointer on afterwards
+    // (as a human does on the way to the composer) must not grow the region.
+    await page.mouse.move(end.x + 320, end.y + 260, { steps: 20 });
 
     await expect(page.locator("#composer")).toBeVisible();
     await page.locator("#comment-text").fill("Please keep this area aligned");
     await page.locator("#comment-send").click();
     await expect(page.locator("#feedback-list")).toContainText("Please keep this area aligned");
     await expect(page.locator("#feedback-count")).toHaveText("1");
+
+    const stored = await request.get(
+      `/v1/sessions/${encodeURIComponent(name)}/feedback?pending=true`,
+    );
+    const items = await stored.json();
+    const region = items[0].region;
+    // Region is in page CSS pixels; screen px times scale round-trips to the
+    // rectangle actually drawn, not wherever the pointer ended up.
+    expect(region.scale * region.width).toBeCloseTo(140, 0);
+    expect(region.scale * region.height).toBeCloseTo(90, 0);
   } finally {
     await deleteSession(request, name);
   }
