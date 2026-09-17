@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.11.4](https://github.com/blackopsrepl/lumen/compare/v0.11.3...v0.11.4) (2026-09-17)
+
+### Bug Fixes
+
+* **session:** close viewers before backend teardown ([1dafe6e](https://github.com/blackopsrepl/lumen/commit/1dafe6ea13ae8d943f93a37b54badd853928e220))
+* **view:** bound frames to active subscribers ([f60cfb3](https://github.com/blackopsrepl/lumen/commit/f60cfb371945b1f61581d2cb2cb4a9b73dd4fb0c))
+* **viewer:** coalesce asynchronous frame decoding ([b84458e](https://github.com/blackopsrepl/lumen/commit/b84458e32a97e5e1287e876a279acbbc50115f5a))
+* **view:** subscribe before desktop capture starts ([660174d](https://github.com/blackopsrepl/lumen/commit/660174d5aefe16228b618657dc76b60902e9813d))
+
 ## [0.11.3](https://github.com/blackopsrepl/lumen/compare/v0.11.2...v0.11.3) (2026-09-17)
 
 ### Bug Fixes
