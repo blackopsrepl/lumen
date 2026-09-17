@@ -34,18 +34,22 @@ ARG LUMEN_REVISION=unknown
 LABEL org.opencontainers.image.revision=$LUMEN_REVISION
 
 RUN export DEBIAN_FRONTEND=noninteractive \
- && apt-get update \
- && apt-get install -y --no-install-recommends software-properties-common sway wtype grim \
- && add-apt-repository -y ppa:avengemedia/danklinux \
- && for source in /etc/apt/sources.list.d/*danklinux*.sources; do sed -i 's/noble/questing/g' "$source"; done \
- && printf '%s\n' \
-      'deb http://archive.ubuntu.com/ubuntu/ questing main universe' \
-      'deb http://archive.ubuntu.com/ubuntu/ questing-updates main universe' \
-      'deb http://security.ubuntu.com/ubuntu questing-security main universe' \
-      > /etc/apt/sources.list.d/ubuntu-questing.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends quickshell \
- && command -v sway \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends curl gnupg sway wtype grim xwayland \
+  && install -d -m 0755 /etc/apt/keyrings \
+  && curl -4fsSL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x45FECBE587307AAA3F0A4BE9FC44813D2A7788B7' \
+       | gpg --batch --dearmor -o /etc/apt/keyrings/avengemedia-danklinux.gpg \
+  && test "$(gpg --show-keys --with-colons /etc/apt/keyrings/avengemedia-danklinux.gpg | awk -F: '$1 == "fpr" { print $10; exit }')" = '45FECBE587307AAA3F0A4BE9FC44813D2A7788B7' \
+  && printf '%s\n' \
+       'deb [signed-by=/etc/apt/keyrings/avengemedia-danklinux.gpg] https://ppa.launchpadcontent.net/avengemedia/danklinux/ubuntu questing main' \
+       'deb http://archive.ubuntu.com/ubuntu/ questing main universe' \
+       'deb http://archive.ubuntu.com/ubuntu/ questing-updates main universe' \
+       'deb http://security.ubuntu.com/ubuntu questing-security main universe' \
+       > /etc/apt/sources.list.d/ubuntu-questing.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends quickshell \
+  && command -v sway \
+  && command -v Xwayland \
  && command -v quickshell \
  && command -v wtype \
  && command -v grim \
