@@ -37,6 +37,12 @@ Playwright:
 
     lumen ensure <your-session-name> --quickshell /absolute/path/to/shell.qml --owner <your-agent>
 
+The path is read by the Lumen service, not by the client. In a containerized
+deployment it must be under `LUMEN_QUICKSHELL_ROOT`, which Compose mounts
+read-only at the same absolute path inside the container. Set that variable in
+`.env` to the common host directory containing the QML file and its imports or
+assets before calling `ensure`.
+
 The viewer provides the live Wayland surface and native mouse, wheel, and text
 input. Quickshell sessions do not expose browser navigation, tabs, or CDP.
 

@@ -61,6 +61,13 @@ services:
       TZ: ${TZ:-UTC}
     volumes:
       - lumen-data:/data
+      # Quickshell paths are supplied as absolute host paths. Keep the host
+      # root and container target identical so QML imports and assets resolve
+      # without rewriting the caller's path.
+      - type: bind
+        source: ${LUMEN_QUICKSHELL_ROOT:-/srv/lab/tools}
+        target: ${LUMEN_QUICKSHELL_ROOT:-/srv/lab/tools}
+        read_only: true
 
 volumes:
   lumen-data:
