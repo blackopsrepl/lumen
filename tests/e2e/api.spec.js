@@ -50,10 +50,17 @@ test("creates and screenshots a Quickshell session", async ({ page, request }) =
     expect(info.path).toBe(shell);
     expect(info.cdp_endpoint).toBe("");
 
-    const before = crypto
-      .createHash("sha256")
-      .update(await (await request.post(`/v1/sessions/${name}/screenshot`)).body())
-      .digest("hex");
+    const screenshotHash = async () => {
+      const screenshot = await request.post(`/v1/sessions/${name}/screenshot`);
+      expect(screenshot.ok()).toBeTruthy();
+      expect(screenshot.headers()["content-type"]).toContain("image/png");
+      const body = await screenshot.body();
+      expect(body.subarray(0, 8)).toEqual(
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      );
+      return crypto.createHash("sha256").update(body).digest("hex");
+    };
+    const before = await screenshotHash();
     await page.goto("/");
     await page.evaluate(
       ({ name, text }) =>
@@ -79,14 +86,10 @@ test("creates and screenshots a Quickshell session", async ({ page, request }) =
         }),
       { name, text: "native input" },
     );
-    const screenshot = await request.post(`/v1/sessions/${name}/screenshot`);
-    expect(screenshot.ok()).toBeTruthy();
-    expect(screenshot.headers()["content-type"]).toContain("image/png");
-    const screenshotBody = await screenshot.body();
-    expect(screenshotBody.subarray(0, 8)).toEqual(
-      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    );
-    expect(crypto.createHash("sha256").update(screenshotBody).digest("hex")).not.toBe(before);
+    // wtype is asynchronous relative to the control socket; wait for the compositor frame.
+    await expect
+      .poll(screenshotHash, { timeout: 5_000, intervals: [100, 250, 500] })
+      .not.toBe(before);
     const tabs = await request.get(`/v1/sessions/${name}/tabs`);
     expect(tabs.status(), await tabs.text()).toBe(409);
   } finally {
