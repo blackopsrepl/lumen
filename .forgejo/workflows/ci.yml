@@ -41,7 +41,8 @@ jobs:
             'deb http://security.ubuntu.com/ubuntu questing-security main universe' \
             > /etc/apt/sources.list.d/ubuntu-questing.list
           apt-get update
-          apt-get install -y --no-install-recommends quickshell
+          apt-get install -y --no-install-recommends \
+            quickshell qml6-module-qtquick-controls qml6-module-qtquick-layouts
           command -v sway
           command -v Xwayland
           command -v quickshell

@@ -46,13 +46,14 @@ RUN export DEBIAN_FRONTEND=noninteractive \
        'deb http://archive.ubuntu.com/ubuntu/ questing-updates main universe' \
        'deb http://security.ubuntu.com/ubuntu questing-security main universe' \
        > /etc/apt/sources.list.d/ubuntu-questing.list \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends quickshell \
-  && command -v sway \
-  && command -v Xwayland \
- && command -v quickshell \
- && command -v wtype \
- && command -v grim \
+   && apt-get update \
+   && apt-get install -y --no-install-recommends \
+        quickshell qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+   && command -v sway \
+   && command -v Xwayland \
+   && command -v quickshell \
+   && command -v wtype \
+   && command -v grim \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf "$(ls /ms-playwright/chromium-*/chrome-linux*/chrome | head -1)" /usr/local/bin/chromium \
  && chromium --version \
