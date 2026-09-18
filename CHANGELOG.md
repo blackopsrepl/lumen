@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.11.6](https://github.com/blackopsrepl/lumen/compare/v0.11.5...v0.11.6) (2026-09-18)
+
+### Features
+
+* **client:** save feedback screenshots for the agent ([b20a7e2](https://github.com/blackopsrepl/lumen/commit/b20a7e2695639821e250fe5b8479f21d185bd465))
+* **feedback:** attach a screenshot instead of region coordinates ([0fa5027](https://github.com/blackopsrepl/lumen/commit/0fa50276d8a1d66fddb954025b02e9d210328536))
+* **viewer:** capture the annotated region as a PNG ([94cb877](https://github.com/blackopsrepl/lumen/commit/94cb8776c462b19abd44b7f54b03246c52d9f045))
+
 ## [0.11.5](https://github.com/blackopsrepl/lumen/compare/v0.11.4...v0.11.5) (2026-09-17)
 
 ### Bug Fixes
