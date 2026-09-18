@@ -22,6 +22,7 @@ jpeg-encoder = "0.7.1"
 libc = "0.2"
 lumen-ratatui = { path = "crates/lumen-ratatui", default-features = false }
 png = "0.18.1"
+portable-pty = "0.9"
 reqwest = { version = "0.13.5", features = ["json", "blocking"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 rust-embed = "8.12.0"
@@ -33,5 +34,6 @@ toml = "1.1.6"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
+vt100 = "0.16"
 wayland-client = "0.31.15"
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }

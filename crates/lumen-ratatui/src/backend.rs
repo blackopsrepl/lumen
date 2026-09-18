@@ -7,7 +7,7 @@
 
 use crate::protocol::{self, modifier, AppMessage, CellOp, Color, Cursor};
 use ratatui::backend::{Backend, ClearType, WindowSize};
-use ratatui::buffer::Cell;
+use ratatui::buffer::{Cell, CellDiffOption};
 use ratatui::layout::{Position, Size};
 use ratatui::style::{Color as RatColor, Modifier};
 use std::io::{self, Write};
@@ -57,12 +57,14 @@ impl<W: Write> LumenBackend<W> {
 }
 
 impl<W: Write> Backend for LumenBackend<W> {
+    type Error = io::Error;
+
     fn draw<'a, I>(&mut self, content: I) -> io::Result<()>
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
         for (x, y, cell) in content {
-            if cell.skip {
+            if cell.diff_option == CellDiffOption::Skip {
                 continue;
             }
             self.pending.push(CellOp {

@@ -15,10 +15,11 @@
 
 use lumen_ratatui::{Event, Session};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::prelude::Stylize;
+use ratatui::style::Stylize;
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Borders};
 use ratatui::Frame;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
