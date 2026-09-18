@@ -109,8 +109,10 @@ do not have browser tabs, navigation, page scale, or CDP endpoints. The
 `LUMEN_SWAY`, `LUMEN_QUICKSHELL`, and `LUMEN_WTYPE` environment variables, select
 the runtime binaries.
 
-The runtime image includes Chromium, Sway, Quickshell, wtype, grim, and the Qt
-dependencies required by desktop sessions. The Quickshell package comes from
+The runtime image includes Chromium, Sway, Quickshell, wtype, grim, tmux, and
+the Qt dependencies required by desktop and terminal sessions. tmux is included
+because terminal sessions run real TUI programs, and common session managers
+such as trex require it. The Quickshell package comes from
 the Avenge Media Dank Linux PPA and is installed from the Ubuntu 25.10 package
 repositories because Quickshell requires Qt 6.6 or newer. Host deployments may
 still override the binary paths through configuration or environment variables.
