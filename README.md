@@ -117,39 +117,67 @@ the Avenge Media Dank Linux PPA and is installed from the Ubuntu 25.10 package
 repositories because Quickshell requires Qt 6.6 or newer. Host deployments may
 still override the binary paths through configuration or environment variables.
 
-## Run a ratatui terminal
+## Run a terminal
 
-A ratatui session runs an app that links the `lumen-ratatui` crate. The path must
-be an absolute path to the app binary, and the binary must be executable:
+There are two terminal paths, and which one applies decides what you can run.
+
+**Terminal sessions run any program, unmodified.** The path is an absolute
+executable, optionally with arguments, and Lumen runs it in a real pseudoterminal:
+
+```bash
+lumen ensure htop --terminal /usr/bin/htop --owner ops-agent
+lumen ensure trex --terminal /usr/local/bin/trex-cli --owner tui-agent
+```
+
+Lumen parses the program's output with a terminal emulator into the same
+structured grid every other session kind produces, so an unmodified ratatui app,
+`htop`, or a shell all become sessions the agent can read as text and the human
+can watch and annotate. Input is re-encoded as terminal bytes: keys become their
+xterm encodings, and mouse events become SGR reports only when the program has
+enabled mouse tracking.
+
+**Ratatui sessions run a Lumen-native app.** The path points at a binary that
+links the `lumen-ratatui` crate:
 
 ```bash
 cargo build --release -p lumen-ratatui --example trex
 lumen ensure trex --ratatui "$PWD/target/release/examples/trex" --owner tui-agent
-lumen ensure trex --ratatui /path/to/target/release/examples/trex --owner tui-agent
 ```
 
-There is no PTY and no terminal emulator. The app builds a normal ratatui
-`Terminal` on a `LumenBackend`, and ratatui's own buffer diff — only the cells
-that changed — is the transport. Lumen mirrors those cells into an authoritative
-grid and streams it to the viewer, so the viewer paints cells, not pixels.
+The app builds a normal ratatui `Terminal` on a `LumenBackend`, and ratatui's
+own buffer diff — only the cells that changed — is the transport. There is no
+PTY and no emulator on this path, which makes it the cheaper option when you
+control the app's source.
 
-Because the grid is structured, an agent reads a session's screen as text with no
-screenshot and no vision:
+In both cases the grid is structured, so an agent reads a session's screen as
+text with no screenshot and no vision:
 
 ```bash
 curl http://127.0.0.1:8899/v1/sessions/trex/screen
 ```
 
-The app owns rendering and the service owns the grid. A viewer that connects
-late, or falls behind, receives the next full snapshot and is consistent again.
-Initial geometry comes from `tui_cols` and `tui_rows` (or `LUMEN_TUI_COLS` and
-`LUMEN_TUI_ROWS`); the viewer scales the grid to fit. Terminal sessions support
-keys, text, mouse, and wheel in cell coordinates, and `POST
-/v1/sessions/{name}/screenshot` is refused in favour of `/screen`.
+A viewer that connects late, or falls behind, receives the next full snapshot
+and is consistent again. Initial geometry comes from `tui_cols` and `tui_rows`
+(or `LUMEN_TUI_COLS` and `LUMEN_TUI_ROWS`); the viewer scales the grid to fit.
+Terminal sessions support keys, text, mouse, and wheel in cell coordinates, and
+`POST /v1/sessions/{name}/screenshot` is refused in favour of `/screen`.
 
-The viewer can also create a ratatui session with the session-type selector. To
-run the demo under Lumen, point it at the built `trex` example; the app exits
-immediately when it is not launched by the service.
+The viewer can also create either kind with the session-type selector.
+
+<p align="center">
+  <img src="docs/images/terminal-trex-session.png" alt="The real trex session manager running unmodified as a Lumen terminal session, rendered as a cell grid in the viewer" width="920">
+</p>
+
+The human feedback loop works on terminal sessions too — and because the screen
+is a grid, the annotated region is captured from the cells, so the note's
+screenshot is exact:
+
+<p align="center">
+  <img src="docs/images/terminal-trex-annotate.png" alt="Drawing a rectangle over the trex session row and typing a note for the agent" width="920">
+</p>
+<p align="center">
+  <img src="docs/images/terminal-trex-feedback.png" alt="The note in the feedback panel with the captured region, delivered to the agent" width="920">
+</p>
 
 <p align="center">
   <img src="docs/images/viewer-ratatui.png" alt="The Lumen viewer running the trex ratatui example: the T-Rex dodges cacti on a cell grid, with the session and feedback panels on the left" width="920">
@@ -286,11 +314,12 @@ Quickshell configuration is executable QML supplied by the caller. Lumen
 validates that the path is absolute and exists, but does not sandbox the QML or
 its child processes; only pass paths trusted by the service operator.
 
-A ratatui session path names an executable program, so it is a stronger version
-of the same boundary: Lumen checks that the path is absolute, exists, and is
-executable, which keeps a typo from starting something unintended, but the app
-runs with the service's privileges. The host navigation policy covers HTTP
-browsing and does not constrain what an app does on the network.
+A terminal session path names an executable program, so it is a stronger version
+of the same boundary: Lumen checks that the program is absolute, exists, and is
+executable, which keeps a typo from starting something unintended, but the
+program runs with the service's privileges. The host navigation policy covers
+HTTP browsing and does not constrain what a terminal program does on the
+network.
 
 ## Layout
 
@@ -298,7 +327,7 @@ browsing and does not constrain what an app does on the network.
 Containerfile          multi-stage image: Rust builder -> Playwright runtime
 compose.yaml           one service (host network, /data volume)
 config/lumen.toml      the only config file
-src/                   supervisor, cdp, desktop, ratatui, capabilities, view, feedback, client, http
+src/                   supervisor, cdp, desktop, ratatui, pty, capabilities, view, feedback, client, http
 crates/lumen-ratatui/  app-side backend, session, and wire protocol (built by terminal apps)
 ui/                    no-build viewer (ES modules + CSS), embedded in the binary
 tests/e2e/             Playwright suite (viewer, API, lifecycle, ratatui)
