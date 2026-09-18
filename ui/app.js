@@ -105,6 +105,9 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   frameMeta();
+  // View offset, exposed like the frame size so the pan gesture is observable.
+  canvas.dataset.offsetX = String(Math.round(state.ox));
+  canvas.dataset.offsetY = String(Math.round(state.oy));
   if (!state.frame) return;
   const width = state.frameW * state.scale;
   const height = state.frameH * state.scale;
@@ -814,9 +817,15 @@ canvas.addEventListener("pointerdown", (event) => {
       y,
       button: state.pointerButton,
     });
-  } else if (state.scale > 1) {
+  } else if (event.button === 0) {
+    // Not driving the page: drag the frame itself, at any zoom, the way a PDF
+    // viewer pans. Taking the view out of fit mode keeps an incoming frame from
+    // recentering it. Annotation runs on the overlay above this canvas, so its
+    // selection drag never reaches here.
     state.panning = true;
+    state.fit = false;
     state.last = { x: event.clientX, y: event.clientY };
+    document.body.classList.add("panning");
   }
 });
 
@@ -840,6 +849,7 @@ canvas.addEventListener("pointerup", (event) => {
   }
   state.pointerButton = null;
   state.panning = false;
+  document.body.classList.remove("panning");
 });
 
 canvas.addEventListener("pointercancel", (event) => {
@@ -850,6 +860,7 @@ canvas.addEventListener("pointercancel", (event) => {
   }
   state.pointerButton = null;
   state.panning = false;
+  document.body.classList.remove("panning");
 });
 
 canvas.addEventListener(

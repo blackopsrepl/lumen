@@ -599,6 +599,15 @@ body.controlling #screen {
   cursor: crosshair;
 }
 
+/* View-only input: dragging pans the frame, so signal it like a document. */
+body:not(.controlling) #screen {
+  cursor: grab;
+}
+
+body.panning #screen {
+  cursor: grabbing;
+}
+
 /* Monitor readout: real page dimensions and zoom, bottom-right of the frame. */
 .frame-meta {
   position: absolute;

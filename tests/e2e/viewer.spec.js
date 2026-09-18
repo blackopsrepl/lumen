@@ -40,6 +40,33 @@ test("streams a session, navigates it, and hands control back", async ({ page, r
   }
 });
 
+test("pans the streamed frame while control is not held", async ({ page, request }) => {
+  const name = sessionName("pan");
+  const offset = () =>
+    page.locator("#screen").evaluate((canvas) => ({
+      x: Number(canvas.dataset.offsetX),
+      y: Number(canvas.dataset.offsetY),
+    }));
+  try {
+    await createFromViewer(page, name);
+    const before = await offset();
+
+    const stage = await page.locator("#stage").boundingBox();
+    const center = { x: stage.x + stage.width / 2, y: stage.y + stage.height / 2 };
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.down();
+    await page.mouse.move(center.x + 90, center.y + 60, { steps: 8 });
+    await page.mouse.up();
+
+    const after = await offset();
+    expect(after.x).toBe(before.x + 90);
+    expect(after.y).toBe(before.y + 60);
+    await expect(page.locator("body")).not.toHaveClass(/panning/);
+  } finally {
+    await deleteSession(request, name);
+  }
+});
+
 test("streams a Quickshell desktop session", async ({ page, request }) => {
   const name = sessionName("quickshell");
   try {
