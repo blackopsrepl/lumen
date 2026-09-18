@@ -124,7 +124,7 @@ The service also exposes the same capabilities over plain HTTP:
 | screenshot | `POST /v1/sessions/{name}/screenshot?full=true` |
 | raw CDP | `POST /v1/sessions/{name}/cdp` |
 | stream + input | `GET /v1/sessions/{name}/stream` (WebSocket) |
-| feedback | `GET/POST /v1/sessions/{name}/feedback`, `POST …/ack-all` |
+| feedback | `GET/POST /v1/sessions/{name}/feedback`, `GET …/feedback/{id}/screenshot`, `POST …/ack-all` |
 | audit trail | `GET /v1/audit` |
 
 ## Watch and steer as a human
@@ -141,8 +141,12 @@ actually showing.
   <img src="docs/images/viewer-control.png" alt="While the human has control, an amber banner marks it and the button offers Release control" width="920">
 </p>
 
-To leave feedback, click **Comment** and drag a rectangle over the area — the
-agent sees the note and the exact region on its next `lumen feedback` call.
+To leave feedback, click **Comment** and drag a rectangle over the area. Lumen
+captures those pixels as a PNG the moment you send the note, so it still shows
+what you meant after the page navigates or reflows. The agent reads the note on
+its next `lumen feedback` call, which saves the screenshot under
+`$LUMEN_FEEDBACK_DIR` (default `<temp>/lumen-feedback`) and can also fetch it
+from `…/feedback/{id}/screenshot`.
 
 <p align="center">
   <img src="docs/images/viewer-annotate.png" alt="Annotating a region: the dragged rectangle frames the flaky-tests card and the composer holds the note for the agent" width="920">

@@ -60,11 +60,17 @@ Useful extras: `go-back`, `reload`, `type`, `select`, `upload`, `tab-list`,
 The human watches your browser live at <http://localhost:8899> — they see the
 same tab you act on, in real time. Do not narrate for them or paste
 screenshots at them; take a screenshot only when *you* need to verify
-something. They can take control or annotate a region with a comment.
-Feedback is non-blocking: check your inbox between steps and adjust.
+something. They can take control or annotate a region with a comment; Lumen
+captures that region as a PNG when they send it, so a note keeps showing what
+they meant even after the page changes. Feedback is non-blocking: check your
+inbox between steps and adjust.
 
     lumen feedback <your-agent-name>            # print pending notes
     lumen feedback <your-agent-name> --consume  # print and acknowledge them
+
+When a note has a screenshot, the command saves it to an absolute path under
+`$LUMEN_FEEDBACK_DIR` (default the system temp dir) and prints that path plus
+the serving endpoint. Read the image, then act on the note.
 
 (The `lumen` client runs inside the service container; use
 `$PW/ctr.sh exec lumen lumen feedback <name>` if `lumen` is not on your PATH.)
