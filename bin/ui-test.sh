@@ -21,9 +21,16 @@ sed \
   "${PROJECT_DIR}/tests/e2e/lumen.toml" > "${config}"
 
 chromium="$(node -e 'console.log(require("playwright").chromium.executablePath())')"
+# The ratatui E2E spec runs a real app binary; build it so the suite can point
+# the service at one instead of mocking the protocol.
+cargo build --quiet --locked -p lumen-ratatui --example trex
+trex="$(cargo metadata --no-deps --format-version 1 \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);console.log(m.target_directory+"/debug/examples/trex")})')"
+
 log "viewer E2E on a disposable service, port ${port}"
 LUMEN_PORT="${port}" \
   LUMEN_TEST_CONFIG="${config}" \
   LUMEN_PROFILES_DIR="${run_dir}/agents/run" \
   LUMEN_CHROME="${chromium}" \
+  LUMEN_TREX="${trex}" \
   npm run test:e2e --silent
