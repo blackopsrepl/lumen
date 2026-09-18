@@ -13,18 +13,26 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential pkg-config \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
+# The manifest and every workspace member manifest, so the stub build can
+# resolve the workspace. The lumen-ratatui crate is a path dependency of the
+# service, so its manifest and declared targets (the trex example) must exist
+# even for the stub compile; only its lib source is stubbed.
 COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 RUN mkdir -p src ui \
  && echo '' > src/lib.rs \
  && echo 'fn main() {}' > src/main.rs \
  && echo '' > ui/index.html \
+ && echo '' > crates/lumen-ratatui/src/lib.rs \
  && cargo build --release --locked \
  && rm -rf src ui
 COPY src ./src
 COPY ui ./ui
+# Re-copy the real crate sources over the stub from the cached layer.
+COPY crates ./crates
 # COPY preserves source mtimes, which can predate the stub build; touch the tree
 # so cargo rebuilds against the real sources instead of the cached stub.
-RUN find src ui -type f -exec touch {} + && cargo build --release --locked
+RUN find src ui crates -type f -exec touch {} + && cargo build --release --locked
 
 FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_IMAGE_VERSION}-noble
 
