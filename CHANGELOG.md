@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.12.1](https://github.com/blackopsrepl/lumen/compare/v0.12.0...v0.12.1) (2026-09-18)
+
+### Features
+
+* **ratatui:** add a doctor example that diagnoses Lumen from inside Lumen ([f10fa34](https://github.com/blackopsrepl/lumen/commit/f10fa3447a67f1eda634dddf1181939459d35323))
+
+### Bug Fixes
+
+* **image:** copy the workspace member sources through the stub layer ([cb2514e](https://github.com/blackopsrepl/lumen/commit/cb2514efe57985f83c2d2674b3f1f005692c462e))
+
 ## [0.12.0](https://github.com/blackopsrepl/lumen/compare/v0.11.7...v0.12.0) (2026-09-18)
 
 ### Features
