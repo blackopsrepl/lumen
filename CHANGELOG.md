@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.12.0](https://github.com/blackopsrepl/lumen/compare/v0.11.7...v0.12.0) (2026-09-18)
+
+### Features
+
+* **client:** ensure a ratatui session from the CLI ([d42cf4e](https://github.com/blackopsrepl/lumen/commit/d42cf4eb0cf66fef8303ba1a86c85bff2083d914))
+* **config:** let the ratatui grid be overridden by environment ([26f8890](https://github.com/blackopsrepl/lumen/commit/26f88901eaa116fff843a3db0929fbc998bc2107))
+* **ratatui:** add a Lumen backend and wire protocol for ratatui apps ([6b630a0](https://github.com/blackopsrepl/lumen/commit/6b630a03ae79630fc36201438ffd4c9f76355049))
+* **ratatui:** add a trex example that runs under a Lumen session ([41b4275](https://github.com/blackopsrepl/lumen/commit/41b4275229b62a967ab7fe50dd252805fff6f1c3))
+* **session:** supervise ratatui apps as a third session kind ([648c464](https://github.com/blackopsrepl/lumen/commit/648c464a2a09731867d0b414bd42c19f34a3f624))
+* **viewer:** render and drive ratatui sessions as a cell grid ([4657619](https://github.com/blackopsrepl/lumen/commit/465761962c2eb284ef9acf34f29a0cc98d00f4b8))
+
 ## [0.11.7](https://github.com/blackopsrepl/lumen/compare/v0.11.6...v0.11.7) (2026-09-18)
 
 ### Features
