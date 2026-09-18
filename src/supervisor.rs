@@ -17,8 +17,10 @@ use tokio::sync::Mutex;
 use crate::cdp::CdpSession;
 use crate::config::Config;
 use crate::desktop::DesktopSession;
+use crate::pty::PtySession;
 use crate::ratatui::RatatuiSession;
 use crate::view::ViewHub;
+use lumen_ratatui::protocol::{KeyCode, MouseButton, MouseKind};
 
 /// Subdirectory of `data_dir` that holds ephemeral session profiles.
 ///
@@ -73,6 +75,9 @@ pub enum SessionKind {
     Browser,
     Quickshell,
     Ratatui,
+    /// A program run in a real pseudoterminal and parsed into a grid. This is
+    /// the generic path: the program needs no Lumen support, unlike `Ratatui`.
+    Terminal,
 }
 
 /// The live backend behind a session.
@@ -81,6 +86,7 @@ pub enum SessionBackend {
     Browser(Arc<CdpSession>),
     Quickshell(Arc<DesktopSession>),
     Ratatui(Arc<RatatuiSession>),
+    Terminal(Arc<PtySession>),
 }
 
 impl SessionBackend {
@@ -89,27 +95,82 @@ impl SessionBackend {
             Self::Browser(_) => SessionKind::Browser,
             Self::Quickshell(_) => SessionKind::Quickshell,
             Self::Ratatui(_) => SessionKind::Ratatui,
+            Self::Terminal(_) => SessionKind::Terminal,
         }
     }
 
     pub fn browser(&self) -> Option<Arc<CdpSession>> {
         match self {
             Self::Browser(session) => Some(session.clone()),
-            Self::Quickshell(_) | Self::Ratatui(_) => None,
+            Self::Quickshell(_) | Self::Ratatui(_) | Self::Terminal(_) => None,
         }
     }
 
     pub fn desktop(&self) -> Option<Arc<DesktopSession>> {
         match self {
-            Self::Browser(_) | Self::Ratatui(_) => None,
+            Self::Browser(_) | Self::Ratatui(_) | Self::Terminal(_) => None,
             Self::Quickshell(session) => Some(session.clone()),
         }
     }
 
     pub fn ratatui(&self) -> Option<Arc<RatatuiSession>> {
         match self {
-            Self::Browser(_) | Self::Quickshell(_) => None,
+            Self::Browser(_) | Self::Quickshell(_) | Self::Terminal(_) => None,
             Self::Ratatui(session) => Some(session.clone()),
+        }
+    }
+
+    /// A terminal-backed session: either a Lumen-native ratatui app or a PTY.
+    pub fn terminal(&self) -> Option<TerminalBackend> {
+        match self {
+            Self::Ratatui(session) => Some(TerminalBackend::Ratatui(session.clone())),
+            Self::Terminal(session) => Some(TerminalBackend::Pty(session.clone())),
+            Self::Browser(_) | Self::Quickshell(_) => None,
+        }
+    }
+}
+
+/// A grid-producing backend, so the HTTP layer can treat the two terminal
+/// kinds uniformly without caring which one is underneath.
+#[derive(Clone)]
+pub enum TerminalBackend {
+    Ratatui(Arc<RatatuiSession>),
+    Pty(Arc<PtySession>),
+}
+
+impl TerminalBackend {
+    pub fn screen_text(&self) -> String {
+        match self {
+            Self::Ratatui(session) => session.screen_text(),
+            Self::Pty(session) => session.screen_text(),
+        }
+    }
+
+    pub fn text(&self, text: &str) -> Result<()> {
+        match self {
+            Self::Ratatui(session) => session.text(text),
+            Self::Pty(session) => session.text(text),
+        }
+    }
+
+    pub fn key(&self, code: KeyCode, mods: u8) -> Result<()> {
+        match self {
+            Self::Ratatui(session) => session.key(code, mods),
+            Self::Pty(session) => session.key(code, mods),
+        }
+    }
+
+    pub fn mouse(
+        &self,
+        kind: MouseKind,
+        col: u16,
+        row: u16,
+        button: MouseButton,
+        mods: u8,
+    ) -> Result<()> {
+        match self {
+            Self::Ratatui(session) => session.mouse(kind, col, row, button, mods),
+            Self::Pty(session) => session.mouse(kind, col, row, button, mods),
         }
     }
 }
@@ -196,6 +257,18 @@ impl fmt::Display for InvalidRatatuiPath {
 
 impl std::error::Error for InvalidRatatuiPath {}
 
+/// A terminal command that is missing, not absolute, or not executable.
+#[derive(Debug)]
+pub struct InvalidTerminalCommand(pub String);
+
+impl fmt::Display for InvalidTerminalCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for InvalidTerminalCommand {}
+
 impl AgentBrowser {
     pub async fn info(&self) -> AgentInfo {
         let meta = self.meta.lock().await;
@@ -280,6 +353,7 @@ impl Supervisor {
             SessionKind::Browser => None,
             SessionKind::Quickshell => Some(validate_quickshell_path(path)?),
             SessionKind::Ratatui => Some(validate_ratatui_path(path)?),
+            SessionKind::Terminal => Some(validate_terminal_command(path)?),
         };
 
         self.reap_dead().await;
@@ -454,6 +528,23 @@ impl Supervisor {
                 .await?;
                 (SessionBackend::Ratatui(session), String::new(), None)
             }
+            SessionKind::Terminal => {
+                let command = path
+                    .as_deref()
+                    .expect("validated terminal command")
+                    .to_string_lossy()
+                    .to_string();
+                let (program, args) = crate::pty::parse_command(&command)?;
+                let session = PtySession::launch(
+                    &program,
+                    &args,
+                    &profile,
+                    self.config.tui_cols,
+                    self.config.tui_rows,
+                )
+                .await?;
+                (SessionBackend::Terminal(session), String::new(), None)
+            }
         };
         let view = match &backend {
             SessionBackend::Browser(session) => {
@@ -463,6 +554,7 @@ impl Supervisor {
             }
             SessionBackend::Quickshell(session) => Arc::new(ViewHub::new_desktop(session.clone())),
             SessionBackend::Ratatui(session) => Arc::new(ViewHub::new_ratatui(session.clone())),
+            SessionBackend::Terminal(session) => Arc::new(ViewHub::new_pty(session.clone())),
         };
 
         tracing::info!(agent = name, ?kind, profile = %profile.display(), "agent session ready");
@@ -534,6 +626,7 @@ impl AgentBrowser {
             }
             SessionBackend::Quickshell(session) => session.is_alive().await,
             SessionBackend::Ratatui(session) => session.is_alive().await,
+            SessionBackend::Terminal(session) => session.is_alive().await,
         }
     }
 
@@ -548,6 +641,7 @@ impl AgentBrowser {
             }
             SessionBackend::Quickshell(session) => session.shutdown().await,
             SessionBackend::Ratatui(session) => session.shutdown().await,
+            SessionBackend::Terminal(session) => session.shutdown().await,
         }
         let _ = purge_profile(self.profile.clone()).await;
     }
@@ -1040,6 +1134,48 @@ fn is_executable(metadata: &std::fs::Metadata) -> bool {
 #[cfg(not(unix))]
 fn is_executable(_metadata: &std::fs::Metadata) -> bool {
     true
+}
+
+/// Validate a terminal command and return it canonicalized.
+///
+/// A terminal session runs an arbitrary program, so this is the strongest of
+/// the path checks: the program must be absolute and executable. Arguments are
+/// allowed after the program, which are passed through verbatim. Like the
+/// Quickshell and ratatui checks, this rejects a typo or a relative path; it is
+/// not a sandbox, and the program runs with the service's privileges.
+fn validate_terminal_command(path: Option<PathBuf>) -> Result<PathBuf> {
+    let path = path.ok_or_else(|| {
+        InvalidTerminalCommand("Terminal sessions require a command to run".into())
+    })?;
+    let text = path.to_string_lossy().to_string();
+    let (program, _args) = crate::pty::parse_command(&text)
+        .map_err(|err| InvalidTerminalCommand(format!("invalid command {text:?}: {err}")))?;
+    if !program.starts_with('/') {
+        return Err(InvalidTerminalCommand(format!(
+            "terminal program {program:?} must be an absolute path"
+        ))
+        .into());
+    }
+    let program_path = PathBuf::from(&program);
+    let metadata = std::fs::metadata(&program_path).map_err(|err| {
+        InvalidTerminalCommand(format!("reading terminal program {program}: {err}"))
+    })?;
+    if !metadata.is_file() || !is_executable(&metadata) {
+        return Err(InvalidTerminalCommand(format!(
+            "terminal program {program} is not an executable file"
+        ))
+        .into());
+    }
+    // The command is preserved verbatim (program plus arguments); only the
+    // program half is resolved, so argument text is never rewritten.
+    let canonical = std::fs::canonicalize(&program_path).map_err(|err| {
+        InvalidTerminalCommand(format!("resolving terminal program {program}: {err}"))
+    })?;
+    if let Some(rest) = text.strip_prefix(&program) {
+        Ok(PathBuf::from(format!("{}{}", canonical.display(), rest)))
+    } else {
+        Ok(canonical)
+    }
 }
 
 #[cfg(test)]

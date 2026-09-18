@@ -1,5 +1,6 @@
 use crate::cdp::CdpSession;
 use crate::desktop::DesktopSession;
+use crate::pty::PtySession;
 use crate::ratatui::RatatuiSession;
 use base64::Engine as _;
 use bytes::Bytes;
@@ -97,6 +98,9 @@ impl Drop for ViewSubscription {
                 ViewSource::Ratatui(session) => {
                     let _ = session.set_streaming(false);
                 }
+                ViewSource::Pty(session) => {
+                    let _ = session.set_streaming(false);
+                }
                 ViewSource::Browser(_) => {}
                 #[cfg(test)]
                 ViewSource::Test { .. } => {}
@@ -110,6 +114,7 @@ enum ViewSource {
     Browser(Arc<CdpSession>),
     Desktop(Arc<DesktopSession>),
     Ratatui(Arc<RatatuiSession>),
+    Pty(Arc<PtySession>),
     #[cfg(test)]
     Test {
         starts: Arc<AtomicUsize>,
@@ -154,6 +159,21 @@ impl ViewHub {
         let (closed, _) = watch::channel(false);
         Self {
             source: ViewSource::Ratatui(session),
+            frames,
+            closed,
+            started: Arc::new(AtomicBool::new(false)),
+            subscribers: AtomicUsize::new(0),
+            lifecycle: Mutex::new(()),
+            pump: Mutex::new(None),
+            control: Mutex::new(Control::Agent),
+        }
+    }
+
+    pub fn new_pty(session: Arc<PtySession>) -> Self {
+        let (frames, _) = watch::channel(None);
+        let (closed, _) = watch::channel(false);
+        Self {
+            source: ViewSource::Pty(session),
             frames,
             closed,
             started: Arc::new(AtomicBool::new(false)),
@@ -226,6 +246,7 @@ impl ViewHub {
         let desktop_stream = match &self.source {
             ViewSource::Desktop(session) => Some(session.frames()),
             ViewSource::Ratatui(session) => Some(session.frames()),
+            ViewSource::Pty(session) => Some(session.frames()),
             ViewSource::Browser(_) => None,
             #[cfg(test)]
             ViewSource::Test { source_frames, .. } => Some(source_frames.subscribe()),
@@ -254,6 +275,13 @@ impl ViewHub {
                 (None, None)
             }
             ViewSource::Ratatui(session) => {
+                if let Err(err) = session.set_streaming(true) {
+                    tracing::warn!("starting terminal capture failed: {err}");
+                    return;
+                }
+                (None, None)
+            }
+            ViewSource::Pty(session) => {
                 if let Err(err) = session.set_streaming(true) {
                     tracing::warn!("starting terminal capture failed: {err}");
                     return;
@@ -321,6 +349,9 @@ impl ViewHub {
                 let _ = session.set_streaming(false);
             }
             ViewSource::Ratatui(session) => {
+                let _ = session.set_streaming(false);
+            }
+            ViewSource::Pty(session) => {
                 let _ = session.set_streaming(false);
             }
             #[cfg(test)]

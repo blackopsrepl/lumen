@@ -68,6 +68,10 @@ async function api(path, options) {
 
 const sessionPath = (name) => `/v1/sessions/${encodeURIComponent(name)}`;
 
+// Session kinds whose frames are cell grids rather than encoded images.
+const CELL_KINDS = new Set(["ratatui", "terminal"]);
+const isCellSession = () => CELL_KINDS.has(state.sessionKind);
+
 function setState(next) {
   document.body.dataset.state = next;
 }
@@ -83,7 +87,7 @@ function setControlsEnabled(enabled) {
   for (const id of ["zoom-label", "fit", "fullscreen", "comment"]) {
     el(id).disabled = !enabled;
   }
-  el("url").disabled = !enabled || state.sessionKind === "quickshell";
+  el("url").disabled = !enabled || state.sessionKind !== "browser";
   el("control").disabled = !enabled;
 }
 
@@ -823,7 +827,7 @@ function onServerMessage(event) {
 }
 
 function onFrame(buffer) {
-  if (state.sessionKind === "ratatui") {
+  if (isCellSession()) {
     applyTerminalFrame(buffer);
     return;
   }
@@ -883,11 +887,16 @@ async function decodeFrame(decoder, buffer) {
 
 async function pollInfo() {
   if (!state.session) return;
-  if (state.sessionKind === "quickshell" || state.sessionKind === "ratatui") {
+  if (isCellSession() || state.sessionKind === "quickshell") {
     el("url").value = "";
-    el("url").title = "Terminal sessions do not have browser navigation";
-    el("page-title").textContent = state.sessionKind === "ratatui" ? "Ratatui terminal" : "Quickshell desktop";
-    document.title = `${state.sessionKind === "ratatui" ? "Ratatui" : "Quickshell"} · ${state.session} · Lumen`;
+    el("url").title = "This session kind does not have browser navigation";
+    const label = state.sessionKind === "quickshell"
+      ? "Quickshell desktop"
+      : state.sessionKind === "ratatui"
+        ? "Ratatui terminal"
+        : "Terminal";
+    el("page-title").textContent = label;
+    document.title = `${label} · ${state.session} · Lumen`;
     return;
   }
   if (state.pollInFlight) {
@@ -1001,7 +1010,7 @@ document.addEventListener("keydown", (event) => {
   if (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA") return;
   if (
     state.control === "human" &&
-    state.sessionKind === "ratatui" &&
+    isCellSession() &&
     !event.ctrlKey &&
     !event.metaKey &&
     !event.altKey

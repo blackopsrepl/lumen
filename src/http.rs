@@ -2,10 +2,10 @@ use crate::cdp::{CdpSession, NavigationBlocked, OnlyManagedTab, TabInfo};
 use crate::config::{Config, Viewport};
 use crate::desktop::MouseAction;
 use crate::feedback::{AuditEntry, Feedback, FeedbackStore};
-use crate::ratatui::RatatuiSession;
 use crate::supervisor::{
     is_valid_agent_name, AgentBrowser, AgentInfo, InvalidAgentName, InvalidQuickshellPath,
-    InvalidRatatuiPath, Origin, SessionBackend, SessionConflict, SessionKind, Supervisor,
+    InvalidRatatuiPath, InvalidTerminalCommand, Origin, SessionBackend, SessionConflict,
+    SessionKind, Supervisor, TerminalBackend,
 };
 use crate::view::{Control, ViewHub};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -280,11 +280,11 @@ fn browser_session(agent: &AgentBrowser) -> Result<Arc<CdpSession>, ApiError> {
         .ok_or_else(|| ApiError::conflict("operation is only available for browser sessions"))
 }
 
-fn ratatui_session(agent: &AgentBrowser) -> Result<Arc<RatatuiSession>, ApiError> {
+fn terminal_session(agent: &AgentBrowser) -> Result<TerminalBackend, ApiError> {
     agent
         .backend
-        .ratatui()
-        .ok_or_else(|| ApiError::conflict("operation is only available for Ratatui sessions"))
+        .terminal()
+        .ok_or_else(|| ApiError::conflict("operation is only available for terminal sessions"))
 }
 
 async fn view_session(supervisor: &Supervisor, name: &str) -> Result<Arc<AgentBrowser>, ApiError> {
@@ -332,6 +332,11 @@ async fn create_session(
     if body.kind == SessionKind::Ratatui && body.path.is_none() {
         return Err(ApiError::bad_request(
             "Ratatui sessions require a path to the app binary",
+        ));
+    }
+    if body.kind == SessionKind::Terminal && body.path.is_none() {
+        return Err(ApiError::bad_request(
+            "Terminal sessions require a command to run",
         ));
     }
     let origin = body.origin.unwrap_or(Origin::Manual);
@@ -544,7 +549,7 @@ async fn screenshot(
         session.screenshot().await?
     } else {
         return Err(ApiError::conflict(
-            "Ratatui sessions render to cells, not pixels; read GET /v1/sessions/{name}/screen",
+            "terminal sessions render to cells, not pixels; read GET /v1/sessions/{name}/screen",
         ));
     };
     Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response())
@@ -566,7 +571,7 @@ async fn screen(
         .existing(&name)
         .await
         .ok_or_else(|| ApiError::not_found(format!("session '{name}' not found")))?;
-    let text = ratatui_session(&agent)?.screen_text();
+    let text = terminal_session(&agent)?.screen_text();
     Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response())
 }
 
@@ -923,6 +928,15 @@ async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> O
                     };
                     session.mouse(kind, x.max(0.0) as u16, y.max(0.0) as u16, button, 0)
                 }
+                SessionBackend::Terminal(session) => {
+                    let kind = match action {
+                        MouseAction::Down => MouseKind::Down,
+                        MouseAction::Up => MouseKind::Up,
+                        MouseAction::Move => MouseKind::Moved,
+                    };
+                    let button = terminal_button(button.as_deref());
+                    session.mouse(kind, x.max(0.0) as u16, y.max(0.0) as u16, button, 0)
+                }
             };
             match result {
                 Ok(()) => None,
@@ -950,6 +964,20 @@ async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> O
                         0,
                     )
                 }
+                SessionBackend::Terminal(session) => {
+                    let kind = if dy >= 0.0 {
+                        MouseKind::ScrollUp
+                    } else {
+                        MouseKind::ScrollDown
+                    };
+                    session.mouse(
+                        kind,
+                        x.max(0.0) as u16,
+                        y.max(0.0) as u16,
+                        RatatuiMouseButton::None,
+                        0,
+                    )
+                }
             };
             match result {
                 Ok(()) => None,
@@ -964,6 +992,7 @@ async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> O
                 SessionBackend::Browser(session) => session.insert_text(&text).await,
                 SessionBackend::Quickshell(session) => session.text(&text).await,
                 SessionBackend::Ratatui(session) => session.text(&text),
+                SessionBackend::Terminal(session) => session.text(&text),
             };
             match result {
                 Ok(()) => None,
@@ -979,11 +1008,25 @@ async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> O
                     Ok(()) => None,
                     Err(err) => Some(error_event(err.to_string())),
                 },
+                SessionBackend::Terminal(session) => match session.key(code, mods) {
+                    Ok(()) => None,
+                    Err(err) => Some(error_event(err.to_string())),
+                },
                 _ => Some(error_event(
-                    "key input is only available for Ratatui sessions".into(),
+                    "key input is only available for terminal sessions".into(),
                 )),
             }
         }
+    }
+}
+
+/// Map a viewer button name onto the protocol's mouse button.
+fn terminal_button(button: Option<&str>) -> RatatuiMouseButton {
+    match button {
+        Some("right") => RatatuiMouseButton::Right,
+        Some("middle") => RatatuiMouseButton::Middle,
+        Some("left") | None => RatatuiMouseButton::Left,
+        Some(_) => RatatuiMouseButton::None,
     }
 }
 
@@ -1036,6 +1079,9 @@ impl From<anyhow::Error> for ApiError {
             return Self::BadRequest(invalid.to_string());
         }
         if let Some(invalid) = err.downcast_ref::<InvalidRatatuiPath>() {
+            return Self::BadRequest(invalid.to_string());
+        }
+        if let Some(invalid) = err.downcast_ref::<InvalidTerminalCommand>() {
             return Self::BadRequest(invalid.to_string());
         }
         if let Some(conflict) = err.downcast_ref::<SessionConflict>() {
