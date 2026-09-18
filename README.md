@@ -132,7 +132,9 @@ The service also exposes the same capabilities over plain HTTP:
 Every session is listed on the left of the viewer. The canvas is a live view of
 the browser's active tab or the Quickshell output at its native viewport size. Use
 **Take control** to forward your mouse, wheel, and typing into the page;
-**Escape** hands control back to the agent. Zoom and fullscreen are view-only.
+**Escape** hands control back to the agent. While you do not hold control,
+scroll zooms and dragging pans the frame at any zoom, like a document reader —
+handy for inspecting details without sending input to the page.
 Tabs the browser opens on its own — a `target=_blank` link, a popup — are
 adopted automatically, so what you watch is always the tab the browser is
 actually showing.
