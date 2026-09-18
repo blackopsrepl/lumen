@@ -112,7 +112,10 @@ test("draws and sends a feedback annotation", async ({ page, request }) => {
 
     const box = await page.locator("#overlay").boundingBox();
     expect(box).not.toBeNull();
-    const start = { x: box.x + 32, y: box.y + 32 };
+    // Center the rectangle on the stage so it lies wholly inside the displayed
+    // frame; a corner would be clipped by the letterbox margin, which is not
+    // what this test is about.
+    const start = { x: box.x + box.width / 2 - 70, y: box.y + box.height / 2 - 45 };
     const end = { x: start.x + 140, y: start.y + 90 };
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
@@ -133,11 +136,19 @@ test("draws and sends a feedback annotation", async ({ page, request }) => {
       `/v1/sessions/${encodeURIComponent(name)}/feedback?pending=true`,
     );
     const items = await stored.json();
-    const region = items[0].region;
-    // Region is in page CSS pixels; screen px times scale round-trips to the
-    // rectangle actually drawn, not wherever the pointer ended up.
-    expect(region.scale * region.width).toBeCloseTo(140, 0);
-    expect(region.scale * region.height).toBeCloseTo(90, 0);
+    expect(items[0].screenshot).toBe(true);
+
+    // The note carries the pixels of the drawn rectangle, not coordinates that
+    // the page could invalidate. The screenshot's aspect ratio round-trips to
+    // the rectangle actually drawn, not wherever the pointer ended up.
+    const shot = await request.get(
+      `/v1/sessions/${encodeURIComponent(name)}/feedback/${items[0].id}/screenshot`,
+    );
+    expect(shot.ok()).toBeTruthy();
+    expect(shot.headers()["content-type"]).toContain("image/png");
+    const png = await shot.body();
+    expect([...png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(png.readUInt32BE(16) / png.readUInt32BE(20)).toBeCloseTo(140 / 90, 1);
   } finally {
     await deleteSession(request, name);
   }

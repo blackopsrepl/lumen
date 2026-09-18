@@ -24,7 +24,6 @@ const state = {
   drawStart: null,
   drawEnd: null,
   drawing: false,
-  highlight: null,
   feedbackSig: null,
   sessionsSig: null,
   sessionOrigin: null,
@@ -225,16 +224,8 @@ function drawOverlay() {
   const { w, h } = stageSize();
   octx.setTransform(dpr, 0, 0, dpr, 0, 0);
   octx.clearRect(0, 0, w, h);
-  // Both rects are human annotations: the saved note's region and the
-  // in-progress drag share the human brass, never the agent accent.
-  if (state.highlight) {
-    const { x, y, width, height } = state.highlight;
-    octx.fillStyle = "rgba(216, 160, 78, 0.12)";
-    octx.strokeStyle = "rgba(216, 160, 78, 0.9)";
-    octx.lineWidth = 1.5;
-    octx.fillRect(x, y, width, height);
-    octx.strokeRect(x, y, width, height);
-  }
+  // The in-progress annotation drag uses the human brass, never the agent
+  // accent: it is the one rectangle the human is drawing right now.
   if (!state.drawStart || !state.drawEnd) return;
   const x = Math.min(state.drawStart.x, state.drawEnd.x);
   const y = Math.min(state.drawStart.y, state.drawEnd.y);
@@ -265,21 +256,39 @@ function overlayPos(event) {
   return { x: event.clientX - rect.left, y: event.clientY - rect.top };
 }
 
-function currentRegion() {
+// The drawn rectangle in stage pixels, or null when nothing is selected.
+function selectionRect() {
   if (!state.drawStart || !state.drawEnd) return null;
-  const toPageLocal = (point) => ({
-    x: (point.x - state.ox) / state.scale,
-    y: (point.y - state.oy) / state.scale,
-  });
-  const a = toPageLocal(state.drawStart);
-  const b = toPageLocal(state.drawEnd);
+  const a = state.drawStart;
+  const b = state.drawEnd;
   return {
     x: Math.min(a.x, b.x),
     y: Math.min(a.y, b.y),
     width: Math.abs(a.x - b.x),
     height: Math.abs(a.y - b.y),
-    scale: state.scale,
   };
+}
+
+// Crop the selected rectangle out of the frame the human is looking at, as a
+// base64 PNG. Capturing the pixels now is what keeps the note meaningful after
+// the page navigates or reflows; a live region reference would not.
+function selectionScreenshot() {
+  const rect = selectionRect();
+  if (!rect || !state.frame) return null;
+  const sx = (rect.x - state.ox) / state.scale;
+  const sy = (rect.y - state.oy) / state.scale;
+  const left = Math.max(0, Math.floor(sx));
+  const top = Math.max(0, Math.floor(sy));
+  const right = Math.min(state.frameW, Math.ceil(sx + rect.width / state.scale));
+  const bottom = Math.min(state.frameH, Math.ceil(sy + rect.height / state.scale));
+  const width = right - left;
+  const height = bottom - top;
+  if (width <= 0 || height <= 0) return null;
+  const shot = document.createElement("canvas");
+  shot.width = width;
+  shot.height = height;
+  shot.getContext("2d").drawImage(state.frame, left, top, width, height, 0, 0, width, height);
+  return shot.toDataURL("image/png").split(",")[1];
 }
 
 async function sendComment() {
@@ -289,7 +298,7 @@ async function sendComment() {
     await api(sessionPath(state.session) + "/feedback", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ comment, region: currentRegion() }),
+      body: JSON.stringify({ comment, screenshot: selectionScreenshot() }),
     });
     el("comment-text").value = "";
     setAnnotating(false);
@@ -299,21 +308,6 @@ async function sendComment() {
   } catch (error) {
     toast(`Could not send note: ${error.message}`, "error");
   }
-}
-
-function highlightRegion(region) {
-  if (!region) {
-    state.highlight = null;
-    drawOverlay();
-    return;
-  }
-  state.highlight = {
-    x: region.x * region.scale + state.ox,
-    y: region.y * region.scale + state.oy,
-    width: region.width * region.scale,
-    height: region.height * region.scale,
-  };
-  drawOverlay();
 }
 
 // --------------------------------------------------------------- feedback
@@ -357,6 +351,16 @@ async function loadFeedback() {
     const comment = document.createElement("span");
     comment.className = "comment";
     comment.textContent = item.comment;
+    li.append(comment);
+
+    if (item.screenshot) {
+      const shot = document.createElement("img");
+      shot.className = "shot";
+      shot.alt = "The annotated region";
+      shot.loading = "lazy";
+      shot.src = sessionPath(state.session) + `/feedback/${item.id}/screenshot`;
+      li.append(shot);
+    }
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -370,8 +374,6 @@ async function loadFeedback() {
       try {
         await api(sessionPath(state.session) + `/feedback/${item.id}/ack`, { method: "POST" });
         state.feedbackSig = null;
-        state.highlight = null;
-        drawOverlay();
         loadFeedback();
       } catch (error) {
         toast(`Could not resolve: ${error.message}`, "error");
@@ -379,9 +381,7 @@ async function loadFeedback() {
     };
     meta.append(resolve);
 
-    li.append(comment, meta);
-    li.onmouseenter = () => highlightRegion(item.region);
-    li.onmouseleave = () => highlightRegion(null);
+    li.append(meta);
     list.append(li);
   }
 }
@@ -499,7 +499,6 @@ function clearSession(name) {
   state.frame?.close();
   state.frame = null;
   canvas.dataset.frameReady = "false";
-  state.highlight = null;
   el("cdp").textContent = "not connected";
   el("attach").hidden = true;
   el("spinner").hidden = true;
@@ -537,7 +536,6 @@ async function connect(name) {
   state.frame = null;
   canvas.dataset.frameReady = "false";
   state.fit = true;
-  state.highlight = null;
   state.feedbackSig = null;
   el("cdp").textContent = "connecting…";
   el("attach").hidden = true;
@@ -893,7 +891,7 @@ function finishSelection(point) {
   state.drawing = false;
   if (point) state.drawEnd = point;
   drawOverlay();
-  const region = currentRegion();
+  const region = selectionRect();
   if (region && region.width > 8 && region.height > 8) {
     el("composer").hidden = false;
     el("comment-text").focus();
