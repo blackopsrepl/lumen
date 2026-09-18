@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.11.7](https://github.com/blackopsrepl/lumen/compare/v0.11.6...v0.11.7) (2026-09-18)
+
+### Features
+
+* **viewer:** pan the streamed frame when control is not held ([a9829fa](https://github.com/blackopsrepl/lumen/commit/a9829faa7d9fb556129420c628e27aff8aa7857b))
+
 ## [0.11.6](https://github.com/blackopsrepl/lumen/compare/v0.11.5...v0.11.6) (2026-09-18)
 
 ### Features
