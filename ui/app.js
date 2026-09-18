@@ -28,6 +28,9 @@ const state = {
   sessionsSig: null,
   sessionOrigin: null,
   sessionKind: null,
+  // Mirrored state for ratatui sessions: the authoritative grid is a list of
+  // styled cells the server sends, not a decoded image.
+  terminal: null,
   reconnectTimer: null,
   pollInFlight: false,
   pollQueued: false,
@@ -84,6 +87,150 @@ function setControlsEnabled(enabled) {
   el("control").disabled = !enabled;
 }
 
+// ------------------------------------------------------------- terminal
+
+// The 16 ANSI colours, matching a typical terminal palette. Kept here so the
+// viewer and the server agree on what `Color::Red` means without the server
+// having to send the palette on every frame.
+const ANSI = {
+  black: "#1c1c1c",
+  red: "#cd3131",
+  green: "#0dbc79",
+  yellow: "#e5e510",
+  blue: "#2472c8",
+  magenta: "#bc3fbc",
+  cyan: "#11a8cd",
+  gray: "#e5e5e5",
+  dark_gray: "#666666",
+  light_red: "#f14c4c",
+  light_green: "#23d18b",
+  light_yellow: "#f5f543",
+  light_blue: "#3b8eea",
+  light_magenta: "#d670d6",
+  light_cyan: "#29b8db",
+  white: "#ffffff",
+};
+
+const CELL_FONT = "14px 'JetBrains Mono', 'Fira Code', ui-monospace, monospace";
+const CELL_W = 8.4;
+const CELL_H = 18;
+const TERM_FG = "#e6e6e6";
+const TERM_BG = "#0d0d0d";
+
+function hexToRgb(hex) {
+  const value = parseInt(hex.slice(1), 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+function colorRgb(color) {
+  if (!color) return hexToRgb(TERM_FG);
+  if (typeof color === "string") return hexToRgb(ANSI[color] || TERM_FG);
+  if (color.rgb) return color.rgb;
+  if (color.indexed !== undefined) return indexedRgb(color.indexed);
+  return hexToRgb(TERM_FG);
+}
+
+function indexedRgb(index) {
+  const base = [
+    "#000000", "#800000", "#008000", "#808000", "#000080", "#800080", "#008080", "#c0c0c0",
+    "#808080", "#ff0000", "#00ff00", "#ffff00", "#0000ff", "#ff00ff", "#00ffff", "#ffffff",
+  ];
+  if (index < 16) return hexToRgb(base[index]);
+  if (index >= 232) {
+    const level = 8 + (index - 232) * 10;
+    return [level, level, level];
+  }
+  const n = index - 16;
+  const steps = [0, 95, 135, 175, 215, 255];
+  return [steps[Math.floor(n / 36)], steps[Math.floor((n / 6) % 6)], steps[n % 6]];
+}
+
+function makeTerminal(cols, rows) {
+  return { cols, rows, cx: 0, cy: 0, cv: true, cells: new Map() };
+}
+
+// Apply a server snapshot. Snapshots are full, so the viewer never applies a
+// delta to a grid it may have fallen behind on.
+function applySnapshot(snapshot) {
+  const cells = new Map();
+  for (const cell of snapshot.cells) {
+    cells.set(`${cell.x},${cell.y}`, cell);
+  }
+  state.terminal = {
+    cols: snapshot.cols,
+    rows: snapshot.rows,
+    cx: snapshot.cx,
+    cy: snapshot.cy,
+    cv: snapshot.cv,
+    cells,
+  };
+  state.frameW = snapshot.cols * CELL_W;
+  state.frameH = snapshot.rows * CELL_H;
+  canvas.dataset.frameReady = "true";
+  canvas.dataset.frameWidth = String(state.frameW);
+  canvas.dataset.frameHeight = String(state.frameH);
+  canvas.dataset.termCols = String(snapshot.cols);
+  canvas.dataset.termRows = String(snapshot.rows);
+  if (!el("spinner").hidden) {
+    el("spinner").hidden = true;
+    el("empty").hidden = true;
+    setControlsEnabled(true);
+    setState("live");
+    setStatus(`live · ${state.session}`, "on");
+  }
+  if (state.fit) fitView();
+  else draw();
+}
+
+// Paint the mirrored grid. The transport is cells, so there is no image to
+// decode and no terminal-emulator semantics to get wrong.
+function drawTerminal() {
+  const term = state.terminal;
+  ctx.font = CELL_FONT;
+  ctx.textBaseline = "top";
+  ctx.fillStyle = TERM_BG;
+  const width = term.cols * CELL_W;
+  const height = term.rows * CELL_H;
+  ctx.fillRect(state.ox, state.oy, width, height);
+  ctx.save();
+  ctx.translate(state.ox, state.oy);
+  ctx.scale(state.scale, state.scale);
+  for (const cell of term.cells.values()) {
+    const x = cell.x * CELL_W;
+    const y = cell.y * CELL_H;
+    const [fr, fg, fb] = colorRgb(cell.fg);
+    const [br, bg, bb] = colorRgb(cell.bg);
+    const reversed = (cell.m & 0x40) !== 0;
+    const fgHex = reversed ? `rgb(${br},${bg},${bb})` : `rgb(${fr},${fg},${fb})`;
+    const bgHex = reversed ? `rgb(${fr},${fg},${fb})` : `rgb(${br},${bg},${bb})`;
+    if (cell.bg !== "reset" || reversed) {
+      ctx.fillStyle = bgHex;
+      ctx.fillRect(x, y, CELL_W, CELL_H);
+    }
+    if (cell.s === " ") continue;
+    ctx.fillStyle = fgHex;
+    if (cell.m & 0x01) ctx.font = `bold ${CELL_FONT}`;
+    else if (cell.m & 0x02) ctx.font = `300 ${CELL_FONT}`;
+    else ctx.font = CELL_FONT;
+    ctx.globalAlpha = cell.m & 0x80 ? 0.25 : 1;
+    ctx.fillText(cell.s, x, y);
+    ctx.globalAlpha = 1;
+    if (cell.m & 0x08) {
+      ctx.strokeStyle = fgHex;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, y + CELL_H - 2);
+      ctx.lineTo(x + CELL_W, y + CELL_H - 2);
+      ctx.stroke();
+    }
+  }
+  if (term.cv) {
+    ctx.fillStyle = TERM_FG;
+    ctx.fillRect(term.cx * CELL_W, term.cy * CELL_H, 2, CELL_H);
+  }
+  ctx.restore();
+}
+
 // ------------------------------------------------------------------- view
 
 function stageSize() {
@@ -108,6 +255,11 @@ function draw() {
   // View offset, exposed like the frame size so the pan gesture is observable.
   canvas.dataset.offsetX = String(Math.round(state.ox));
   canvas.dataset.offsetY = String(Math.round(state.oy));
+  if (state.terminal) {
+    drawTerminal();
+    frameMeta();
+    return;
+  }
   if (!state.frame) return;
   const width = state.frameW * state.scale;
   const height = state.frameH * state.scale;
@@ -132,7 +284,7 @@ function draw() {
 // Keep the monitor readout pinned to the frame's bottom-right corner.
 function frameMeta() {
   const meta = el("frame-meta");
-  if (!state.frame) {
+  if (!state.frame && !state.terminal) {
     meta.hidden = true;
     return;
   }
@@ -159,7 +311,7 @@ function zoomLabel() {
 }
 
 function fitView() {
-  if (!state.frame) return;
+  if (!state.frame && !state.terminal) return;
   const { w, h } = stageSize();
   state.scale = Math.min(w / state.frameW, h / state.frameH, 1);
   state.fit = true;
@@ -169,7 +321,7 @@ function fitView() {
 }
 
 function actualSize() {
-  if (!state.frame) return;
+  if (!state.frame && !state.terminal) return;
   state.scale = 1;
   state.fit = false;
   center();
@@ -178,7 +330,7 @@ function actualSize() {
 }
 
 function zoomAt(px, py, factor) {
-  if (!state.frame) return;
+  if (!state.frame && !state.terminal) return;
   const previous = state.scale;
   const next = Math.min(4, Math.max(0.1, previous * factor));
   if (next === previous) return;
@@ -277,7 +429,9 @@ function selectionRect() {
 // the page navigates or reflows; a live region reference would not.
 function selectionScreenshot() {
   const rect = selectionRect();
-  if (!rect || !state.frame) return null;
+  if (!rect) return null;
+  if (state.terminal) return terminalScreenshot(rect);
+  if (!state.frame) return null;
   const sx = (rect.x - state.ox) / state.scale;
   const sy = (rect.y - state.oy) / state.scale;
   const left = Math.max(0, Math.floor(sx));
@@ -291,6 +445,47 @@ function selectionScreenshot() {
   shot.width = width;
   shot.height = height;
   shot.getContext("2d").drawImage(state.frame, left, top, width, height, 0, 0, width, height);
+  return shot.toDataURL("image/png").split(",")[1];
+}
+
+// Capture the selected region of a terminal grid by repainting it into an
+// offscreen canvas at native cell size, so the note's image is crisp regardless
+// of the viewer's zoom.
+function terminalScreenshot(rect) {
+  const term = state.terminal;
+  const sx = (rect.x - state.ox) / state.scale;
+  const sy = (rect.y - state.oy) / state.scale;
+  const left = Math.max(0, Math.floor(sx / CELL_W));
+  const top = Math.max(0, Math.floor(sy / CELL_H));
+  const right = Math.min(term.cols, Math.ceil((sx + rect.width / state.scale) / CELL_W));
+  const bottom = Math.min(term.rows, Math.ceil((sy + rect.height / state.scale) / CELL_H));
+  const cols = right - left;
+  const rows = bottom - top;
+  if (cols <= 0 || rows <= 0) return null;
+  const shot = document.createElement("canvas");
+  shot.width = cols * CELL_W;
+  shot.height = rows * CELL_H;
+  const sctx = shot.getContext("2d");
+  sctx.fillStyle = TERM_BG;
+  sctx.fillRect(0, 0, shot.width, shot.height);
+  sctx.font = CELL_FONT;
+  sctx.textBaseline = "top";
+  for (const cell of term.cells.values()) {
+    if (cell.x < left || cell.x >= right || cell.y < top || cell.y >= bottom) continue;
+    const x = (cell.x - left) * CELL_W;
+    const y = (cell.y - top) * CELL_H;
+    const [fr, fg, fb] = colorRgb(cell.fg);
+    const [br, bg, bb] = colorRgb(cell.bg);
+    const reversed = (cell.m & 0x40) !== 0;
+    if (cell.bg !== "reset" || reversed) {
+      sctx.fillStyle = reversed ? `rgb(${fr},${fg},${fb})` : `rgb(${br},${bg},${bb})`;
+      sctx.fillRect(x, y, CELL_W, CELL_H);
+    }
+    if (cell.s === " ") continue;
+    sctx.fillStyle = reversed ? `rgb(${br},${bg},${bb})` : `rgb(${fr},${fg},${fb})`;
+    sctx.font = cell.m & 0x01 ? `bold ${CELL_FONT}` : CELL_FONT;
+    sctx.fillText(cell.s, x, y);
+  }
   return shot.toDataURL("image/png").split(",")[1];
 }
 
@@ -395,6 +590,7 @@ function sessionItem(session) {
   const li = document.createElement("li");
   li.dataset.name = session.name;
   li.dataset.origin = session.origin;
+  li.dataset.kind = session.kind;
 
   const row = document.createElement("span");
   row.className = "row";
@@ -414,9 +610,9 @@ function sessionItem(session) {
 
   const sub = document.createElement("span");
   sub.className = "sub";
-  sub.textContent = session.kind === "quickshell"
-    ? `quickshell · ${session.path || "unknown path"}`
-    : session.cdp_endpoint.replace(/^https?:\/\//, "");
+  sub.textContent = session.kind === "browser"
+    ? session.cdp_endpoint.replace(/^https?:\/\//, "")
+    : `${session.kind} · ${session.path || "unknown path"}`;
 
   li.append(row, sub);
   li.onclick = () => connect(session.name);
@@ -499,6 +695,7 @@ function clearSession(name) {
   state.session = null;
   state.sessionOrigin = null;
   state.sessionKind = null;
+  state.terminal = null;
   state.frame?.close();
   state.frame = null;
   canvas.dataset.frameReady = "false";
@@ -535,6 +732,7 @@ async function connect(name) {
   state.session = name;
   state.sessionOrigin = null;
   state.sessionKind = null;
+  state.terminal = null;
   state.frame?.close();
   state.frame = null;
   canvas.dataset.frameReady = "false";
@@ -568,14 +766,15 @@ async function connect(name) {
   if (state.session !== name) return;
 
   state.sessionKind = info.kind;
-  const endpoint = info.kind === "quickshell"
-    ? `quickshell · ${info.path || "unknown path"}`
+  const terminal = info.kind === "quickshell" || info.kind === "ratatui";
+  const endpoint = terminal
+    ? `${info.kind} · ${info.path || "unknown path"}`
     : info.cdp_endpoint;
   el("cdp").textContent = endpoint;
   el("cdp").title = endpoint;
-  el("attach").textContent = info.kind === "quickshell"
-    ? `agent: lumen ensure ${name} --quickshell ${info.path || "<path>"}`
-    : `attach: bin/pw.sh -s=${name}`;
+  el("attach").textContent = info.kind === "browser"
+    ? `attach: bin/pw.sh -s=${name}`
+    : `agent: lumen ensure ${name} --${info.kind} ${info.path || "<path>"}`;
   el("attach").hidden = false;
   state.sessionOrigin = info.origin;
   state.feedbackSig = null;
@@ -624,6 +823,10 @@ function onServerMessage(event) {
 }
 
 function onFrame(buffer) {
+  if (state.sessionKind === "ratatui") {
+    applyTerminalFrame(buffer);
+    return;
+  }
   const decoder = state.decoder;
   if (!decoder) return;
   if (decoder.active) {
@@ -631,6 +834,17 @@ function onFrame(buffer) {
     return;
   }
   void decodeFrame(decoder, buffer);
+}
+
+// A ratatui frame is JSON describing the whole grid, not an encoded image.
+function applyTerminalFrame(buffer) {
+  let snapshot;
+  try {
+    snapshot = JSON.parse(new TextDecoder().decode(buffer));
+  } catch {
+    return;
+  }
+  applySnapshot(snapshot);
 }
 
 async function decodeFrame(decoder, buffer) {
@@ -669,11 +883,11 @@ async function decodeFrame(decoder, buffer) {
 
 async function pollInfo() {
   if (!state.session) return;
-  if (state.sessionKind === "quickshell") {
+  if (state.sessionKind === "quickshell" || state.sessionKind === "ratatui") {
     el("url").value = "";
-    el("url").title = "Quickshell sessions do not have browser navigation";
-    el("page-title").textContent = "Quickshell desktop";
-    document.title = `Quickshell · ${state.session} · Lumen`;
+    el("url").title = "Terminal sessions do not have browser navigation";
+    el("page-title").textContent = state.sessionKind === "ratatui" ? "Ratatui terminal" : "Quickshell desktop";
+    document.title = `${state.sessionKind === "ratatui" ? "Ratatui" : "Quickshell"} · ${state.session} · Lumen`;
     return;
   }
   if (state.pollInFlight) {
@@ -721,7 +935,11 @@ async function navigate() {
 }
 
 el("new-kind").onchange = () => {
-  el("new-path").hidden = el("new-kind").value !== "quickshell";
+  const kind = el("new-kind").value;
+  el("new-path").hidden = kind === "browser";
+  el("new-path").placeholder = kind === "quickshell"
+    ? "shell.qml or directory"
+    : "ratatui app binary (absolute)";
 };
 
 el("new-session").onsubmit = async (event) => {
@@ -730,8 +948,8 @@ el("new-session").onsubmit = async (event) => {
   if (!name) return;
   const kind = el("new-kind").value;
   const path = el("new-path").value.trim();
-  if (kind === "quickshell" && !path) {
-    toast("Quickshell sessions need a shell.qml path", "error");
+  if (kind !== "browser" && !path) {
+    toast(`${kind === "quickshell" ? "Quickshell" : "Ratatui"} sessions need a path`, "error");
     el("new-path").focus();
     return;
   }
@@ -739,7 +957,7 @@ el("new-session").onsubmit = async (event) => {
     await api("/v1/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, kind, ...(kind === "quickshell" ? { path } : {}) }),
+      body: JSON.stringify({ name, kind, ...(kind !== "browser" ? { path } : {}) }),
     });
     el("new-name").value = "";
     el("new-path").value = "";
@@ -783,6 +1001,20 @@ document.addEventListener("keydown", (event) => {
   if (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA") return;
   if (
     state.control === "human" &&
+    state.sessionKind === "ratatui" &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey
+  ) {
+    const key = terminalKey(event);
+    if (key) {
+      send({ type: "key", code: key.code, mods: 0 });
+      event.preventDefault();
+      return;
+    }
+  }
+  if (
+    state.control === "human" &&
     event.key.length === 1 &&
     !event.ctrlKey &&
     !event.metaKey &&
@@ -802,13 +1034,53 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+// Translate a browser key event into the service's key encoding. Printable
+// characters are sent as text instead; this covers the named keys a ratatui app
+// actually reads.
+function terminalKey(event) {
+  const named = {
+    Enter: "enter",
+    Backspace: "backspace",
+    Tab: "tab",
+    ArrowUp: "up",
+    ArrowDown: "down",
+    ArrowLeft: "left",
+    ArrowRight: "right",
+    Home: "home",
+    End: "end",
+    PageUp: "page_up",
+    PageDown: "page_down",
+    Delete: "delete",
+    Insert: "insert",
+    " ": { char: " " },
+  };
+  if (event.key === "Escape") return { code: "esc" };
+  const f = /^F(\d{1,2})$/.exec(event.key);
+  if (f) return { code: { f: Number(f[1]) } };
+  const entry = named[event.key];
+  if (!entry) return null;
+  return { code: typeof entry === "string" ? entry : entry };
+}
+
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
+// Pointer coordinates for input. Browser and desktop sessions use page pixels;
+// a terminal session reports cells, since that is the app's coordinate space.
+function terminalPointer(event) {
+  if (!state.terminal) return toPage(event.clientX, event.clientY);
+  const { x, y } = toPage(event.clientX, event.clientY);
+  const term = state.terminal;
+  return {
+    x: Math.max(0, Math.min(term.cols - 1, Math.floor(x / CELL_W))),
+    y: Math.max(0, Math.min(term.rows - 1, Math.floor(y / CELL_H))),
+  };
+}
 
 canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture(event.pointerId);
   canvas.focus();
   if (state.control === "human") {
-    const { x, y } = toPage(event.clientX, event.clientY);
+    const { x, y } = terminalPointer(event);
     state.pointerButton = event.button === 2 ? "right" : event.button === 1 ? "middle" : "left";
     send({
       type: "mouse",
@@ -836,7 +1108,7 @@ canvas.addEventListener("pointermove", (event) => {
     state.last = { x: event.clientX, y: event.clientY };
     draw();
   } else if (state.control === "human") {
-    const { x, y } = toPage(event.clientX, event.clientY);
+    const { x, y } = terminalPointer(event);
     send({ type: "mouse", action: "move", x, y });
   }
 });
@@ -844,7 +1116,7 @@ canvas.addEventListener("pointermove", (event) => {
 canvas.addEventListener("pointerup", (event) => {
   canvas.releasePointerCapture(event.pointerId);
   if (state.control === "human") {
-    const { x, y } = toPage(event.clientX, event.clientY);
+    const { x, y } = terminalPointer(event);
     send({ type: "mouse", action: "up", x, y, button: state.pointerButton || "left" });
   }
   state.pointerButton = null;
@@ -855,7 +1127,7 @@ canvas.addEventListener("pointerup", (event) => {
 canvas.addEventListener("pointercancel", (event) => {
   canvas.releasePointerCapture(event.pointerId);
   if (state.control === "human" && state.pointerButton) {
-    const { x, y } = toPage(event.clientX, event.clientY);
+    const { x, y } = terminalPointer(event);
     send({ type: "mouse", action: "up", x, y, button: state.pointerButton });
   }
   state.pointerButton = null;
@@ -868,7 +1140,7 @@ canvas.addEventListener(
   (event) => {
     event.preventDefault();
     if (state.control === "human" && !event.ctrlKey && !event.metaKey) {
-      const { x, y } = toPage(event.clientX, event.clientY);
+      const { x, y } = terminalPointer(event);
       send({ type: "wheel", x, y, dx: event.deltaX, dy: event.deltaY });
       return;
     }
