@@ -6,6 +6,10 @@ description = "Single-binary session service for agents and humans"
 license = "Apache-2.0"
 repository = "http://vigilance:3002/blackopsrepl/lumen"
 
+[workspace]
+members = ["crates/lumen-ratatui"]
+resolver = "2"
+
 [dependencies]
 anyhow = "1.0.104"
 axum = { version = "0.8.9", features = ["ws"] }
@@ -16,6 +20,7 @@ clap = { version = "4.6.6", features = ["derive", "env"] }
 futures = "0.3.34"
 jpeg-encoder = "0.7.1"
 libc = "0.2"
+lumen-ratatui = { path = "crates/lumen-ratatui", default-features = false }
 png = "0.18.1"
 reqwest = { version = "0.13.5", features = ["json", "blocking"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
