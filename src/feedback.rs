@@ -1,22 +1,16 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
-/// A screen region a human commented on, in page CSS pixels.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct Region {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-    /// The viewer scale when the region was drawn, for faithful replay.
-    pub scale: f64,
-}
-
 /// One human annotation addressed to an agent session.
+///
+/// A note may carry a screenshot of the exact region the human drew on. The
+/// image is captured when the note is sent, so it still shows what the human
+/// meant after the page has navigated or reflowed. Fetch the bytes from the
+/// session's `…/feedback/{id}/screenshot` endpoint; only presence is listed.
 #[derive(Debug, Clone, Serialize)]
 pub struct Feedback {
     pub id: i64,
@@ -24,7 +18,7 @@ pub struct Feedback {
     pub created_at: i64,
     pub author: String,
     pub comment: String,
-    pub region: Option<Region>,
+    pub screenshot: bool,
     pub status: String,
 }
 
@@ -49,39 +43,27 @@ pub struct FeedbackStore {
 }
 
 fn row_to_feedback(row: &rusqlite::Row<'_>) -> rusqlite::Result<Feedback> {
-    let region = match (
-        row.get::<_, Option<f64>>(5)?,
-        row.get::<_, Option<f64>>(6)?,
-        row.get::<_, Option<f64>>(7)?,
-        row.get::<_, Option<f64>>(8)?,
-        row.get::<_, Option<f64>>(9)?,
-    ) {
-        (Some(x), Some(y), Some(width), Some(height), Some(scale)) => Some(Region {
-            x,
-            y,
-            width,
-            height,
-            scale,
-        }),
-        _ => None,
-    };
     Ok(Feedback {
         id: row.get(0)?,
         session: row.get(1)?,
         created_at: row.get(2)?,
         author: row.get(3)?,
         comment: row.get(4)?,
-        region,
-        status: row.get(10)?,
+        screenshot: row.get(5)?,
+        status: row.get(6)?,
     })
 }
 
 fn query(conn: &Connection, session: &str, pending_only: bool) -> Result<Vec<Feedback>> {
+    // `screenshot IS NOT NULL` keeps the list payload free of image data; the
+    // bytes are served separately from the per-note screenshot endpoint.
     let sql = if pending_only {
-        "SELECT id, session, created_at, author, comment, x, y, width, height, scale, status
+        "SELECT id, session, created_at, author, comment,
+                (screenshot IS NOT NULL) AS has_screenshot, status
          FROM feedback WHERE session = ?1 AND status = 'pending' ORDER BY id"
     } else {
-        "SELECT id, session, created_at, author, comment, x, y, width, height, scale, status
+        "SELECT id, session, created_at, author, comment,
+                (screenshot IS NOT NULL) AS has_screenshot, status
          FROM feedback WHERE session = ?1 ORDER BY id"
     };
     let mut stmt = conn.prepare(sql)?;
@@ -91,6 +73,21 @@ fn query(conn: &Connection, session: &str, pending_only: bool) -> Result<Vec<Fee
         items.push(row?);
     }
     Ok(items)
+}
+
+/// Add the screenshot column to a database created before notes carried
+/// images. Older rows keep their now-unused region columns and read back with
+/// no screenshot, which is the best that can be recovered from stale pixels.
+fn migrate_screenshot_column(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(feedback)")?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(stmt);
+    if !columns.iter().any(|name| name == "screenshot") {
+        conn.execute("ALTER TABLE feedback ADD COLUMN screenshot BLOB", [])?;
+    }
+    Ok(())
 }
 
 impl FeedbackStore {
@@ -108,7 +105,7 @@ impl FeedbackStore {
                 created_at INTEGER NOT NULL,
                 author TEXT NOT NULL,
                 comment TEXT NOT NULL,
-                x REAL, y REAL, width REAL, height REAL, scale REAL,
+                screenshot BLOB,
                 status TEXT NOT NULL DEFAULT 'pending'
             );
             CREATE INDEX IF NOT EXISTS feedback_session_status
@@ -122,6 +119,7 @@ impl FeedbackStore {
             );",
         )
         .context("initializing feedback schema")?;
+        migrate_screenshot_column(&conn).context("migrating feedback schema")?;
         Ok(Self {
             conn: Mutex::new(conn),
             audit_retain: audit_retain.max(1),
@@ -133,30 +131,19 @@ impl FeedbackStore {
         session: &str,
         author: &str,
         comment: &str,
-        region: Option<Region>,
+        screenshot: Option<Vec<u8>>,
     ) -> Result<Feedback> {
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or_default();
-        let (x, y, width, height, scale) = region
-            .map(|r| {
-                (
-                    Some(r.x),
-                    Some(r.y),
-                    Some(r.width),
-                    Some(r.height),
-                    Some(r.scale),
-                )
-            })
-            .unwrap_or((None, None, None, None, None));
+        let has_screenshot = screenshot.is_some();
 
         let conn = self.conn.lock().await;
         conn.execute(
-            "INSERT INTO feedback
-                (session, created_at, author, comment, x, y, width, height, scale, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'pending')",
-            params![session, created_at, author, comment, x, y, width, height, scale],
+            "INSERT INTO feedback (session, created_at, author, comment, screenshot, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'pending')",
+            params![session, created_at, author, comment, screenshot.as_deref()],
         )
         .context("inserting feedback")?;
         let id = conn.last_insert_rowid();
@@ -168,9 +155,21 @@ impl FeedbackStore {
             created_at,
             author: author.to_string(),
             comment: comment.to_string(),
-            region,
+            screenshot: has_screenshot,
             status: "pending".to_string(),
         })
+    }
+
+    /// The PNG attached to a note, or `None` if the note has no screenshot.
+    pub async fn screenshot(&self, session: &str, id: i64) -> Result<Option<Vec<u8>>> {
+        let conn = self.conn.lock().await;
+        let mut stmt =
+            conn.prepare("SELECT screenshot FROM feedback WHERE session = ?1 AND id = ?2")?;
+        let mut rows = stmt.query(params![session, id])?;
+        match rows.next()? {
+            Some(row) => Ok(row.get(0)?),
+            None => Ok(None),
+        }
     }
 
     pub async fn list(&self, session: &str, pending_only: bool) -> Result<Vec<Feedback>> {
@@ -310,6 +309,31 @@ mod tests {
         let next = store.consume("s").await.unwrap();
         assert_eq!(next.len(), 1);
         assert_eq!(next[0].comment, "after");
+
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn screenshots_round_trip_and_are_listed_by_presence() {
+        let (store, path) = temp_store("screenshot");
+        let png = b"\x89PNG\r\n\x1a\nnot-really-a-png".to_vec();
+        let added = store
+            .add("s", "human", "with image", Some(png.clone()))
+            .await
+            .unwrap();
+        store.add("s", "human", "no image", None).await.unwrap();
+
+        assert_eq!(
+            store.screenshot("s", added.id).await.unwrap().as_deref(),
+            Some(png.as_slice())
+        );
+
+        let listed = store.list("s", false).await.unwrap();
+        assert!(listed[0].screenshot);
+        assert!(!listed[1].screenshot);
+        assert!(store.screenshot("s", 404).await.unwrap().is_none());
+        assert!(store.screenshot("s", listed[1].id).await.unwrap().is_none());
 
         drop(store);
         let _ = std::fs::remove_file(&path);

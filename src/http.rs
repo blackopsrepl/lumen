@@ -1,19 +1,20 @@
 use crate::cdp::{CdpSession, NavigationBlocked, OnlyManagedTab, TabInfo};
 use crate::config::{Config, Viewport};
 use crate::desktop::{DesktopSession, MouseAction};
-use crate::feedback::{AuditEntry, Feedback, FeedbackStore, Region};
+use crate::feedback::{AuditEntry, Feedback, FeedbackStore};
 use crate::supervisor::{
     is_valid_agent_name, AgentBrowser, AgentInfo, InvalidAgentName, InvalidQuickshellPath, Origin,
     SessionBackend, SessionConflict, SessionKind, Supervisor,
 };
 use crate::view::{Control, ViewHub};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
+use base64::Engine as _;
 use chromiumoxide::cdp::browser_protocol::input::{DispatchMouseEventType, MouseButton};
 use futures::{SinkExt, StreamExt};
 use rust_embed::RustEmbed;
@@ -25,6 +26,15 @@ use tokio::sync::{broadcast, mpsc};
 #[derive(RustEmbed)]
 #[folder = "ui/"]
 struct UiAssets;
+
+/// Largest request body the router accepts. The only large body is a feedback
+/// screenshot, sized here for a base64 PNG of the largest viewport plus JSON
+/// and base64 overhead.
+const MAX_FEEDBACK_BODY: usize = 8 * 1024 * 1024;
+/// Largest decoded screenshot, so a note cannot bloat the feedback database.
+const MAX_SCREENSHOT_BYTES: usize = 4 * 1024 * 1024;
+/// The PNG magic bytes; the viewer only ever captures `image/png`.
+const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 /// Shared control-plane state.
 #[derive(Clone)]
@@ -116,11 +126,16 @@ pub fn router(state: AppState) -> Router {
             "/v1/sessions/{name}/feedback/consume",
             post(consume_feedback),
         )
+        .route(
+            "/v1/sessions/{name}/feedback/{id}/screenshot",
+            get(feedback_screenshot),
+        )
         .route("/v1/sessions/{name}/feedback/{id}/ack", post(ack_feedback))
         .route(
             "/v1/sessions/{name}/feedback/ack-all",
             post(ack_all_feedback),
         )
+        .layer(DefaultBodyLimit::max(MAX_FEEDBACK_BODY))
         .layer(middleware::from_fn(loopback_guard))
         .layer(middleware::from_fn_with_state(drain_state, draining_guard))
         .with_state(state)
@@ -576,8 +591,27 @@ async fn list_feedback(
 #[derive(Deserialize)]
 struct FeedbackBody {
     comment: String,
+    /// Base64 PNG of the region the human annotated, captured viewer-side.
     #[serde(default)]
-    region: Option<Region>,
+    screenshot: Option<String>,
+}
+
+/// Decode the viewer's screenshot and reject anything that is not a bounded
+/// PNG, so the feedback database only ever holds images the viewer produced.
+fn decode_screenshot(encoded: &str) -> Result<Vec<u8>, ApiError> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .map_err(|_| ApiError::bad_request("screenshot must be base64-encoded"))?;
+    if bytes.len() > MAX_SCREENSHOT_BYTES {
+        return Err(ApiError::bad_request(format!(
+            "screenshot exceeds {} bytes",
+            MAX_SCREENSHOT_BYTES
+        )));
+    }
+    if !bytes.starts_with(PNG_MAGIC) {
+        return Err(ApiError::bad_request("screenshot must be a PNG"));
+    }
+    Ok(bytes)
 }
 
 async fn add_feedback(
@@ -591,9 +625,13 @@ async fn add_feedback(
     if body.comment.trim().is_empty() {
         return Err(ApiError::bad_request("comment must not be empty"));
     }
+    let screenshot = match body.screenshot.as_deref() {
+        Some(encoded) => Some(decode_screenshot(encoded)?),
+        None => None,
+    };
     let feedback = state
         .feedback
-        .add(&name, "human", body.comment.trim(), body.region)
+        .add(&name, "human", body.comment.trim(), screenshot)
         .await?;
     if let Err(err) = state
         .feedback
@@ -603,6 +641,23 @@ async fn add_feedback(
         tracing::warn!("audit write failed: {err}");
     }
     Ok(Json(feedback))
+}
+
+/// Serve the PNG a note was annotated with. Missing notes and notes without an
+/// image are both 404: there is nothing to render in either case.
+async fn feedback_screenshot(
+    State(state): State<AppState>,
+    Path((name, id)): Path<(String, i64)>,
+) -> Result<Response, ApiError> {
+    if !is_valid_agent_name(&name) {
+        return Err(ApiError::bad_request("invalid agent name"));
+    }
+    match state.feedback.screenshot(&name, id).await? {
+        Some(png) => Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response()),
+        None => Err(ApiError::not_found(format!(
+            "feedback {id} has no screenshot"
+        ))),
+    }
 }
 
 async fn ack_feedback(
