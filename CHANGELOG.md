@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.13.0](https://github.com/blackopsrepl/lumen/compare/v0.12.1...v0.13.0) (2026-09-18)
+
+### Features
+
+* **image:** ship tmux in the runtime image ([aacc2ba](https://github.com/blackopsrepl/lumen/commit/aacc2ba6108b431e1b48fd023f9a42e12fde03af))
+* **ratatui:** move the backend crate to ratatui 0.30 ([8bb5c75](https://github.com/blackopsrepl/lumen/commit/8bb5c75e4bf6582e375dfb04f27f102f22f7e7bb))
+* **terminal:** run any program in a PTY and parse its screen ([aab2183](https://github.com/blackopsrepl/lumen/commit/aab21832f6bc3d73efb2314c858c7e61f820b288))
+* **terminal:** supervise PTY sessions as a fourth session kind ([98e4590](https://github.com/blackopsrepl/lumen/commit/98e45901fa74848606ca410fc8ca70f9e1321f59))
+
 ## [0.12.1](https://github.com/blackopsrepl/lumen/compare/v0.12.0...v0.12.1) (2026-09-18)
 
 ### Features
