@@ -10,20 +10,12 @@ pub struct AgentInfo {
 }
 
 #[derive(Debug, Deserialize)]
-struct Region {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-    scale: f64,
-}
-
-#[derive(Debug, Deserialize)]
 struct Feedback {
     id: i64,
     author: String,
     comment: String,
-    region: Option<Region>,
+    /// Whether the note carries a region screenshot the agent can fetch.
+    screenshot: bool,
 }
 
 fn client() -> Result<reqwest::blocking::Client> {
@@ -167,11 +159,8 @@ pub fn feedback(base: &str, name: &str, consume: bool) -> Result<()> {
 
     for item in &items {
         println!("[{}] {}: {}", item.id, item.author, item.comment);
-        if let Some(region) = &item.region {
-            println!(
-                "     region x={:.0} y={:.0} w={:.0} h={:.0} (view scale {:.2})",
-                region.x, region.y, region.width, region.height, region.scale
-            );
+        if item.screenshot {
+            report_screenshot(base, name, item.id);
         }
     }
 
@@ -179,4 +168,31 @@ pub fn feedback(base: &str, name: &str, consume: bool) -> Result<()> {
         println!("consumed {} note(s)", items.len());
     }
     Ok(())
+}
+
+/// Fetch a note's screenshot and save it where the agent can read it.
+///
+/// The image lives in the service, not the caller's filesystem, so a failure to
+/// save is not fatal: the endpoint that serves it is always printed as a
+/// fallback. `LUMEN_FEEDBACK_DIR` chooses the destination directory.
+fn report_screenshot(base: &str, name: &str, id: i64) {
+    let endpoint = format!("{base}/v1/sessions/{name}/feedback/{id}/screenshot");
+    let dir = std::env::var_os("LUMEN_FEEDBACK_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("lumen-feedback"));
+    let saved = std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating {}", dir.display()))
+        .and_then(|()| {
+            let bytes = check(client()?.get(&endpoint).send()?)
+                .context("connecting to lumen")?
+                .bytes()
+                .context("reading screenshot")?;
+            let path = dir.join(format!("{name}-{id}.png"));
+            std::fs::write(&path, &bytes).with_context(|| format!("writing {}", path.display()))?;
+            Ok(std::fs::canonicalize(&path).unwrap_or(path))
+        });
+    match saved {
+        Ok(path) => println!("     screenshot: {} ({endpoint})", path.display()),
+        Err(err) => println!("     screenshot not saved ({err}); fetch {endpoint}"),
+    }
 }
