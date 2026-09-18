@@ -51,6 +51,15 @@ pub fn ensure_quickshell(
     ensure_session(base, name, "quickshell", Some(path), owner)
 }
 
+pub fn ensure_ratatui(
+    base: &str,
+    name: &str,
+    path: &str,
+    owner: Option<&str>,
+) -> Result<AgentInfo> {
+    ensure_session(base, name, "ratatui", Some(path), owner)
+}
+
 fn ensure_session(
     base: &str,
     name: &str,
@@ -84,6 +93,12 @@ pub fn status(base: &str) -> Result<()> {
         if session.kind == "quickshell" {
             println!(
                 "{:<24} quickshell {}",
+                session.name,
+                session.path.as_deref().unwrap_or("(unknown path)")
+            );
+        } else if session.kind == "ratatui" {
+            println!(
+                "{:<24} ratatui {}",
                 session.name,
                 session.path.as_deref().unwrap_or("(unknown path)")
             );

@@ -38,6 +38,9 @@ enum Command {
         /// Start a Quickshell session from this file or configuration directory.
         #[arg(long, value_name = "PATH")]
         quickshell: Option<String>,
+        /// Start a Ratatui session from this app binary.
+        #[arg(long, value_name = "PATH")]
+        ratatui: Option<String>,
     },
     /// List active sessions.
     Status,
@@ -65,18 +68,27 @@ fn main() -> anyhow::Result<()> {
             name,
             owner,
             quickshell,
+            ratatui,
         } => {
-            let info = match quickshell {
-                Some(path) => client::ensure_quickshell(&cli.url, &name, &path, owner.as_deref())?,
-                None => client::ensure(&cli.url, &name, owner.as_deref())?,
+            let info = match (quickshell, ratatui) {
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("choose either --quickshell or --ratatui, not both")
+                }
+                (Some(path), None) => {
+                    client::ensure_quickshell(&cli.url, &name, &path, owner.as_deref())?
+                }
+                (None, Some(path)) => {
+                    client::ensure_ratatui(&cli.url, &name, &path, owner.as_deref())?
+                }
+                (None, None) => client::ensure(&cli.url, &name, owner.as_deref())?,
             };
-            if info.kind == "quickshell" {
-                println!(
-                    "quickshell {}",
+            match info.kind.as_str() {
+                "quickshell" | "ratatui" => println!(
+                    "{} {}",
+                    info.kind,
                     info.path.as_deref().unwrap_or("(unknown path)")
-                );
-            } else {
-                println!("{}", info.cdp_endpoint);
+                ),
+                _ => println!("{}", info.cdp_endpoint),
             }
             Ok(())
         }
