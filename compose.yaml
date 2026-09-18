@@ -55,6 +55,8 @@ services:
       LUMEN_SWAY: ${LUMEN_SWAY:-sway}
       LUMEN_QUICKSHELL: ${LUMEN_QUICKSHELL:-quickshell}
       LUMEN_WTYPE: ${LUMEN_WTYPE:-wtype}
+      LUMEN_TUI_COLS: ${LUMEN_TUI_COLS:-120}
+      LUMEN_TUI_ROWS: ${LUMEN_TUI_ROWS:-40}
       # Deliberately not ${RUST_LOG}: a globally exported RUST_LOG in the
       # operator's shell would silently override the service's log level.
       RUST_LOG: ${LUMEN_LOG:-lumen=info}

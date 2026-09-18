@@ -167,6 +167,16 @@ impl Config {
         if let Ok(wtype_bin) = std::env::var("LUMEN_WTYPE") {
             config.wtype_bin = wtype_bin;
         }
+        if let Ok(tui_cols) = std::env::var("LUMEN_TUI_COLS") {
+            config.tui_cols = tui_cols
+                .parse()
+                .with_context(|| format!("invalid LUMEN_TUI_COLS '{tui_cols}'"))?;
+        }
+        if let Ok(tui_rows) = std::env::var("LUMEN_TUI_ROWS") {
+            config.tui_rows = tui_rows
+                .parse()
+                .with_context(|| format!("invalid LUMEN_TUI_ROWS '{tui_rows}'"))?;
+        }
 
         Ok(config)
     }

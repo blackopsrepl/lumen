@@ -32,7 +32,7 @@ A production `lumen` container usually runs on 8899 with host networking and liv
 
 ## Config and deployment facts
 
-- Config layering in `src/config.rs::Config::load`: `LUMEN_CONFIG` file (default `config/lumen.toml`), then `LUMEN_PORT`, `LUMEN_CHROME`, `LUMEN_SWAY`, `LUMEN_QUICKSHELL`, and `LUMEN_WTYPE` env overrides.
+- Config layering in `src/config.rs::Config::load`: `LUMEN_CONFIG` file (default `config/lumen.toml`), then `LUMEN_PORT`, `LUMEN_CHROME`, `LUMEN_SWAY`, `LUMEN_QUICKSHELL`, `LUMEN_WTYPE`, `LUMEN_TUI_COLS`, and `LUMEN_TUI_ROWS` env overrides.
 - `compose.yaml` must forward every config surface the service reads and the healthcheck must probe the same port — these were once out of sync. The container's log level is `LUMEN_LOG`; never interpolate the host's `RUST_LOG`, which leaks in from the operator's shell.
 - `bin/up.sh` converges: it recreates the container only when the running image's `org.opencontainers.image.revision` label differs from the checkout's, because compose otherwise keeps an old container serving a stale binary. Image ids cannot be compared directly — every rebuild produces a new one.
 - Container runs with `network_mode: host`: pages reach host dev servers at `http://127.0.0.1:<port>`; `host.containers.internal` / `host.docker.internal` are mapped to loopback via `extra_hosts`.
