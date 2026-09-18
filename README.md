@@ -8,19 +8,21 @@
   <img src="docs/images/viewer.png" alt="The Lumen viewer: a live browser session on the right, sessions and feedback on the left" width="920">
 </p>
 
-One service that gives every agent its own isolated Chromium or Quickshell desktop
-surface and gives the human a live, controllable view of the same session. Agents
-drive real pages over a capability API or CDP; the human watches the active tab or
-desktop, can take over input at any moment, and leaves annotated feedback the
-agent reads back.
+One service that gives every agent its own isolated Chromium, Quickshell desktop,
+or ratatui terminal surface and gives the human a live, controllable view of the
+same session. Agents drive real pages over a capability API or CDP, render
+terminals as text, and desktop surfaces natively; the human watches the active
+tab, desktop, or grid, can take over input at any moment, and leaves annotated
+feedback the agent reads back.
 
 ## How it fits together
 
 - **Control plane** — an HTTP/JSON API (`/v1/...`) for sessions, browser
-  navigation, tabs, viewport, screenshots, and raw CDP.
+  navigation, tabs, viewport, screenshots, terminal text, and raw CDP.
 - **View plane** — browser sessions use CDP screencasting; Quickshell sessions use
-  native Wayland screencopy. Both are rendered to the same viewer canvas, and
-  zoom is view-only.
+  native Wayland screencopy; ratatui sessions stream styled cells from the app's
+  own buffer diff. All three are rendered to the same viewer canvas, and zoom is
+  view-only.
 - **Feedback** — humans drag a rectangle, type a note; it lands in SQLite and
   the agent picks it up with one command. No watcher, no polling surface files.
 
@@ -113,6 +115,44 @@ the Avenge Media Dank Linux PPA and is installed from the Ubuntu 25.10 package
 repositories because Quickshell requires Qt 6.6 or newer. Host deployments may
 still override the binary paths through configuration or environment variables.
 
+## Run a ratatui terminal
+
+A ratatui session runs an app that links the `lumen-ratatui` crate. The path must
+be an absolute path to the app binary, and the binary must be executable:
+
+```bash
+cargo build --release -p lumen-ratatui --example trex
+lumen ensure trex --ratatui "$PWD/target/release/examples/trex" --owner tui-agent
+lumen ensure trex --ratatui /path/to/target/release/examples/trex --owner tui-agent
+```
+
+There is no PTY and no terminal emulator. The app builds a normal ratatui
+`Terminal` on a `LumenBackend`, and ratatui's own buffer diff — only the cells
+that changed — is the transport. Lumen mirrors those cells into an authoritative
+grid and streams it to the viewer, so the viewer paints cells, not pixels.
+
+Because the grid is structured, an agent reads a session's screen as text with no
+screenshot and no vision:
+
+```bash
+curl http://127.0.0.1:8899/v1/sessions/trex/screen
+```
+
+The app owns rendering and the service owns the grid. A viewer that connects
+late, or falls behind, receives the next full snapshot and is consistent again.
+Initial geometry comes from `tui_cols` and `tui_rows` (or `LUMEN_TUI_COLS` and
+`LUMEN_TUI_ROWS`); the viewer scales the grid to fit. Terminal sessions support
+keys, text, mouse, and wheel in cell coordinates, and `POST
+/v1/sessions/{name}/screenshot` is refused in favour of `/screen`.
+
+The viewer can also create a ratatui session with the session-type selector. To
+run the demo under Lumen, point it at the built `trex` example; the app exits
+immediately when it is not launched by the service.
+
+<p align="center">
+  <img src="docs/images/viewer-ratatui.png" alt="The Lumen viewer running the trex ratatui example: the T-Rex dodges cacti on a cell grid, with the session and feedback panels on the left" width="920">
+</p>
+
 The service also exposes the same capabilities over plain HTTP:
 
 | Capability | Endpoint |
@@ -122,6 +162,7 @@ The service also exposes the same capabilities over plain HTTP:
 | tabs | `GET/POST /v1/sessions/{name}/tabs`, `POST …/{index}/activate`, `DELETE …/{index}` |
 | viewport / page scale | `PUT/DELETE /v1/sessions/{name}/viewport`, `PUT …/page-scale` |
 | screenshot | `POST /v1/sessions/{name}/screenshot?full=true` |
+| terminal screen | `GET /v1/sessions/{name}/screen` (ratatui, plain text) |
 | raw CDP | `POST /v1/sessions/{name}/cdp` |
 | stream + input | `GET /v1/sessions/{name}/stream` (WebSocket) |
 | feedback | `GET/POST /v1/sessions/{name}/feedback`, `GET …/feedback/{id}/screenshot`, `POST …/ack-all` |
@@ -243,15 +284,22 @@ Quickshell configuration is executable QML supplied by the caller. Lumen
 validates that the path is absolute and exists, but does not sandbox the QML or
 its child processes; only pass paths trusted by the service operator.
 
+A ratatui session path names an executable program, so it is a stronger version
+of the same boundary: Lumen checks that the path is absolute, exists, and is
+executable, which keeps a typo from starting something unintended, but the app
+runs with the service's privileges. The host navigation policy covers HTTP
+browsing and does not constrain what an app does on the network.
+
 ## Layout
 
 ```
 Containerfile          multi-stage image: Rust builder -> Playwright runtime
 compose.yaml           one service (host network, /data volume)
 config/lumen.toml      the only config file
-src/                   supervisor, cdp, desktop, capabilities, view, feedback, client, http
+src/                   supervisor, cdp, desktop, ratatui, capabilities, view, feedback, client, http
+crates/lumen-ratatui/  app-side backend, session, and wire protocol (built by terminal apps)
 ui/                    no-build viewer (ES modules + CSS), embedded in the binary
-tests/e2e/             Playwright suite (viewer, API, lifecycle)
+tests/e2e/             Playwright suite (viewer, API, lifecycle, ratatui)
 docs/                  screenshots and images
 systemd/lumen.service  the only unit
 bin/                   bootstrap, build/up/down, install, pw.sh, smoke
