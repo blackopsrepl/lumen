@@ -1,5 +1,6 @@
 use crate::cdp::CdpSession;
 use crate::desktop::DesktopSession;
+use crate::ratatui::RatatuiSession;
 use base64::Engine as _;
 use bytes::Bytes;
 use chromiumoxide::cdp::browser_protocol::page::EventScreencastFrame;
@@ -88,8 +89,18 @@ impl Drop for ViewSubscription {
             runtime.spawn(async move {
                 hub.stop_if_unused().await;
             });
-        } else if let ViewSource::Desktop(session) = &hub.source {
-            let _ = session.set_streaming(false);
+        } else {
+            match &hub.source {
+                ViewSource::Desktop(session) => {
+                    let _ = session.set_streaming(false);
+                }
+                ViewSource::Ratatui(session) => {
+                    let _ = session.set_streaming(false);
+                }
+                ViewSource::Browser(_) => {}
+                #[cfg(test)]
+                ViewSource::Test { .. } => {}
+            }
         }
     }
 }
@@ -98,6 +109,7 @@ impl Drop for ViewSubscription {
 enum ViewSource {
     Browser(Arc<CdpSession>),
     Desktop(Arc<DesktopSession>),
+    Ratatui(Arc<RatatuiSession>),
     #[cfg(test)]
     Test {
         starts: Arc<AtomicUsize>,
@@ -127,6 +139,21 @@ impl ViewHub {
         let (closed, _) = watch::channel(false);
         Self {
             source: ViewSource::Desktop(session),
+            frames,
+            closed,
+            started: Arc::new(AtomicBool::new(false)),
+            subscribers: AtomicUsize::new(0),
+            lifecycle: Mutex::new(()),
+            pump: Mutex::new(None),
+            control: Mutex::new(Control::Agent),
+        }
+    }
+
+    pub fn new_ratatui(session: Arc<RatatuiSession>) -> Self {
+        let (frames, _) = watch::channel(None);
+        let (closed, _) = watch::channel(false);
+        Self {
+            source: ViewSource::Ratatui(session),
             frames,
             closed,
             started: Arc::new(AtomicBool::new(false)),
@@ -198,6 +225,7 @@ impl ViewHub {
         // publish its only frame synchronously and never damage again.
         let desktop_stream = match &self.source {
             ViewSource::Desktop(session) => Some(session.frames()),
+            ViewSource::Ratatui(session) => Some(session.frames()),
             ViewSource::Browser(_) => None,
             #[cfg(test)]
             ViewSource::Test { source_frames, .. } => Some(source_frames.subscribe()),
@@ -221,6 +249,13 @@ impl ViewHub {
             ViewSource::Desktop(session) => {
                 if let Err(err) = session.set_streaming(true) {
                     tracing::warn!("starting desktop capture failed: {err}");
+                    return;
+                }
+                (None, None)
+            }
+            ViewSource::Ratatui(session) => {
+                if let Err(err) = session.set_streaming(true) {
+                    tracing::warn!("starting terminal capture failed: {err}");
                     return;
                 }
                 (None, None)
@@ -283,6 +318,9 @@ impl ViewHub {
                 let _ = session.stop_screencast().await;
             }
             ViewSource::Desktop(session) => {
+                let _ = session.set_streaming(false);
+            }
+            ViewSource::Ratatui(session) => {
                 let _ = session.set_streaming(false);
             }
             #[cfg(test)]

@@ -28,6 +28,10 @@ pub struct Config {
     pub quickshell_bin: String,
     /// wtype binary used for desktop text input.
     pub wtype_bin: String,
+    /// Grid width, in columns, a ratatui session starts at.
+    pub tui_cols: u16,
+    /// Grid height, in rows, a ratatui session starts at.
+    pub tui_rows: u16,
     /// Viewport every browser or desktop session starts at, before any explicit override.
     pub default_viewport: Viewport,
     /// SQLite database holding human feedback for each session.
@@ -119,6 +123,8 @@ impl Default for Config {
             sway_bin: "sway".into(),
             quickshell_bin: "quickshell".into(),
             wtype_bin: "wtype".into(),
+            tui_cols: 120,
+            tui_rows: 40,
             default_viewport: Viewport {
                 width: 1440,
                 height: 900,

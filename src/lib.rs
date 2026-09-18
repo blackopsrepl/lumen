@@ -4,5 +4,6 @@ pub mod config;
 pub mod desktop;
 pub mod feedback;
 pub mod http;
+pub mod ratatui;
 pub mod supervisor;
 pub mod view;

@@ -1,10 +1,11 @@
 use crate::cdp::{CdpSession, NavigationBlocked, OnlyManagedTab, TabInfo};
 use crate::config::{Config, Viewport};
-use crate::desktop::{DesktopSession, MouseAction};
+use crate::desktop::MouseAction;
 use crate::feedback::{AuditEntry, Feedback, FeedbackStore};
+use crate::ratatui::RatatuiSession;
 use crate::supervisor::{
-    is_valid_agent_name, AgentBrowser, AgentInfo, InvalidAgentName, InvalidQuickshellPath, Origin,
-    SessionBackend, SessionConflict, SessionKind, Supervisor,
+    is_valid_agent_name, AgentBrowser, AgentInfo, InvalidAgentName, InvalidQuickshellPath,
+    InvalidRatatuiPath, Origin, SessionBackend, SessionConflict, SessionKind, Supervisor,
 };
 use crate::view::{Control, ViewHub};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -17,6 +18,7 @@ use axum::{Json, Router};
 use base64::Engine as _;
 use chromiumoxide::cdp::browser_protocol::input::{DispatchMouseEventType, MouseButton};
 use futures::{SinkExt, StreamExt};
+use lumen_ratatui::protocol::{KeyCode, MouseButton as RatatuiMouseButton, MouseKind};
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -114,6 +116,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/sessions/{name}/tabs/{index}", delete(close_tab))
         .route("/v1/sessions/{name}/screenshot", post(screenshot))
+        .route("/v1/sessions/{name}/screen", get(screen))
         .route("/v1/sessions/{name}/cdp", post(raw_cdp))
         .route("/v1/audit", get(list_audit))
         .route("/v1/sessions/{name}/visibility", put(set_visibility))
@@ -277,11 +280,11 @@ fn browser_session(agent: &AgentBrowser) -> Result<Arc<CdpSession>, ApiError> {
         .ok_or_else(|| ApiError::conflict("operation is only available for browser sessions"))
 }
 
-fn desktop_session(agent: &AgentBrowser) -> Result<Arc<DesktopSession>, ApiError> {
+fn ratatui_session(agent: &AgentBrowser) -> Result<Arc<RatatuiSession>, ApiError> {
     agent
         .backend
-        .desktop()
-        .ok_or_else(|| ApiError::conflict("operation is only available for Quickshell sessions"))
+        .ratatui()
+        .ok_or_else(|| ApiError::conflict("operation is only available for Ratatui sessions"))
 }
 
 async fn view_session(supervisor: &Supervisor, name: &str) -> Result<Arc<AgentBrowser>, ApiError> {
@@ -324,6 +327,11 @@ async fn create_session(
     if body.kind == SessionKind::Quickshell && body.path.is_none() {
         return Err(ApiError::bad_request(
             "Quickshell sessions require a path to shell.qml",
+        ));
+    }
+    if body.kind == SessionKind::Ratatui && body.path.is_none() {
+        return Err(ApiError::bad_request(
+            "Ratatui sessions require a path to the app binary",
         ));
     }
     let origin = body.origin.unwrap_or(Origin::Manual);
@@ -527,15 +535,39 @@ async fn screenshot(
     let agent = view_session(&state.supervisor, &name).await?;
     let png = if let Some(session) = agent.backend.browser() {
         session.screenshot(query.full).await?
-    } else {
+    } else if let Some(session) = agent.backend.desktop() {
         if query.full {
             return Err(ApiError::conflict(
                 "full-page screenshots are only available for browser sessions",
             ));
         }
-        desktop_session(&agent)?.screenshot().await?
+        session.screenshot().await?
+    } else {
+        return Err(ApiError::conflict(
+            "Ratatui sessions render to cells, not pixels; read GET /v1/sessions/{name}/screen",
+        ));
     };
     Ok(([(header::CONTENT_TYPE, "image/png")], png).into_response())
+}
+
+/// Return a ratatui session's authoritative grid as plain text.
+///
+/// This is the terminal equivalent of the browser's DOM: an agent can read the
+/// screen without a terminal emulator or a screenshot.
+async fn screen(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Response, ApiError> {
+    if !is_valid_agent_name(&name) {
+        return Err(ApiError::bad_request("invalid agent name"));
+    }
+    let agent = state
+        .supervisor
+        .existing(&name)
+        .await
+        .ok_or_else(|| ApiError::not_found(format!("session '{name}' not found")))?;
+    let text = ratatui_session(&agent)?.screen_text();
+    Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response())
 }
 
 #[derive(Deserialize)]
@@ -816,6 +848,12 @@ enum Command {
     Text {
         text: String,
     },
+    /// A key press for terminal sessions, in the protocol's key encoding.
+    Key {
+        code: KeyCode,
+        #[serde(default)]
+        mods: u8,
+    },
     Control {
         action: String,
     },
@@ -871,6 +909,20 @@ async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> O
                         .mouse(action, x, y, button.as_deref().unwrap_or("left"))
                         .await
                 }
+                SessionBackend::Ratatui(session) => {
+                    let kind = match action {
+                        MouseAction::Down => MouseKind::Down,
+                        MouseAction::Up => MouseKind::Up,
+                        MouseAction::Move => MouseKind::Moved,
+                    };
+                    let button = match button.as_deref() {
+                        Some("right") => RatatuiMouseButton::Right,
+                        Some("middle") => RatatuiMouseButton::Middle,
+                        Some("left") | None => RatatuiMouseButton::Left,
+                        Some(_) => RatatuiMouseButton::None,
+                    };
+                    session.mouse(kind, x.max(0.0) as u16, y.max(0.0) as u16, button, 0)
+                }
             };
             match result {
                 Ok(()) => None,
@@ -884,6 +936,20 @@ async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> O
             let result = match backend {
                 SessionBackend::Browser(session) => session.wheel(x, y, dx, dy).await,
                 SessionBackend::Quickshell(session) => session.wheel(dx, dy).await,
+                SessionBackend::Ratatui(session) => {
+                    let kind = if dy >= 0.0 {
+                        MouseKind::ScrollUp
+                    } else {
+                        MouseKind::ScrollDown
+                    };
+                    session.mouse(
+                        kind,
+                        x.max(0.0) as u16,
+                        y.max(0.0) as u16,
+                        RatatuiMouseButton::None,
+                        0,
+                    )
+                }
             };
             match result {
                 Ok(()) => None,
@@ -897,10 +963,25 @@ async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> O
             let result = match backend {
                 SessionBackend::Browser(session) => session.insert_text(&text).await,
                 SessionBackend::Quickshell(session) => session.text(&text).await,
+                SessionBackend::Ratatui(session) => session.text(&text),
             };
             match result {
                 Ok(()) => None,
                 Err(err) => Some(error_event(err.to_string())),
+            }
+        }
+        Command::Key { code, mods } => {
+            if hub.control().await != Control::Human {
+                return None;
+            }
+            match backend {
+                SessionBackend::Ratatui(session) => match session.key(code, mods) {
+                    Ok(()) => None,
+                    Err(err) => Some(error_event(err.to_string())),
+                },
+                _ => Some(error_event(
+                    "key input is only available for Ratatui sessions".into(),
+                )),
             }
         }
     }
@@ -952,6 +1033,9 @@ impl From<anyhow::Error> for ApiError {
             return Self::BadRequest(invalid.to_string());
         }
         if let Some(invalid) = err.downcast_ref::<InvalidQuickshellPath>() {
+            return Self::BadRequest(invalid.to_string());
+        }
+        if let Some(invalid) = err.downcast_ref::<InvalidRatatuiPath>() {
             return Self::BadRequest(invalid.to_string());
         }
         if let Some(conflict) = err.downcast_ref::<SessionConflict>() {

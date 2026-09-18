@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 use crate::cdp::CdpSession;
 use crate::config::Config;
 use crate::desktop::DesktopSession;
+use crate::ratatui::RatatuiSession;
 use crate::view::ViewHub;
 
 /// Subdirectory of `data_dir` that holds ephemeral session profiles.
@@ -71,6 +72,7 @@ pub enum SessionKind {
     #[default]
     Browser,
     Quickshell,
+    Ratatui,
 }
 
 /// The live backend behind a session.
@@ -78,6 +80,7 @@ pub enum SessionKind {
 pub enum SessionBackend {
     Browser(Arc<CdpSession>),
     Quickshell(Arc<DesktopSession>),
+    Ratatui(Arc<RatatuiSession>),
 }
 
 impl SessionBackend {
@@ -85,20 +88,28 @@ impl SessionBackend {
         match self {
             Self::Browser(_) => SessionKind::Browser,
             Self::Quickshell(_) => SessionKind::Quickshell,
+            Self::Ratatui(_) => SessionKind::Ratatui,
         }
     }
 
     pub fn browser(&self) -> Option<Arc<CdpSession>> {
         match self {
             Self::Browser(session) => Some(session.clone()),
-            Self::Quickshell(_) => None,
+            Self::Quickshell(_) | Self::Ratatui(_) => None,
         }
     }
 
     pub fn desktop(&self) -> Option<Arc<DesktopSession>> {
         match self {
-            Self::Browser(_) => None,
+            Self::Browser(_) | Self::Ratatui(_) => None,
             Self::Quickshell(session) => Some(session.clone()),
+        }
+    }
+
+    pub fn ratatui(&self) -> Option<Arc<RatatuiSession>> {
+        match self {
+            Self::Browser(_) | Self::Quickshell(_) => None,
+            Self::Ratatui(session) => Some(session.clone()),
         }
     }
 }
@@ -173,6 +184,17 @@ impl fmt::Display for InvalidQuickshellPath {
 }
 
 impl std::error::Error for InvalidQuickshellPath {}
+
+#[derive(Debug)]
+pub struct InvalidRatatuiPath(pub String);
+
+impl fmt::Display for InvalidRatatuiPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for InvalidRatatuiPath {}
 
 impl AgentBrowser {
     pub async fn info(&self) -> AgentInfo {
@@ -257,6 +279,7 @@ impl Supervisor {
             }
             SessionKind::Browser => None,
             SessionKind::Quickshell => Some(validate_quickshell_path(path)?),
+            SessionKind::Ratatui => Some(validate_ratatui_path(path)?),
         };
 
         self.reap_dead().await;
@@ -420,6 +443,17 @@ impl Supervisor {
                 .await?;
                 (SessionBackend::Quickshell(session), String::new(), None)
             }
+            SessionKind::Ratatui => {
+                let bin = path.as_deref().expect("validated Ratatui path");
+                let session = RatatuiSession::launch(
+                    bin,
+                    &profile,
+                    self.config.tui_cols,
+                    self.config.tui_rows,
+                )
+                .await?;
+                (SessionBackend::Ratatui(session), String::new(), None)
+            }
         };
         let view = match &backend {
             SessionBackend::Browser(session) => {
@@ -428,6 +462,7 @@ impl Supervisor {
                 view
             }
             SessionBackend::Quickshell(session) => Arc::new(ViewHub::new_desktop(session.clone())),
+            SessionBackend::Ratatui(session) => Arc::new(ViewHub::new_ratatui(session.clone())),
         };
 
         tracing::info!(agent = name, ?kind, profile = %profile.display(), "agent session ready");
@@ -498,6 +533,7 @@ impl AgentBrowser {
                 session.is_alive() && child_alive
             }
             SessionBackend::Quickshell(session) => session.is_alive().await,
+            SessionBackend::Ratatui(session) => session.is_alive().await,
         }
     }
 
@@ -511,6 +547,7 @@ impl AgentBrowser {
                 }
             }
             SessionBackend::Quickshell(session) => session.shutdown().await,
+            SessionBackend::Ratatui(session) => session.shutdown().await,
         }
         let _ = purge_profile(self.profile.clone()).await;
     }
@@ -523,7 +560,7 @@ impl AgentBrowser {
 /// the browser was spawned with its own process group, signalling the group
 /// reaches all of them: SIGTERM first for a clean shutdown, SIGKILL if the
 /// group is still alive shortly after.
-async fn terminate_process_group(child: &mut Child) {
+pub(crate) async fn terminate_process_group(child: &mut Child) {
     let Some(pid) = child.id() else {
         return;
     };
@@ -966,6 +1003,43 @@ fn validate_quickshell_path(path: Option<PathBuf>) -> Result<PathBuf> {
             path.display()
         ))
     })?)
+}
+
+/// Validate a ratatui app path and return it canonicalized.
+///
+/// The path names an executable that links `lumen-ratatui`; like a Quickshell
+/// path, this is a file-existence check, not a sandbox. Lumen executes whatever
+/// binary it is pointed at.
+fn validate_ratatui_path(path: Option<PathBuf>) -> Result<PathBuf> {
+    let path = path.ok_or_else(|| {
+        InvalidRatatuiPath("Ratatui sessions require a path to the app binary".into())
+    })?;
+    if !path.is_absolute() {
+        return Err(InvalidRatatuiPath("Ratatui path must be absolute".into()).into());
+    }
+    let metadata = std::fs::metadata(&path).map_err(|err| {
+        InvalidRatatuiPath(format!("reading Ratatui path {}: {err}", path.display()))
+    })?;
+    if !metadata.is_file() {
+        return Err(InvalidRatatuiPath("Ratatui path must be an executable file".into()).into());
+    }
+    if is_executable(&metadata) {
+        return Ok(std::fs::canonicalize(&path).map_err(|err| {
+            InvalidRatatuiPath(format!("resolving Ratatui path {}: {err}", path.display()))
+        })?);
+    }
+    Err(InvalidRatatuiPath(format!("Ratatui path {} is not executable", path.display())).into())
+}
+
+#[cfg(unix)]
+fn is_executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &std::fs::Metadata) -> bool {
+    true
 }
 
 #[cfg(test)]

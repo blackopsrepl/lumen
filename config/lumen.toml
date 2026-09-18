@@ -9,6 +9,10 @@ chrome_bin = "chromium"
 sway_bin = "sway"
 quickshell_bin = "quickshell"
 wtype_bin = "wtype"
+# Grid a ratatui session starts at. The app links lumen-ratatui and renders
+# into this many columns and rows; the viewer scales it to fit.
+tui_cols = 120
+tui_rows = 40
 feedback_db = "/data/feedback.db"
 audit_retain = 10000
 
