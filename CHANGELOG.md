@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.13.2](https://github.com/blackopsrepl/lumen/compare/v0.13.1...v0.13.2) (2026-09-20)
+
+### Bug Fixes
+
+* **deploy:** mount one projects root for every caller-supplied path ([07bc867](https://github.com/blackopsrepl/lumen/commit/07bc86755f9c7697c8e3999d4e88c24972dc0563))
+
 ## [0.13.1](https://github.com/blackopsrepl/lumen/compare/v0.13.0...v0.13.1) (2026-09-20)
 
 ### Features
