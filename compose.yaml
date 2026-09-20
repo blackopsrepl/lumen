@@ -12,7 +12,7 @@ x-podman:
 
 services:
   lumen:
-    image: localhost/lumen:${LUMEN_VERSION:-0.13.0}
+    image: localhost/lumen:${LUMEN_VERSION:-0.13.1}
     build:
       context: .
       dockerfile: Containerfile

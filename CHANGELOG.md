@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.13.1](https://github.com/blackopsrepl/lumen/compare/v0.13.0...v0.13.1) (2026-09-20)
+
+### Features
+
+* **accessibility:** add an AT-SPI client for desktop sessions ([f7cdbcb](https://github.com/blackopsrepl/lumen/commit/f7cdbcb4c809f7e05bc6bcdeb745a0d2a66809ae))
+* **accessibility:** expose trees and element actions over HTTP ([83cedb4](https://github.com/blackopsrepl/lumen/commit/83cedb44a356eba671f47bcd100efbbd389a64cb))
+* **cli:** manage Qt sessions and drive their accessibility tree ([3e16499](https://github.com/blackopsrepl/lumen/commit/3e164990e3a9226918a2deb1562f65ad5c537d71))
+* **image:** ship dbus and the AT-SPI bus ([5055e9f](https://github.com/blackopsrepl/lumen/commit/5055e9f3933768f868b7231c0174b2c394dcaf2b))
+* **qt:** add a Qt application session kind ([8438f4a](https://github.com/blackopsrepl/lumen/commit/8438f4a7af6b5c2afc230754039ca077d39a7ee2))
+
+### Bug Fixes
+
+* **desktop:** start the accessibility registry eagerly ([a8aeed4](https://github.com/blackopsrepl/lumen/commit/a8aeed4f810b0dc4a4f5521c5075974fc05117b9))
+
 ## [0.13.0](https://github.com/blackopsrepl/lumen/compare/v0.12.1...v0.13.0) (2026-09-18)
 
 ### Features
