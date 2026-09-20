@@ -72,6 +72,10 @@ const sessionPath = (name) => `/v1/sessions/${encodeURIComponent(name)}`;
 const CELL_KINDS = new Set(["ratatui", "terminal"]);
 const isCellSession = () => CELL_KINDS.has(state.sessionKind);
 
+// Session kinds with a desktop surface and no browser navigation.
+const DESKTOP_KINDS = new Set(["quickshell", "qt"]);
+const isDesktopSession = () => DESKTOP_KINDS.has(state.sessionKind);
+
 function setState(next) {
   document.body.dataset.state = next;
 }
@@ -770,7 +774,7 @@ async function connect(name) {
   if (state.session !== name) return;
 
   state.sessionKind = info.kind;
-  const terminal = info.kind === "quickshell" || info.kind === "ratatui";
+  const terminal = isDesktopSession() || isCellSession();
   const endpoint = terminal
     ? `${info.kind} · ${info.path || "unknown path"}`
     : info.cdp_endpoint;
@@ -887,14 +891,16 @@ async function decodeFrame(decoder, buffer) {
 
 async function pollInfo() {
   if (!state.session) return;
-  if (isCellSession() || state.sessionKind === "quickshell") {
+  if (isCellSession() || isDesktopSession()) {
     el("url").value = "";
     el("url").title = "This session kind does not have browser navigation";
-    const label = state.sessionKind === "quickshell"
-      ? "Quickshell desktop"
-      : state.sessionKind === "ratatui"
-        ? "Ratatui terminal"
-        : "Terminal";
+    const label = state.sessionKind === "qt"
+      ? "Qt application"
+      : state.sessionKind === "quickshell"
+        ? "Quickshell desktop"
+        : state.sessionKind === "ratatui"
+          ? "Ratatui terminal"
+          : "Terminal";
     el("page-title").textContent = label;
     document.title = `${label} · ${state.session} · Lumen`;
     return;
@@ -948,7 +954,9 @@ el("new-kind").onchange = () => {
   el("new-path").hidden = kind === "browser";
   el("new-path").placeholder = kind === "quickshell"
     ? "shell.qml or directory"
-    : "ratatui app binary (absolute)";
+    : kind === "qt"
+      ? "Qt app command (absolute)"
+      : "ratatui app binary (absolute)";
 };
 
 el("new-session").onsubmit = async (event) => {
@@ -958,7 +966,8 @@ el("new-session").onsubmit = async (event) => {
   const kind = el("new-kind").value;
   const path = el("new-path").value.trim();
   if (kind !== "browser" && !path) {
-    toast(`${kind === "quickshell" ? "Quickshell" : "Ratatui"} sessions need a path`, "error");
+    const label = kind === "quickshell" ? "Quickshell" : kind === "qt" ? "Qt" : "Ratatui";
+    toast(`${label} sessions need a path`, "error");
     el("new-path").focus();
     return;
   }

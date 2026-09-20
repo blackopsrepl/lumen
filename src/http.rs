@@ -3,9 +3,9 @@ use crate::config::{Config, Viewport};
 use crate::desktop::MouseAction;
 use crate::feedback::{AuditEntry, Feedback, FeedbackStore};
 use crate::supervisor::{
-    is_valid_agent_name, AgentBrowser, AgentInfo, InvalidAgentName, InvalidQuickshellPath,
-    InvalidRatatuiPath, InvalidTerminalCommand, Origin, SessionBackend, SessionConflict,
-    SessionKind, Supervisor, TerminalBackend,
+    is_valid_agent_name, AgentBrowser, AgentInfo, InvalidAgentName, InvalidQtCommand,
+    InvalidQuickshellPath, InvalidRatatuiPath, InvalidTerminalCommand, Origin, SessionBackend,
+    SessionConflict, SessionKind, Supervisor, TerminalBackend,
 };
 use crate::view::{Control, ViewHub};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -337,6 +337,11 @@ async fn create_session(
     if body.kind == SessionKind::Terminal && body.path.is_none() {
         return Err(ApiError::bad_request(
             "Terminal sessions require a command to run",
+        ));
+    }
+    if body.kind == SessionKind::Qt && body.path.is_none() {
+        return Err(ApiError::bad_request(
+            "Qt sessions require a command to run",
         ));
     }
     let origin = body.origin.unwrap_or(Origin::Manual);
@@ -909,7 +914,7 @@ async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> O
                     };
                     session.mouse(kind, x, y, button).await
                 }
-                SessionBackend::Quickshell(session) => {
+                SessionBackend::Quickshell(session) | SessionBackend::Qt(session) => {
                     session
                         .mouse(action, x, y, button.as_deref().unwrap_or("left"))
                         .await
@@ -949,7 +954,9 @@ async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> O
             }
             let result = match backend {
                 SessionBackend::Browser(session) => session.wheel(x, y, dx, dy).await,
-                SessionBackend::Quickshell(session) => session.wheel(dx, dy).await,
+                SessionBackend::Quickshell(session) | SessionBackend::Qt(session) => {
+                    session.wheel(dx, dy).await
+                }
                 SessionBackend::Ratatui(session) => {
                     let kind = if dy >= 0.0 {
                         MouseKind::ScrollUp
@@ -990,7 +997,9 @@ async fn handle_command(hub: &ViewHub, backend: &SessionBackend, raw: &str) -> O
             }
             let result = match backend {
                 SessionBackend::Browser(session) => session.insert_text(&text).await,
-                SessionBackend::Quickshell(session) => session.text(&text).await,
+                SessionBackend::Quickshell(session) | SessionBackend::Qt(session) => {
+                    session.text(&text).await
+                }
                 SessionBackend::Ratatui(session) => session.text(&text),
                 SessionBackend::Terminal(session) => session.text(&text),
             };
@@ -1082,6 +1091,9 @@ impl From<anyhow::Error> for ApiError {
             return Self::BadRequest(invalid.to_string());
         }
         if let Some(invalid) = err.downcast_ref::<InvalidTerminalCommand>() {
+            return Self::BadRequest(invalid.to_string());
+        }
+        if let Some(invalid) = err.downcast_ref::<InvalidQtCommand>() {
             return Self::BadRequest(invalid.to_string());
         }
         if let Some(conflict) = err.downcast_ref::<SessionConflict>() {

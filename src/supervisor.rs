@@ -74,6 +74,10 @@ pub enum SessionKind {
     #[default]
     Browser,
     Quickshell,
+    /// A Qt application on a headless Wayland output. Unlike `Quickshell`, the
+    /// caller supplies any executable, and the session exposes an accessibility
+    /// tree an agent can read and click.
+    Qt,
     Ratatui,
     /// A program run in a real pseudoterminal and parsed into a grid. This is
     /// the generic path: the program needs no Lumen support, unlike `Ratatui`.
@@ -85,6 +89,7 @@ pub enum SessionKind {
 pub enum SessionBackend {
     Browser(Arc<CdpSession>),
     Quickshell(Arc<DesktopSession>),
+    Qt(Arc<DesktopSession>),
     Ratatui(Arc<RatatuiSession>),
     Terminal(Arc<PtySession>),
 }
@@ -94,6 +99,7 @@ impl SessionBackend {
         match self {
             Self::Browser(_) => SessionKind::Browser,
             Self::Quickshell(_) => SessionKind::Quickshell,
+            Self::Qt(_) => SessionKind::Qt,
             Self::Ratatui(_) => SessionKind::Ratatui,
             Self::Terminal(_) => SessionKind::Terminal,
         }
@@ -102,20 +108,20 @@ impl SessionBackend {
     pub fn browser(&self) -> Option<Arc<CdpSession>> {
         match self {
             Self::Browser(session) => Some(session.clone()),
-            Self::Quickshell(_) | Self::Ratatui(_) | Self::Terminal(_) => None,
+            Self::Quickshell(_) | Self::Qt(_) | Self::Ratatui(_) | Self::Terminal(_) => None,
         }
     }
 
     pub fn desktop(&self) -> Option<Arc<DesktopSession>> {
         match self {
             Self::Browser(_) | Self::Ratatui(_) | Self::Terminal(_) => None,
-            Self::Quickshell(session) => Some(session.clone()),
+            Self::Quickshell(session) | Self::Qt(session) => Some(session.clone()),
         }
     }
 
     pub fn ratatui(&self) -> Option<Arc<RatatuiSession>> {
         match self {
-            Self::Browser(_) | Self::Quickshell(_) | Self::Terminal(_) => None,
+            Self::Browser(_) | Self::Quickshell(_) | Self::Qt(_) | Self::Terminal(_) => None,
             Self::Ratatui(session) => Some(session.clone()),
         }
     }
@@ -125,7 +131,7 @@ impl SessionBackend {
         match self {
             Self::Ratatui(session) => Some(TerminalBackend::Ratatui(session.clone())),
             Self::Terminal(session) => Some(TerminalBackend::Pty(session.clone())),
-            Self::Browser(_) | Self::Quickshell(_) => None,
+            Self::Browser(_) | Self::Quickshell(_) | Self::Qt(_) => None,
         }
     }
 }
@@ -269,6 +275,18 @@ impl fmt::Display for InvalidTerminalCommand {
 
 impl std::error::Error for InvalidTerminalCommand {}
 
+/// A Qt command that is missing, not absolute, or not executable.
+#[derive(Debug)]
+pub struct InvalidQtCommand(pub String);
+
+impl fmt::Display for InvalidQtCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for InvalidQtCommand {}
+
 impl AgentBrowser {
     pub async fn info(&self) -> AgentInfo {
         let meta = self.meta.lock().await;
@@ -352,6 +370,7 @@ impl Supervisor {
             }
             SessionKind::Browser => None,
             SessionKind::Quickshell => Some(validate_quickshell_path(path)?),
+            SessionKind::Qt => Some(validate_qt_command(path)?),
             SessionKind::Ratatui => Some(validate_ratatui_path(path)?),
             SessionKind::Terminal => Some(validate_terminal_command(path)?),
         };
@@ -521,6 +540,26 @@ impl Supervisor {
                 .await?;
                 (SessionBackend::Quickshell(session), String::new(), None)
             }
+            SessionKind::Qt => {
+                let command = path
+                    .as_deref()
+                    .expect("validated Qt command")
+                    .to_string_lossy()
+                    .to_string();
+                let (program, args) = crate::pty::parse_command(&command)?;
+                let app = DesktopApp { program, args };
+                let session = DesktopSession::launch(
+                    &self.config.sway_bin,
+                    &app,
+                    &self.config.wtype_bin,
+                    &self.config.dbus_bin,
+                    &profile,
+                    viewport.width,
+                    viewport.height,
+                )
+                .await?;
+                (SessionBackend::Qt(session), String::new(), None)
+            }
             SessionKind::Ratatui => {
                 let bin = path.as_deref().expect("validated Ratatui path");
                 let session = RatatuiSession::launch(
@@ -557,6 +596,7 @@ impl Supervisor {
                 view
             }
             SessionBackend::Quickshell(session) => Arc::new(ViewHub::new_desktop(session.clone())),
+            SessionBackend::Qt(session) => Arc::new(ViewHub::new_desktop(session.clone())),
             SessionBackend::Ratatui(session) => Arc::new(ViewHub::new_ratatui(session.clone())),
             SessionBackend::Terminal(session) => Arc::new(ViewHub::new_pty(session.clone())),
         };
@@ -629,6 +669,7 @@ impl AgentBrowser {
                 session.is_alive() && child_alive
             }
             SessionBackend::Quickshell(session) => session.is_alive().await,
+            SessionBackend::Qt(session) => session.is_alive().await,
             SessionBackend::Ratatui(session) => session.is_alive().await,
             SessionBackend::Terminal(session) => session.is_alive().await,
         }
@@ -644,6 +685,7 @@ impl AgentBrowser {
                 }
             }
             SessionBackend::Quickshell(session) => session.shutdown().await,
+            SessionBackend::Qt(session) => session.shutdown().await,
             SessionBackend::Ratatui(session) => session.shutdown().await,
             SessionBackend::Terminal(session) => session.shutdown().await,
         }
@@ -1148,33 +1190,42 @@ fn is_executable(_metadata: &std::fs::Metadata) -> bool {
 /// Quickshell and ratatui checks, this rejects a typo or a relative path; it is
 /// not a sandbox, and the program runs with the service's privileges.
 fn validate_terminal_command(path: Option<PathBuf>) -> Result<PathBuf> {
-    let path = path.ok_or_else(|| {
-        InvalidTerminalCommand("Terminal sessions require a command to run".into())
-    })?;
+    validate_command(path, "Terminal sessions require a command to run")
+        .map_err(|message| InvalidTerminalCommand(message).into())
+}
+
+/// Validate a Qt application command and return it canonicalized.
+///
+/// A Qt session runs an arbitrary GUI program, so the check is the same as a
+/// terminal command's: absolute and executable, with arguments passed through.
+/// It is a typo check, not a sandbox.
+fn validate_qt_command(path: Option<PathBuf>) -> Result<PathBuf> {
+    validate_command(path, "Qt sessions require a command to run")
+        .map_err(|message| InvalidQtCommand(message).into())
+}
+
+/// Parse and canonicalize an absolute executable command.
+///
+/// The program half is resolved to a canonical path; the argument text is
+/// preserved verbatim. `missing` is the message used when no command was given.
+fn validate_command(path: Option<PathBuf>, missing: &str) -> std::result::Result<PathBuf, String> {
+    let path = path.ok_or_else(|| missing.to_string())?;
     let text = path.to_string_lossy().to_string();
     let (program, _args) = crate::pty::parse_command(&text)
-        .map_err(|err| InvalidTerminalCommand(format!("invalid command {text:?}: {err}")))?;
+        .map_err(|err| format!("invalid command {text:?}: {err}"))?;
     if !program.starts_with('/') {
-        return Err(InvalidTerminalCommand(format!(
-            "terminal program {program:?} must be an absolute path"
-        ))
-        .into());
+        return Err(format!("program {program:?} must be an absolute path"));
     }
     let program_path = PathBuf::from(&program);
-    let metadata = std::fs::metadata(&program_path).map_err(|err| {
-        InvalidTerminalCommand(format!("reading terminal program {program}: {err}"))
-    })?;
+    let metadata = std::fs::metadata(&program_path)
+        .map_err(|err| format!("reading program {program}: {err}"))?;
     if !metadata.is_file() || !is_executable(&metadata) {
-        return Err(InvalidTerminalCommand(format!(
-            "terminal program {program} is not an executable file"
-        ))
-        .into());
+        return Err(format!("program {program} is not an executable file"));
     }
     // The command is preserved verbatim (program plus arguments); only the
     // program half is resolved, so argument text is never rewritten.
-    let canonical = std::fs::canonicalize(&program_path).map_err(|err| {
-        InvalidTerminalCommand(format!("resolving terminal program {program}: {err}"))
-    })?;
+    let canonical = std::fs::canonicalize(&program_path)
+        .map_err(|err| format!("resolving program {program}: {err}"))?;
     if let Some(rest) = text.strip_prefix(&program) {
         Ok(PathBuf::from(format!("{}{}", canonical.display(), rest)))
     } else {
@@ -1304,6 +1355,26 @@ mod tests {
         assert!(remove_path(&base.join("gone")).is_ok());
         assert!(remove_path_retrying(&base.join("gone")).is_ok());
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn qt_command_requires_an_absolute_executable() {
+        assert!(validate_qt_command(None).is_err());
+        assert!(validate_qt_command(Some(PathBuf::from("relative/app"))).is_err());
+        assert!(validate_qt_command(Some(PathBuf::from("/nonexistent/app"))).is_err());
+        assert!(validate_qt_command(Some(PathBuf::from("/tmp"))).is_err());
+        assert!(validate_qt_command(Some(PathBuf::from("/bin/sh"))).is_ok());
+    }
+
+    #[test]
+    fn command_arguments_are_preserved_verbatim() {
+        let resolved = validate_qt_command(Some(PathBuf::from("/bin/sh -c 'echo hi'")))
+            .expect("absolute executable with arguments");
+        let text = resolved.to_string_lossy();
+        assert!(
+            text.contains(" -c 'echo hi'"),
+            "arguments were rewritten: {text}"
+        );
     }
 
     fn temp_root(label: &str) -> PathBuf {
