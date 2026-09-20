@@ -43,28 +43,40 @@ pub enum MouseAction {
     Move,
 }
 
-/// A child compositor and Quickshell process with a native Wayland capture path.
+/// A program Lumen runs inside a desktop session.
+#[derive(Debug, Clone)]
+pub struct DesktopApp {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+/// A child compositor, a private session bus, and one application, with a
+/// native Wayland capture path.
 pub struct DesktopSession {
     pub display: String,
     pub width: u32,
     pub height: u32,
     runtime_dir: PathBuf,
     wtype_bin: String,
+    /// Address of this session's private D-Bus. The application publishes its
+    /// accessibility tree there, scoped to this session alone.
+    bus_address: String,
     commands: mpsc::Sender<DesktopCommand>,
     thread: Mutex<Option<JoinHandle<()>>>,
     alive: Arc<std::sync::atomic::AtomicBool>,
     frames: watch::Sender<Option<Bytes>>,
     sway: Mutex<Option<Child>>,
-    quickshell: Mutex<Option<Child>>,
+    app: Mutex<Option<Child>>,
+    dbus: Mutex<Option<Child>>,
 }
 
 impl DesktopSession {
-    /// Start one headless Sway output and a Quickshell configuration on it.
+    /// Start one headless Sway output, a private session bus, and one app.
     pub async fn launch(
         sway_bin: &str,
-        quickshell_bin: &str,
+        app: &DesktopApp,
         wtype_bin: &str,
-        config_path: &Path,
+        dbus_bin: &str,
         profile: &Path,
         width: u32,
         height: u32,
@@ -90,6 +102,36 @@ impl DesktopSession {
         if let Err(err) = std::os::unix::fs::symlink(&runtime_target, &runtime_dir) {
             return Err(err).with_context(|| format!("linking {}", runtime_dir.display()));
         }
+
+        // One private session bus per desktop session. Lumen chooses the
+        // address rather than reading it back, so it can hand the same address
+        // to the application now and to an accessibility query later.
+        let bus_socket = runtime_dir.join("bus");
+        let bus_address = format!("unix:path={}", bus_socket.display());
+        let mut dbus = match Command::new(dbus_bin)
+            .arg("--session")
+            .arg("--nofork")
+            .arg(format!("--address={bus_address}"))
+            .env("XDG_RUNTIME_DIR", &runtime_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true)
+            .process_group(0)
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(err) => {
+                let _ = std::fs::remove_file(&runtime_dir);
+                return Err(err).with_context(|| format!("spawning {dbus_bin}"));
+            }
+        };
+        if let Err(err) = wait_for_bus(&mut dbus, &bus_socket).await {
+            terminate_process_group(&mut dbus).await;
+            let _ = std::fs::remove_file(&runtime_dir);
+            return Err(err);
+        }
+
         let display_hint = format!("lumen-{}-{}", std::process::id(), unique_suffix());
         let sway_config = profile.join("sway.conf");
         std::fs::write(
@@ -117,6 +159,7 @@ impl DesktopSession {
         let mut sway = match sway {
             Ok(sway) => sway,
             Err(err) => {
+                terminate_process_group(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err);
             }
@@ -125,16 +168,22 @@ impl DesktopSession {
             Ok(display) => display,
             Err(err) => {
                 terminate_process_group(&mut sway).await;
+                terminate_process_group(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err);
             }
         };
 
-        let mut quickshell = match Command::new(quickshell_bin)
-            .args(["--path", config_path.to_string_lossy().as_ref()])
+        let mut app_child = match Command::new(&app.program)
+            .args(&app.args)
             .env("XDG_RUNTIME_DIR", &runtime_dir)
             .env("WAYLAND_DISPLAY", &display)
             .env("QT_QPA_PLATFORM", "wayland")
+            .env("DBUS_SESSION_BUS_ADDRESS", &bus_address)
+            // Qt only keeps its AT-SPI bridge alive when told to; on a headless
+            // session it otherwise drops accessibility and the tree stays empty.
+            .env("QT_ACCESSIBILITY", "1")
+            .env("QT_LINUX_ACCESSIBILITY_ALWAYS_ON", "1")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::inherit())
@@ -145,8 +194,9 @@ impl DesktopSession {
             Ok(child) => child,
             Err(err) => {
                 terminate_process_group(&mut sway).await;
+                terminate_process_group(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
-                return Err(err).with_context(|| format!("spawning {quickshell_bin}"));
+                return Err(err).with_context(|| format!("spawning {}", app.program));
             }
         };
 
@@ -176,8 +226,9 @@ impl DesktopSession {
         {
             Ok(thread) => thread,
             Err(err) => {
-                terminate_process_group(&mut quickshell).await;
+                terminate_process_group(&mut app_child).await;
                 terminate_process_group(&mut sway).await;
+                terminate_process_group(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err);
             }
@@ -189,12 +240,14 @@ impl DesktopSession {
             height,
             runtime_dir,
             wtype_bin: wtype_bin.to_string(),
+            bus_address,
             commands,
             thread: Mutex::new(Some(thread)),
             alive,
             frames,
             sway: Mutex::new(Some(sway)),
-            quickshell: Mutex::new(Some(quickshell)),
+            app: Mutex::new(Some(app_child)),
+            dbus: Mutex::new(Some(dbus)),
         });
 
         let ready = tokio::task::spawn_blocking(move || {
@@ -213,6 +266,11 @@ impl DesktopSession {
 
     pub fn frames(&self) -> watch::Receiver<Option<Bytes>> {
         self.frames.subscribe()
+    }
+
+    /// Address of the session's private D-Bus, for accessibility queries.
+    pub fn bus_address(&self) -> &str {
+        &self.bus_address
     }
 
     pub fn set_streaming(&self, streaming: bool) -> Result<()> {
@@ -281,13 +339,13 @@ impl DesktopSession {
             .expect("sway mutex poisoned")
             .as_mut()
             .map(Child::try_wait);
-        let quickshell_alive = self
-            .quickshell
+        let app_alive = self
+            .app
             .lock()
-            .expect("quickshell mutex poisoned")
+            .expect("app mutex poisoned")
             .as_mut()
             .map(Child::try_wait);
-        matches!(sway_alive, Some(Ok(None))) && matches!(quickshell_alive, Some(Ok(None)))
+        matches!(sway_alive, Some(Ok(None))) && matches!(app_alive, Some(Ok(None)))
     }
 
     pub async fn shutdown(&self) {
@@ -295,17 +353,17 @@ impl DesktopSession {
         if let Some(thread) = self.thread.lock().expect("thread mutex poisoned").take() {
             let _ = thread.join();
         }
-        let quickshell = self
-            .quickshell
-            .lock()
-            .expect("quickshell mutex poisoned")
-            .take();
-        if let Some(mut quickshell) = quickshell {
-            terminate_process_group(&mut quickshell).await;
+        let app = self.app.lock().expect("app mutex poisoned").take();
+        if let Some(mut app) = app {
+            terminate_process_group(&mut app).await;
         }
         let sway = self.sway.lock().expect("sway mutex poisoned").take();
         if let Some(mut sway) = sway {
             terminate_process_group(&mut sway).await;
+        }
+        let dbus = self.dbus.lock().expect("dbus mutex poisoned").take();
+        if let Some(mut dbus) = dbus {
+            terminate_process_group(&mut dbus).await;
         }
         let _ = std::fs::remove_file(&self.runtime_dir);
     }
@@ -522,6 +580,24 @@ async fn wait_for_socket(child: &mut Child, runtime_dir: &Path) -> Result<String
     bail!(
         "timed out waiting for a Sway Wayland socket in {}",
         runtime_dir.display()
+    )
+}
+
+/// Wait until the private session bus has created its socket.
+async fn wait_for_bus(child: &mut Child, socket: &Path) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + WAYLAND_READY_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
+        if socket.exists() {
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait().context("checking the session bus")? {
+            bail!("the session bus exited before it was ready: {status}");
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    bail!(
+        "timed out waiting for the session bus at {}",
+        socket.display()
     )
 }
 

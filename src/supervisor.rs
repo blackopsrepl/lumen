@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 
 use crate::cdp::CdpSession;
 use crate::config::Config;
-use crate::desktop::DesktopSession;
+use crate::desktop::{DesktopApp, DesktopSession};
 use crate::pty::PtySession;
 use crate::ratatui::RatatuiSession;
 use crate::view::ViewHub;
@@ -505,11 +505,15 @@ impl Supervisor {
             }
             SessionKind::Quickshell => {
                 let path = path.as_deref().expect("validated Quickshell path");
+                let app = DesktopApp {
+                    program: self.config.quickshell_bin.clone(),
+                    args: vec!["--path".into(), path.to_string_lossy().into_owned()],
+                };
                 let session = DesktopSession::launch(
                     &self.config.sway_bin,
-                    &self.config.quickshell_bin,
+                    &app,
                     &self.config.wtype_bin,
-                    path,
+                    &self.config.dbus_bin,
                     &profile,
                     viewport.width,
                     viewport.height,

@@ -28,6 +28,9 @@ pub struct Config {
     pub quickshell_bin: String,
     /// wtype binary used for desktop text input.
     pub wtype_bin: String,
+    /// D-Bus daemon used to give each desktop session a private session bus.
+    /// The bus is what lets a Qt application publish an accessibility tree.
+    pub dbus_bin: String,
     /// Grid width, in columns, a ratatui session starts at.
     pub tui_cols: u16,
     /// Grid height, in rows, a ratatui session starts at.
@@ -123,6 +126,7 @@ impl Default for Config {
             sway_bin: "sway".into(),
             quickshell_bin: "quickshell".into(),
             wtype_bin: "wtype".into(),
+            dbus_bin: "dbus-daemon".into(),
             tui_cols: 120,
             tui_rows: 40,
             default_viewport: Viewport {
@@ -166,6 +170,9 @@ impl Config {
         }
         if let Ok(wtype_bin) = std::env::var("LUMEN_WTYPE") {
             config.wtype_bin = wtype_bin;
+        }
+        if let Ok(dbus_bin) = std::env::var("LUMEN_DBUS") {
+            config.dbus_bin = dbus_bin;
         }
         if let Ok(tui_cols) = std::env::var("LUMEN_TUI_COLS") {
             config.tui_cols = tui_cols
