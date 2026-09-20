@@ -610,6 +610,13 @@ async fn desktop_session(
     })
 }
 
+/// The session's accessibility bus, or a conflict if it publishes no tree.
+fn accessibility_bus(session: &crate::desktop::DesktopSession) -> Result<&str, ApiError> {
+    session
+        .bus_address()
+        .ok_or_else(|| ApiError::conflict("this session does not publish an accessibility tree"))
+}
+
 /// Return a desktop session's accessibility tree as JSON.
 ///
 /// This is the desktop analogue of the terminal `/screen` endpoint: a
@@ -619,7 +626,7 @@ async fn accessibility(
     Path(name): Path<String>,
 ) -> Result<Json<accessibility::Node>, ApiError> {
     let session = desktop_session(&state, &name).await?;
-    let tree = accessibility::tree(session.bus_address()).await?;
+    let tree = accessibility::tree(accessibility_bus(&session)?).await?;
     Ok(Json(tree))
 }
 
@@ -639,7 +646,7 @@ async fn accessibility_click(
     Json(body): Json<AccessibilityRefBody>,
 ) -> Result<StatusCode, ApiError> {
     let session = desktop_session(&state, &name).await?;
-    let tree = accessibility::tree(session.bus_address()).await?;
+    let tree = accessibility::tree(accessibility_bus(&session)?).await?;
     let node = tree.find(&body.reference).ok_or_else(|| {
         ApiError::not_found(format!(
             "element '{}' is not in the current accessibility tree",

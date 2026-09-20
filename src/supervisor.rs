@@ -534,9 +534,12 @@ impl Supervisor {
                     program: self.config.quickshell_bin.clone(),
                     args: vec!["--path".into(), path.to_string_lossy().into_owned()],
                 };
+                // Quickshell publishes no accessibility tree, so the session
+                // bus and registry would only add startup work.
                 let session = DesktopSession::launch(
                     &desktop_bins,
                     &app,
+                    false,
                     &profile,
                     viewport.width,
                     viewport.height,
@@ -555,6 +558,7 @@ impl Supervisor {
                 let session = DesktopSession::launch(
                     &desktop_bins,
                     &app,
+                    true,
                     &profile,
                     viewport.width,
                     viewport.height,

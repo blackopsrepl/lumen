@@ -64,17 +64,18 @@ pub struct DesktopBins<'a> {
     pub registryd: Option<&'a str>,
 }
 
-/// A child compositor, a private session bus, and one application, with a
-/// native Wayland capture path.
+/// A child compositor and one application, with a native Wayland capture path.
+/// Sessions whose application publishes an accessibility tree additionally run a
+/// private D-Bus and an AT-SPI registry.
 pub struct DesktopSession {
     pub display: String,
     pub width: u32,
     pub height: u32,
     runtime_dir: PathBuf,
     wtype_bin: String,
-    /// Address of this session's private D-Bus. The application publishes its
-    /// accessibility tree there, scoped to this session alone.
-    bus_address: String,
+    /// Address of the private D-Bus an accessibility-publishing application
+    /// uses, or `None` for a session that does not publish one.
+    bus_address: Option<String>,
     commands: mpsc::Sender<DesktopCommand>,
     thread: Mutex<Option<JoinHandle<()>>>,
     alive: Arc<std::sync::atomic::AtomicBool>,
@@ -86,10 +87,13 @@ pub struct DesktopSession {
 }
 
 impl DesktopSession {
-    /// Start one headless Sway output, a private session bus, and one app.
+    /// Start one headless Sway output and one application on it. When
+    /// `accessibility` is set the session also starts a private session bus and
+    /// an AT-SPI registry so the application can publish an accessibility tree.
     pub async fn launch(
         bins: &DesktopBins<'_>,
         app: &DesktopApp,
+        accessibility: bool,
         profile: &Path,
         width: u32,
         height: u32,
@@ -116,62 +120,77 @@ impl DesktopSession {
             return Err(err).with_context(|| format!("linking {}", runtime_dir.display()));
         }
 
-        // One private session bus per desktop session. Lumen chooses the
-        // address rather than reading it back, so it can hand the same address
-        // to the application now and to an accessibility query later.
-        let bus_socket = runtime_dir.join("bus");
-        let bus_address = format!("unix:path={}", bus_socket.display());
-        let mut dbus = match Command::new(bins.dbus)
-            .arg("--session")
-            .arg("--nofork")
-            .arg(format!("--address={bus_address}"))
-            .env("XDG_RUNTIME_DIR", &runtime_dir)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true)
-            .process_group(0)
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(err) => {
+        // An application publishes its accessibility tree on a session bus, and
+        // the registry that indexes it cannot be started lazily on a private
+        // bus: when the host runs systemd the bus launcher delegates activation
+        // to systemd, which can only reach the real session bus. Start the bus
+        // and registry eagerly, and only for a session that needs them.
+        let mut bus_address = None;
+        let mut dbus = None;
+        let mut registryd_child = None;
+        if accessibility {
+            let bus_socket = runtime_dir.join("bus");
+            let address = format!("unix:path={}", bus_socket.display());
+            let mut bus = match Command::new(bins.dbus)
+                .arg("--session")
+                .arg("--nofork")
+                .arg(format!("--address={address}"))
+                .env("XDG_RUNTIME_DIR", &runtime_dir)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::inherit())
+                .kill_on_drop(true)
+                .process_group(0)
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(err) => {
+                    let _ = std::fs::remove_file(&runtime_dir);
+                    return Err(err).with_context(|| format!("spawning {}", bins.dbus));
+                }
+            };
+            if let Err(err) = wait_for_bus(&mut bus, &bus_socket).await {
+                terminate_process_group(&mut bus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
-                return Err(err).with_context(|| format!("spawning {}", bins.dbus));
+                return Err(err);
             }
-        };
-        if let Err(err) = wait_for_bus(&mut dbus, &bus_socket).await {
-            terminate_process_group(&mut dbus).await;
-            let _ = std::fs::remove_file(&runtime_dir);
-            return Err(err);
-        }
 
-        // Start the accessibility registry eagerly. Lazy activation is not an
-        // option on a private bus: when systemd is booted the bus launcher
-        // delegates activation to systemd, which can only reach the real
-        // session bus, so the registry would never come up.
-        let registryd_bin = find_registryd(bins.registryd)?;
-        let mut registryd_child = match Command::new(&registryd_bin)
-            .env("DBUS_SESSION_BUS_ADDRESS", &bus_address)
-            .env("XDG_RUNTIME_DIR", &runtime_dir)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::inherit())
-            .kill_on_drop(true)
-            .process_group(0)
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(err) => {
-                terminate_process_group(&mut dbus).await;
+            let registryd_bin = match find_registryd(bins.registryd) {
+                Ok(bin) => bin,
+                Err(err) => {
+                    terminate_process_group(&mut bus).await;
+                    let _ = std::fs::remove_file(&runtime_dir);
+                    return Err(err);
+                }
+            };
+            let mut registry = match Command::new(&registryd_bin)
+                .env("DBUS_SESSION_BUS_ADDRESS", &address)
+                .env("XDG_RUNTIME_DIR", &runtime_dir)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::inherit())
+                .kill_on_drop(true)
+                .process_group(0)
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(err) => {
+                    terminate_process_group(&mut bus).await;
+                    let _ = std::fs::remove_file(&runtime_dir);
+                    return Err(err)
+                        .with_context(|| format!("spawning {}", registryd_bin.display()));
+                }
+            };
+            if let Err(err) = crate::accessibility::await_registry(&address).await {
+                terminate_process_group(&mut registry).await;
+                terminate_process_group(&mut bus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
-                return Err(err).with_context(|| format!("spawning {}", registryd_bin.display()));
+                return Err(err);
             }
-        };
-        if let Err(err) = crate::accessibility::await_registry(&bus_address).await {
-            terminate_process_group(&mut registryd_child).await;
-            terminate_process_group(&mut dbus).await;
-            let _ = std::fs::remove_file(&runtime_dir);
-            return Err(err);
+
+            bus_address = Some(address);
+            dbus = Some(bus);
+            registryd_child = Some(registry);
         }
 
         let display_hint = format!("lumen-{}-{}", std::process::id(), unique_suffix());
@@ -201,8 +220,8 @@ impl DesktopSession {
         let mut sway = match sway {
             Ok(sway) => sway,
             Err(err) => {
-                terminate_process_group(&mut registryd_child).await;
-                terminate_process_group(&mut dbus).await;
+                terminate_if_running(&mut registryd_child).await;
+                terminate_if_running(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err);
             }
@@ -211,35 +230,38 @@ impl DesktopSession {
             Ok(display) => display,
             Err(err) => {
                 terminate_process_group(&mut sway).await;
-                terminate_process_group(&mut registryd_child).await;
-                terminate_process_group(&mut dbus).await;
+                terminate_if_running(&mut registryd_child).await;
+                terminate_if_running(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err);
             }
         };
 
-        let mut app_child = match Command::new(&app.program)
+        let mut app_command = Command::new(&app.program);
+        app_command
             .args(&app.args)
             .env("XDG_RUNTIME_DIR", &runtime_dir)
             .env("WAYLAND_DISPLAY", &display)
             .env("QT_QPA_PLATFORM", "wayland")
-            .env("DBUS_SESSION_BUS_ADDRESS", &bus_address)
-            // Qt only keeps its AT-SPI bridge alive when told to; on a headless
-            // session it otherwise drops accessibility and the tree stays empty.
-            .env("QT_ACCESSIBILITY", "1")
-            .env("QT_LINUX_ACCESSIBILITY_ALWAYS_ON", "1")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::inherit())
             .kill_on_drop(true)
-            .process_group(0)
-            .spawn()
-        {
+            .process_group(0);
+        if let Some(address) = &bus_address {
+            app_command
+                .env("DBUS_SESSION_BUS_ADDRESS", address)
+                // Qt only keeps its AT-SPI bridge alive when told to; on a
+                // headless session it otherwise drops accessibility.
+                .env("QT_ACCESSIBILITY", "1")
+                .env("QT_LINUX_ACCESSIBILITY_ALWAYS_ON", "1");
+        }
+        let mut app_child = match app_command.spawn() {
             Ok(child) => child,
             Err(err) => {
                 terminate_process_group(&mut sway).await;
-                terminate_process_group(&mut registryd_child).await;
-                terminate_process_group(&mut dbus).await;
+                terminate_if_running(&mut registryd_child).await;
+                terminate_if_running(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err).with_context(|| format!("spawning {}", app.program));
             }
@@ -273,8 +295,8 @@ impl DesktopSession {
             Err(err) => {
                 terminate_process_group(&mut app_child).await;
                 terminate_process_group(&mut sway).await;
-                terminate_process_group(&mut registryd_child).await;
-                terminate_process_group(&mut dbus).await;
+                terminate_if_running(&mut registryd_child).await;
+                terminate_if_running(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err);
             }
@@ -293,8 +315,8 @@ impl DesktopSession {
             frames,
             sway: Mutex::new(Some(sway)),
             app: Mutex::new(Some(app_child)),
-            dbus: Mutex::new(Some(dbus)),
-            registryd: Mutex::new(Some(registryd_child)),
+            dbus: Mutex::new(dbus),
+            registryd: Mutex::new(registryd_child),
         });
 
         let ready = tokio::task::spawn_blocking(move || {
@@ -315,9 +337,10 @@ impl DesktopSession {
         self.frames.subscribe()
     }
 
-    /// Address of the session's private D-Bus, for accessibility queries.
-    pub fn bus_address(&self) -> &str {
-        &self.bus_address
+    /// Address of the session's private D-Bus, when it publishes an
+    /// accessibility tree.
+    pub fn bus_address(&self) -> Option<&str> {
+        self.bus_address.as_deref()
     }
 
     pub fn set_streaming(&self, streaming: bool) -> Result<()> {
@@ -1468,6 +1491,13 @@ fn encode_png(rgb: &[u8], width: u32, height: u32) -> FrameResult {
         .map_err(|err| err.to_string())?;
     drop(writer);
     Ok(encoded)
+}
+
+/// Terminate a child the session may not have started.
+async fn terminate_if_running(child: &mut Option<Child>) {
+    if let Some(child) = child.as_mut() {
+        terminate_process_group(child).await;
+    }
 }
 
 async fn terminate_process_group(child: &mut Child) {
