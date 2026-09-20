@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 
 use crate::cdp::CdpSession;
 use crate::config::Config;
-use crate::desktop::{DesktopApp, DesktopSession};
+use crate::desktop::{DesktopApp, DesktopBins, DesktopSession};
 use crate::pty::PtySession;
 use crate::ratatui::RatatuiSession;
 use crate::view::ViewHub;
@@ -478,6 +478,12 @@ impl Supervisor {
         let mut guard = ProfileGuard::new(profile.clone());
 
         let viewport = self.config.default_viewport;
+        let desktop_bins = DesktopBins {
+            sway: &self.config.sway_bin,
+            wtype: &self.config.wtype_bin,
+            dbus: &self.config.dbus_bin,
+            registryd: self.config.at_spi_registryd.as_deref(),
+        };
         let (backend, cdp_endpoint, child) = match kind {
             SessionKind::Browser => {
                 let mut child = Command::new(&self.config.chrome_bin)
@@ -529,10 +535,8 @@ impl Supervisor {
                     args: vec!["--path".into(), path.to_string_lossy().into_owned()],
                 };
                 let session = DesktopSession::launch(
-                    &self.config.sway_bin,
+                    &desktop_bins,
                     &app,
-                    &self.config.wtype_bin,
-                    &self.config.dbus_bin,
                     &profile,
                     viewport.width,
                     viewport.height,
@@ -549,10 +553,8 @@ impl Supervisor {
                 let (program, args) = crate::pty::parse_command(&command)?;
                 let app = DesktopApp { program, args };
                 let session = DesktopSession::launch(
-                    &self.config.sway_bin,
+                    &desktop_bins,
                     &app,
-                    &self.config.wtype_bin,
-                    &self.config.dbus_bin,
                     &profile,
                     viewport.width,
                     viewport.height,

@@ -12,6 +12,9 @@ wtype_bin = "wtype"
 # Each desktop session gets its own D-Bus so a Qt application can publish an
 # accessibility tree scoped to that session.
 dbus_bin = "dbus-daemon"
+# The AT-SPI registry daemon. Unset searches the usual libexec locations;
+# set it when at-spi2-registryd lives elsewhere.
+# at_spi_registryd = "/usr/libexec/at-spi2/at-spi2-registryd"
 # Grid a ratatui session starts at. The app links lumen-ratatui and renders
 # into this many columns and rows; the viewer scales it to fit.
 tui_cols = 120

@@ -56,6 +56,7 @@ services:
       LUMEN_QUICKSHELL: ${LUMEN_QUICKSHELL:-quickshell}
       LUMEN_WTYPE: ${LUMEN_WTYPE:-wtype}
       LUMEN_DBUS: ${LUMEN_DBUS:-dbus-daemon}
+      LUMEN_ATSPI_REGISTRYD: ${LUMEN_ATSPI_REGISTRYD:-}
       LUMEN_TUI_COLS: ${LUMEN_TUI_COLS:-120}
       LUMEN_TUI_ROWS: ${LUMEN_TUI_ROWS:-40}
       # Deliberately not ${RUST_LOG}: a globally exported RUST_LOG in the

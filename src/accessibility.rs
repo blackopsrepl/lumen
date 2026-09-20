@@ -16,6 +16,7 @@ use atspi::zbus::proxy::CacheProperties;
 use atspi::CoordType;
 use atspi::{ObjectRefOwned, State};
 use serde::Serialize;
+use std::time::Duration;
 
 /// The registry's placeholder for a missing object reference.
 const NULL_PATH: &str = "/org/a11y/atspi/null";
@@ -125,6 +126,36 @@ async fn connect(session_address: &str) -> Result<AccessibilityConnection> {
 /// function returns a pinned future rather than recursing through the type.
 type WalkFuture<'c> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Node, usize)>> + Send + 'c>>;
+
+/// How long to wait for a session's registry daemon to answer.
+const REGISTRY_READY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Wait until the session's accessibility registry answers.
+///
+/// A desktop session starts its registry eagerly, because the registry cannot
+/// be relied on to start lazily: the bus launcher hands activation to systemd
+/// whenever systemd is booted, and systemd can only activate services on the
+/// real session bus, never on a private one. Poll a trivial property until the
+/// registry name has an owner.
+pub async fn await_registry(session_address: &str) -> Result<()> {
+    let connection = connect(session_address).await?;
+    let root = connection
+        .root_accessible_on_registry()
+        .await
+        .context("opening the accessibility registry root")?;
+    let deadline = tokio::time::Instant::now() + REGISTRY_READY_TIMEOUT;
+    loop {
+        match root.child_count().await {
+            Ok(_) => return Ok(()),
+            Err(err) => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(err).context("waiting for the accessibility registry");
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+}
 
 /// Read one node and recurse into its children, spending at most `budget`
 /// nodes including this one. Returns the node and the budget that remains.

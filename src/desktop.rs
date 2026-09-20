@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -50,6 +51,19 @@ pub struct DesktopApp {
     pub args: Vec<String>,
 }
 
+/// The helper binaries a desktop session runs.
+#[derive(Debug, Clone, Copy)]
+pub struct DesktopBins<'a> {
+    /// The Wayland compositor.
+    pub sway: &'a str,
+    /// Text input for the compositor.
+    pub wtype: &'a str,
+    /// The session bus daemon.
+    pub dbus: &'a str,
+    /// The AT-SPI registry daemon, or `None` to discover one.
+    pub registryd: Option<&'a str>,
+}
+
 /// A child compositor, a private session bus, and one application, with a
 /// native Wayland capture path.
 pub struct DesktopSession {
@@ -68,15 +82,14 @@ pub struct DesktopSession {
     sway: Mutex<Option<Child>>,
     app: Mutex<Option<Child>>,
     dbus: Mutex<Option<Child>>,
+    registryd: Mutex<Option<Child>>,
 }
 
 impl DesktopSession {
     /// Start one headless Sway output, a private session bus, and one app.
     pub async fn launch(
-        sway_bin: &str,
+        bins: &DesktopBins<'_>,
         app: &DesktopApp,
-        wtype_bin: &str,
-        dbus_bin: &str,
         profile: &Path,
         width: u32,
         height: u32,
@@ -108,7 +121,7 @@ impl DesktopSession {
         // to the application now and to an accessibility query later.
         let bus_socket = runtime_dir.join("bus");
         let bus_address = format!("unix:path={}", bus_socket.display());
-        let mut dbus = match Command::new(dbus_bin)
+        let mut dbus = match Command::new(bins.dbus)
             .arg("--session")
             .arg("--nofork")
             .arg(format!("--address={bus_address}"))
@@ -123,10 +136,39 @@ impl DesktopSession {
             Ok(child) => child,
             Err(err) => {
                 let _ = std::fs::remove_file(&runtime_dir);
-                return Err(err).with_context(|| format!("spawning {dbus_bin}"));
+                return Err(err).with_context(|| format!("spawning {}", bins.dbus));
             }
         };
         if let Err(err) = wait_for_bus(&mut dbus, &bus_socket).await {
+            terminate_process_group(&mut dbus).await;
+            let _ = std::fs::remove_file(&runtime_dir);
+            return Err(err);
+        }
+
+        // Start the accessibility registry eagerly. Lazy activation is not an
+        // option on a private bus: when systemd is booted the bus launcher
+        // delegates activation to systemd, which can only reach the real
+        // session bus, so the registry would never come up.
+        let registryd_bin = find_registryd(bins.registryd)?;
+        let mut registryd_child = match Command::new(&registryd_bin)
+            .env("DBUS_SESSION_BUS_ADDRESS", &bus_address)
+            .env("XDG_RUNTIME_DIR", &runtime_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true)
+            .process_group(0)
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(err) => {
+                terminate_process_group(&mut dbus).await;
+                let _ = std::fs::remove_file(&runtime_dir);
+                return Err(err).with_context(|| format!("spawning {}", registryd_bin.display()));
+            }
+        };
+        if let Err(err) = crate::accessibility::await_registry(&bus_address).await {
+            terminate_process_group(&mut registryd_child).await;
             terminate_process_group(&mut dbus).await;
             let _ = std::fs::remove_file(&runtime_dir);
             return Err(err);
@@ -142,7 +184,7 @@ impl DesktopSession {
         )
         .with_context(|| format!("writing {}", sway_config.display()))?;
 
-        let sway = Command::new(sway_bin)
+        let sway = Command::new(bins.sway)
             .args(["-c", sway_config.to_string_lossy().as_ref()])
             .env("XDG_RUNTIME_DIR", &runtime_dir)
             .env("WAYLAND_DISPLAY", &display_hint)
@@ -155,10 +197,11 @@ impl DesktopSession {
             .kill_on_drop(true)
             .process_group(0)
             .spawn()
-            .with_context(|| format!("spawning {sway_bin}"));
+            .with_context(|| format!("spawning {}", bins.sway));
         let mut sway = match sway {
             Ok(sway) => sway,
             Err(err) => {
+                terminate_process_group(&mut registryd_child).await;
                 terminate_process_group(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err);
@@ -168,6 +211,7 @@ impl DesktopSession {
             Ok(display) => display,
             Err(err) => {
                 terminate_process_group(&mut sway).await;
+                terminate_process_group(&mut registryd_child).await;
                 terminate_process_group(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err);
@@ -194,6 +238,7 @@ impl DesktopSession {
             Ok(child) => child,
             Err(err) => {
                 terminate_process_group(&mut sway).await;
+                terminate_process_group(&mut registryd_child).await;
                 terminate_process_group(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err).with_context(|| format!("spawning {}", app.program));
@@ -228,6 +273,7 @@ impl DesktopSession {
             Err(err) => {
                 terminate_process_group(&mut app_child).await;
                 terminate_process_group(&mut sway).await;
+                terminate_process_group(&mut registryd_child).await;
                 terminate_process_group(&mut dbus).await;
                 let _ = std::fs::remove_file(&runtime_dir);
                 return Err(err);
@@ -239,7 +285,7 @@ impl DesktopSession {
             width,
             height,
             runtime_dir,
-            wtype_bin: wtype_bin.to_string(),
+            wtype_bin: bins.wtype.to_string(),
             bus_address,
             commands,
             thread: Mutex::new(Some(thread)),
@@ -248,6 +294,7 @@ impl DesktopSession {
             sway: Mutex::new(Some(sway)),
             app: Mutex::new(Some(app_child)),
             dbus: Mutex::new(Some(dbus)),
+            registryd: Mutex::new(Some(registryd_child)),
         });
 
         let ready = tokio::task::spawn_blocking(move || {
@@ -360,6 +407,14 @@ impl DesktopSession {
         let sway = self.sway.lock().expect("sway mutex poisoned").take();
         if let Some(mut sway) = sway {
             terminate_process_group(&mut sway).await;
+        }
+        let registryd = self
+            .registryd
+            .lock()
+            .expect("registryd mutex poisoned")
+            .take();
+        if let Some(mut registryd) = registryd {
+            terminate_process_group(&mut registryd).await;
         }
         let dbus = self.dbus.lock().expect("dbus mutex poisoned").take();
         if let Some(mut dbus) = dbus {
@@ -599,6 +654,55 @@ async fn wait_for_bus(child: &mut Child, socket: &Path) -> Result<()> {
         "timed out waiting for the session bus at {}",
         socket.display()
     )
+}
+
+/// Where distributions install the AT-SPI registry daemon.
+const REGISTRYD_CANDIDATES: [&str; 4] = [
+    "at-spi2-registryd",
+    "/usr/libexec/at-spi2-registryd",
+    "/usr/libexec/at-spi2/at-spi2-registryd",
+    "/usr/lib/at-spi2-core/at-spi2-registryd",
+];
+
+/// Resolve the accessibility registry daemon.
+///
+/// An explicit path from configuration wins; otherwise try the name on `PATH`
+/// and the libexec locations used by Debian, Ubuntu, and openSUSE.
+fn find_registryd(configured: Option<&str>) -> Result<PathBuf> {
+    if let Some(path) = configured {
+        let path = PathBuf::from(path);
+        if executable_file(&path) {
+            return Ok(path);
+        }
+        bail!(
+            "configured accessibility registry {} is not an executable file",
+            path.display()
+        );
+    }
+    for candidate in REGISTRYD_CANDIDATES {
+        if let Some(path) = which_executable(candidate) {
+            return Ok(path);
+        }
+    }
+    bail!("could not find at-spi2-registryd; install at-spi2-core or set LUMEN_ATSPI_REGISTRYD")
+}
+
+fn which_executable(name: &str) -> Option<PathBuf> {
+    if name.contains('/') {
+        let path = PathBuf::from(name);
+        return executable_file(&path).then_some(path);
+    }
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join(name))
+            .find(|candidate| executable_file(candidate))
+    })
+}
+
+fn executable_file(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 fn find_wayland_socket(runtime_dir: &Path) -> Option<String> {

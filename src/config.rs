@@ -31,6 +31,9 @@ pub struct Config {
     /// D-Bus daemon used to give each desktop session a private session bus.
     /// The bus is what lets a Qt application publish an accessibility tree.
     pub dbus_bin: String,
+    /// The AT-SPI registry daemon (`at-spi2-registryd`). Leave unset to search
+    /// the usual libexec locations; set it when the daemon lives elsewhere.
+    pub at_spi_registryd: Option<String>,
     /// Grid width, in columns, a ratatui session starts at.
     pub tui_cols: u16,
     /// Grid height, in rows, a ratatui session starts at.
@@ -127,6 +130,7 @@ impl Default for Config {
             quickshell_bin: "quickshell".into(),
             wtype_bin: "wtype".into(),
             dbus_bin: "dbus-daemon".into(),
+            at_spi_registryd: None,
             tui_cols: 120,
             tui_rows: 40,
             default_viewport: Viewport {
@@ -173,6 +177,12 @@ impl Config {
         }
         if let Ok(dbus_bin) = std::env::var("LUMEN_DBUS") {
             config.dbus_bin = dbus_bin;
+        }
+        if let Ok(registryd) = std::env::var("LUMEN_ATSPI_REGISTRYD") {
+            // An empty value means "auto-discover", not a path of "".
+            if !registryd.trim().is_empty() {
+                config.at_spi_registryd = Some(registryd);
+            }
         }
         if let Ok(tui_cols) = std::env::var("LUMEN_TUI_COLS") {
             config.tui_cols = tui_cols
