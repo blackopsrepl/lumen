@@ -51,6 +51,11 @@ pub fn ensure_quickshell(
     ensure_session(base, name, "quickshell", Some(path), owner)
 }
 
+/// Ensure a Qt application session exists and return its descriptor.
+pub fn ensure_qt(base: &str, name: &str, command: &str, owner: Option<&str>) -> Result<AgentInfo> {
+    ensure_session(base, name, "qt", Some(command), owner)
+}
+
 pub fn ensure_ratatui(
     base: &str,
     name: &str,
@@ -102,10 +107,53 @@ pub fn status(base: &str) -> Result<()> {
                 session.name,
                 session.path.as_deref().unwrap_or("(unknown path)")
             );
+        } else if session.kind == "qt" {
+            println!(
+                "{:<24} qt {}",
+                session.name,
+                session.path.as_deref().unwrap_or("(unknown command)")
+            );
         } else {
             println!("{:<24} {}", session.name, session.cdp_endpoint);
         }
     }
+    Ok(())
+}
+
+/// Print a desktop session's accessibility tree as JSON.
+pub fn accessibility(base: &str, name: &str) -> Result<()> {
+    let value: serde_json::Value = check(
+        client()?
+            .get(format!("{base}/v1/sessions/{name}/accessibility"))
+            .send()?,
+    )
+    .context("connecting to lumen")?
+    .json()
+    .context("parsing the accessibility tree")?;
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+/// Click an element in a desktop session by its accessibility reference.
+pub fn click(base: &str, name: &str, reference: &str) -> Result<()> {
+    let response = client()?
+        .post(format!("{base}/v1/sessions/{name}/accessibility/click"))
+        .json(&serde_json::json!({ "ref": reference }))
+        .send()
+        .context("connecting to lumen")?;
+    check(response)?;
+    println!("clicked {reference}");
+    Ok(())
+}
+
+/// Type text into a desktop session's focused element.
+pub fn type_text(base: &str, name: &str, text: &str) -> Result<()> {
+    let response = client()?
+        .post(format!("{base}/v1/sessions/{name}/accessibility/type"))
+        .json(&serde_json::json!({ "text": text }))
+        .send()
+        .context("connecting to lumen")?;
+    check(response)?;
     Ok(())
 }
 

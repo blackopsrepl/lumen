@@ -41,6 +41,10 @@ enum Command {
         /// Start a Ratatui session from this app binary.
         #[arg(long, value_name = "PATH")]
         ratatui: Option<String>,
+        /// Start a Qt application session from this command: an absolute
+        /// program plus arguments.
+        #[arg(long, value_name = "COMMAND")]
+        qt: Option<String>,
     },
     /// List active sessions.
     Status,
@@ -58,6 +62,12 @@ enum Command {
         #[arg(long)]
         consume: bool,
     },
+    /// Print a desktop session's accessibility tree as JSON.
+    Accessibility { name: String },
+    /// Click an element in a desktop session by its accessibility reference.
+    Click { name: String, reference: String },
+    /// Type text into a desktop session's focused element.
+    Type { name: String, text: String },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -69,21 +79,26 @@ fn main() -> anyhow::Result<()> {
             owner,
             quickshell,
             ratatui,
+            qt,
         } => {
-            let info = match (quickshell, ratatui) {
-                (Some(_), Some(_)) => {
-                    anyhow::bail!("choose either --quickshell or --ratatui, not both")
-                }
-                (Some(path), None) => {
-                    client::ensure_quickshell(&cli.url, &name, &path, owner.as_deref())?
-                }
-                (None, Some(path)) => {
-                    client::ensure_ratatui(&cli.url, &name, &path, owner.as_deref())?
-                }
-                (None, None) => client::ensure(&cli.url, &name, owner.as_deref())?,
+            let selected = [quickshell.is_some(), ratatui.is_some(), qt.is_some()]
+                .into_iter()
+                .filter(|present| *present)
+                .count();
+            if selected > 1 {
+                anyhow::bail!("choose at most one of --quickshell, --ratatui, or --qt");
+            }
+            let info = if let Some(path) = quickshell {
+                client::ensure_quickshell(&cli.url, &name, &path, owner.as_deref())?
+            } else if let Some(path) = ratatui {
+                client::ensure_ratatui(&cli.url, &name, &path, owner.as_deref())?
+            } else if let Some(command) = qt {
+                client::ensure_qt(&cli.url, &name, &command, owner.as_deref())?
+            } else {
+                client::ensure(&cli.url, &name, owner.as_deref())?
             };
             match info.kind.as_str() {
-                "quickshell" | "ratatui" => println!(
+                "quickshell" | "ratatui" | "qt" => println!(
                     "{} {}",
                     info.kind,
                     info.path.as_deref().unwrap_or("(unknown path)")
@@ -101,6 +116,9 @@ fn main() -> anyhow::Result<()> {
             }
         },
         Command::Feedback { name, consume } => client::feedback(&cli.url, &name, consume),
+        Command::Accessibility { name } => client::accessibility(&cli.url, &name),
+        Command::Click { name, reference } => client::click(&cli.url, &name, &reference),
+        Command::Type { name, text } => client::type_text(&cli.url, &name, &text),
     }
 }
 
