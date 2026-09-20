@@ -25,11 +25,11 @@ PW_CLI="${PW_CLI:-playwright-cli}"
 log() { printf '[%s] %s\n' "${0##*/}" "$*" >&2; }
 die() { printf '[%s] error: %s\n' "${0##*/}" "$*" >&2; exit 1; }
 
-# Container runtime: podman or docker. Override with LUMEN_RUNTIME (or
-# CONTAINER_RUNTIME); otherwise prefer podman when present so existing
-# installs keep their behavior, and fall back to docker.
+# Container runtime: podman or docker. Override with LUMEN_RUNTIME; otherwise
+# prefer podman when present so existing installs keep their behavior, and fall
+# back to docker.
 _detect_runtime() {
-  local override="${LUMEN_RUNTIME:-${CONTAINER_RUNTIME:-}}"
+  local override="${LUMEN_RUNTIME:-}"
   if [ -n "${override}" ]; then
     case "${override}" in
       podman|docker) printf '%s' "${override}" ;;

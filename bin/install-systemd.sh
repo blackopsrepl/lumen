@@ -3,7 +3,7 @@
 # Install and enable the Lumen user service with this checkout's real paths.
 # Safe to re-run. Also retires any leftover playwright-*.user units.
 # Resolves the compose command from the active container runtime
-# (LUMEN_RUNTIME/CONTAINER_RUNTIME, or podman-preferred auto-detect).
+# (LUMEN_RUNTIME, or podman-preferred auto-detect).
 #
 set -euo pipefail
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
