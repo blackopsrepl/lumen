@@ -92,19 +92,20 @@ directory, and it must be readable by the Lumen process:
 lumen ensure dashboard --quickshell /var/lib/lumen/projects/dashboard/shell.qml --owner dashboard-agent
 ```
 
-When Lumen runs in the production container, configure
-`LUMEN_QUICKSHELL_ROOT` to a host directory containing the QML path. Compose
-mounts that directory read-only at the same absolute path inside the container,
-so imports and sibling assets continue to resolve without path translation:
+When Lumen runs in the production container, put the QML path under
+`LUMEN_PROJECTS_ROOT`. Compose mounts that host directory read-only at the same
+absolute path inside the container, so imports and sibling assets continue to
+resolve without path translation:
 
 ```bash
 sudo install -d -o "$USER" -g "$(id -gn)" /var/lib/lumen/projects
-LUMEN_QUICKSHELL_ROOT=/var/lib/lumen/projects
+LUMEN_PROJECTS_ROOT=/var/lib/lumen/projects
 lumen ensure dashboard --quickshell /var/lib/lumen/projects/dashboard/shell.qml
 ```
 
 The default root is the FHS application-data path `/var/lib/lumen/projects`;
-override it in `.env` when the host keeps QML projects elsewhere.
+override it in `.env` when the host keeps projects elsewhere. The same root
+carries Qt application binaries (see below).
 
 The viewer can also create a Quickshell session with the session-type selector.
 Desktop sessions support native screenshots, mouse, wheel, and text input. They
@@ -153,6 +154,16 @@ are `GET /v1/sessions/{name}/accessibility`, `POST …/accessibility/click`, and
 The application must be a normal Qt program — Qt Widgets, or QML loaded through
 `QQmlApplicationEngine` or `QQuickView`. Quickshell shells render Qt Quick but
 do not publish an accessibility tree, so they remain screenshot-only.
+
+In the production container the binary must resolve inside the service, so it
+has to live under `LUMEN_PROJECTS_ROOT` — the same read-only host root that
+carries Quickshell QML. Compose mounts it at the identical absolute path, so the
+host path you pass works unchanged:
+
+```bash
+LUMEN_PROJECTS_ROOT=/srv/apps
+lumen ensure gitnaga --qt "/srv/apps/gitnaga/bin/gitnaga" --owner desktop-agent
+```
 
 The `dbus_bin` (`LUMEN_DBUS`) and `at_spi_registryd` (`LUMEN_ATSPI_REGISTRYD`)
 settings select the session bus and the AT-SPI registry daemon. Lumen starts the

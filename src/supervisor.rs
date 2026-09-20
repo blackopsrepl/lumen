@@ -1219,8 +1219,12 @@ fn validate_command(path: Option<PathBuf>, missing: &str) -> std::result::Result
         return Err(format!("program {program:?} must be an absolute path"));
     }
     let program_path = PathBuf::from(&program);
-    let metadata = std::fs::metadata(&program_path)
-        .map_err(|err| format!("reading program {program}: {err}"))?;
+    let metadata = std::fs::metadata(&program_path).map_err(|err| {
+        format!(
+            "reading program {program}: {err} (the program must exist in the service's \
+             filesystem; in a container it must be mounted, see LUMEN_PROJECTS_ROOT)"
+        )
+    })?;
     if !metadata.is_file() || !is_executable(&metadata) {
         return Err(format!("program {program} is not an executable file"));
     }

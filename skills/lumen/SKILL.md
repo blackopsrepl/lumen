@@ -81,6 +81,11 @@ The application must be a normal Qt program — Qt Widgets, or QML run through
 `QQmlApplicationEngine`/`QQuickView`. Quickshell shells do **not** publish an
 accessibility tree (use screenshots instead).
 
+In a containerized deployment the binary must be under `LUMEN_PROJECTS_ROOT`,
+the read-only host root Compose mounts at the same absolute path. Point that
+root at the host directory containing the application so the path you pass stays
+valid inside the service.
+
 ## 3. Run a Quickshell surface
 
 Quickshell sessions run one headless Sway compositor and one Quickshell process
@@ -89,7 +94,7 @@ directory, and it must be readable by the Lumen process:
 
     lumen ensure <your-session-name> --quickshell /absolute/path/to/shell.qml --owner <your-agent>
 
-In a containerized deployment the path must be under `LUMEN_QUICKSHELL_ROOT`,
+In a containerized deployment the path must be under `LUMEN_PROJECTS_ROOT`,
 which Compose mounts read-only at the same absolute path inside the container.
 Set that variable in `.env` to the common host directory containing the QML
 file and its imports or assets before calling `ensure`.
