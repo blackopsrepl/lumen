@@ -1,3 +1,4 @@
+use crate::accessibility;
 use crate::cdp::{CdpSession, NavigationBlocked, OnlyManagedTab, TabInfo};
 use crate::config::{Config, Viewport};
 use crate::desktop::MouseAction;
@@ -117,6 +118,15 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{name}/tabs/{index}", delete(close_tab))
         .route("/v1/sessions/{name}/screenshot", post(screenshot))
         .route("/v1/sessions/{name}/screen", get(screen))
+        .route("/v1/sessions/{name}/accessibility", get(accessibility))
+        .route(
+            "/v1/sessions/{name}/accessibility/click",
+            post(accessibility_click),
+        )
+        .route(
+            "/v1/sessions/{name}/accessibility/type",
+            post(accessibility_type),
+        )
         .route("/v1/sessions/{name}/cdp", post(raw_cdp))
         .route("/v1/audit", get(list_audit))
         .route("/v1/sessions/{name}/visibility", put(set_visibility))
@@ -578,6 +588,102 @@ async fn screen(
         .ok_or_else(|| ApiError::not_found(format!("session '{name}' not found")))?;
     let text = terminal_session(&agent)?.screen_text();
     Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response())
+}
+
+/// Resolve a running desktop session by name.
+async fn desktop_session(
+    state: &AppState,
+    name: &str,
+) -> Result<Arc<crate::desktop::DesktopSession>, ApiError> {
+    if !is_valid_agent_name(name) {
+        return Err(ApiError::bad_request("invalid agent name"));
+    }
+    let agent = state
+        .supervisor
+        .existing(name)
+        .await
+        .ok_or_else(|| ApiError::not_found(format!("session '{name}' not found")))?;
+    agent.backend.desktop().ok_or_else(|| {
+        ApiError::conflict(
+            "accessibility is only available for desktop sessions; browser sessions expose the DOM over CDP",
+        )
+    })
+}
+
+/// Return a desktop session's accessibility tree as JSON.
+///
+/// This is the desktop analogue of the terminal `/screen` endpoint: a
+/// structured view an agent can read without a screenshot.
+async fn accessibility(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<accessibility::Node>, ApiError> {
+    let session = desktop_session(&state, &name).await?;
+    let tree = accessibility::tree(session.bus_address()).await?;
+    Ok(Json(tree))
+}
+
+#[derive(Deserialize)]
+struct AccessibilityRefBody {
+    #[serde(rename = "ref")]
+    reference: String,
+}
+
+/// Click the center of an element named in the accessibility tree.
+///
+/// The element's exact screen rectangle comes from the application itself, so
+/// this is a coordinate click that survives a differently scaled screenshot.
+async fn accessibility_click(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<AccessibilityRefBody>,
+) -> Result<StatusCode, ApiError> {
+    let session = desktop_session(&state, &name).await?;
+    let tree = accessibility::tree(session.bus_address()).await?;
+    let node = tree.find(&body.reference).ok_or_else(|| {
+        ApiError::not_found(format!(
+            "element '{}' is not in the current accessibility tree",
+            body.reference
+        ))
+    })?;
+    let bounds = node.bounds.ok_or_else(|| {
+        ApiError::conflict(format!(
+            "element '{}' has no on-screen bounds",
+            body.reference
+        ))
+    })?;
+    let (x, y) = bounds.center();
+    // Move first so a press never begins from a stale pointer position.
+    session.mouse(MouseAction::Move, x, y, "left").await?;
+    session.mouse(MouseAction::Down, x, y, "left").await?;
+    session.mouse(MouseAction::Up, x, y, "left").await?;
+    if let Err(err) = state
+        .feedback
+        .record(&name, "accessibility_click", &body.reference)
+        .await
+    {
+        tracing::warn!("audit write failed: {err}");
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct AccessibilityTypeBody {
+    text: String,
+}
+
+/// Type text into the session's focused element.
+async fn accessibility_type(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<AccessibilityTypeBody>,
+) -> Result<StatusCode, ApiError> {
+    if body.text.is_empty() {
+        return Err(ApiError::bad_request("text must not be empty"));
+    }
+    let session = desktop_session(&state, &name).await?;
+    session.text(&body.text).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]

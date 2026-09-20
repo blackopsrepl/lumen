@@ -124,7 +124,7 @@ async fn connect(session_address: &str) -> Result<AccessibilityConnection> {
 /// A boxed recursive walk future: the tree is walked depth-first, so the
 /// function returns a pinned future rather than recursing through the type.
 type WalkFuture<'c> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Node, usize)>> + 'c>>;
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(Node, usize)>> + Send + 'c>>;
 
 /// Read one node and recurse into its children, spending at most `budget`
 /// nodes including this one. Returns the node and the budget that remains.
