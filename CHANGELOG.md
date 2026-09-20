@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.13.4](https://github.com/blackopsrepl/lumen/compare/v0.13.3...v0.13.4) (2026-09-20)
+
+### Features
+
+* **image:** ship the Qt modules a Qt application needs ([fded460](https://github.com/blackopsrepl/lumen/commit/fded4607611f1be2450de22eeadb72d35008ae38))
+
 ## [0.13.3](https://github.com/blackopsrepl/lumen/compare/v0.13.2...v0.13.3) (2026-09-20)
 
 ### Bug Fixes
