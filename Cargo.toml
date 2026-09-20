@@ -12,6 +12,7 @@ resolver = "2"
 
 [dependencies]
 anyhow = "1.0.104"
+atspi = { version = "0.30.0", features = ["tokio", "zbus"] }
 axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.23.1"
 bytes = "1.12.1"

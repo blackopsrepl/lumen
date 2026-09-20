@@ -1,3 +1,4 @@
+pub mod accessibility;
 pub mod cdp;
 pub mod client;
 pub mod config;
