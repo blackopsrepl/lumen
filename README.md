@@ -148,7 +148,7 @@ are `GET /v1/sessions/{name}/accessibility`, `POST …/accessibility/click`, and
 `POST …/accessibility/type`.
 
 <p align="center">
-  <img src="docs/images/viewer-qt.png" alt="The Lumen viewer running a Qt application session: the session list on the left shows the Qt app, and its live window streams on the canvas" width="920">
+  <img src="docs/images/viewer-qt.png" alt="The Lumen viewer running GitNaga, a native Qt application: the session list on the left shows the Qt session, and GitNaga's window streams live on the canvas" width="920">
 </p>
 
 The application must be a normal Qt program — Qt Widgets, or QML loaded through
