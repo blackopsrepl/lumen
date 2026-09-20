@@ -43,7 +43,7 @@ LABEL org.opencontainers.image.revision=$LUMEN_REVISION
 
 RUN export DEBIAN_FRONTEND=noninteractive \
   && apt-get update \
-  && apt-get install -y --no-install-recommends curl gnupg sway wtype grim xwayland tmux \
+  && apt-get install -y --no-install-recommends curl gnupg sway wtype grim xwayland tmux dbus at-spi2-core \
   && install -d -m 0755 /etc/apt/keyrings \
   && curl -4fsSL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x45FECBE587307AAA3F0A4BE9FC44813D2A7788B7' \
        | gpg --batch --dearmor -o /etc/apt/keyrings/avengemedia-danklinux.gpg \
@@ -63,6 +63,8 @@ RUN export DEBIAN_FRONTEND=noninteractive \
    && command -v wtype \
    && command -v grim \
    && command -v tmux \
+   && dbus-daemon --version >/dev/null \
+   && find /usr/libexec -name at-spi-bus-launcher -print -quit | grep -q . \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf "$(ls /ms-playwright/chromium-*/chrome-linux*/chrome | head -1)" /usr/local/bin/chromium \
  && chromium --version \
