@@ -384,3 +384,8 @@ systemd/lumen.service  the only unit
 bin/                   bootstrap, build/up/down, install, pw.sh, smoke
 skills/lumen/SKILL.md  opencode skill
 ```
+
+## License
+
+Lumen is free software under the GNU General Public License, version 3 or (at
+your option) any later version. See [`LICENSE`](LICENSE) for the full text.

@@ -3,7 +3,7 @@ name = "lumen-ratatui"
 version = "0.0.0"
 edition = "2021"
 description = "Ratatui backend, event source, and wire protocol for Lumen terminal sessions"
-license = "Apache-2.0"
+license = "GPL-3.0-or-later"
 publish = false
 
 [features]
