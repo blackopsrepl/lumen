@@ -57,6 +57,8 @@ RUN export DEBIAN_FRONTEND=noninteractive \
    && apt-get update \
    && apt-get install -y --no-install-recommends \
         quickshell qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+        qml6-module-qtquick-dialogs qml6-module-qtquick-window \
+        libqt6concurrent6 \
    && command -v sway \
    && command -v Xwayland \
    && command -v quickshell \
