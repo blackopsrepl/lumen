@@ -32,7 +32,7 @@ A production `lumen` container usually runs on 8899 with host networking and liv
 
 ## Config and deployment facts
 
-- Config layering in `src/config.rs::Config::load`: `LUMEN_CONFIG` file (default `config/lumen.toml`), then `LUMEN_PORT`, `LUMEN_CHROME`, `LUMEN_SWAY`, `LUMEN_QUICKSHELL`, `LUMEN_WTYPE`, `LUMEN_TUI_COLS`, and `LUMEN_TUI_ROWS` env overrides.
+- Config layering in `src/config.rs::Config::load`: `LUMEN_CONFIG` file (default `config/lumen.toml`), then `LUMEN_PORT`, `LUMEN_CHROME`, `LUMEN_SWAY`, `LUMEN_QUICKSHELL`, `LUMEN_WTYPE`, `LUMEN_DBUS`, `LUMEN_ATSPI_REGISTRYD`, `LUMEN_TUI_COLS`, and `LUMEN_TUI_ROWS` env overrides.
 - `compose.yaml` must forward every config surface the service reads and the healthcheck must probe the same port — these were once out of sync. The container's log level is `LUMEN_LOG`; never interpolate the host's `RUST_LOG`, which leaks in from the operator's shell.
 - `bin/up.sh` converges: it recreates the container only when the running image's `org.opencontainers.image.revision` label differs from the checkout's, because compose otherwise keeps an old container serving a stale binary. Image ids cannot be compared directly — every rebuild produces a new one.
 - Container runs with `network_mode: host`: pages reach host dev servers at `http://127.0.0.1:<port>`; `host.containers.internal` / `host.docker.internal` are mapped to loopback via `extra_hosts`.
@@ -45,6 +45,7 @@ A production `lumen` container usually runs on 8899 with host networking and liv
 - Session profiles are ephemeral and owned by one instance: `<data_dir>/run/<name>-<suffix>` exists only while that browser or desktop session is alive. Shutdown, reaping, and startup reconciliation remove them; the path is service-generated so deletion never derives from API input. Desktop Wayland sockets use a short service-generated symlink because Unix socket paths have a platform length limit.
 - `chromiumoxide::Page::close(self)` consumes the page — clone `target_id` before closing if you need it afterwards.
 - Quickshell paths are executable QML supplied by the caller. Validate that they are absolute and existing, but do not treat the check as sandboxing.
+- A Qt session path is an absolute executable plus arguments, validated like a terminal command. The session starts a private `dbus-daemon` and starts `at-spi2-registryd` against it **eagerly** (`src/desktop.rs`), then exports `QT_ACCESSIBILITY=1` and `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` to the app. Do not replace the eager registry with lazy activation: when the host runs systemd, the bus launcher delegates activation to systemd, which cannot reach a private bus, and the tree goes empty. `src/accessibility.rs` reads and walks the tree; `Environment`-level trees are per session by construction. Quickshell renders Qt Quick but publishes no accessibility tree, so it stays screenshot-only.
 - UI assets are embedded via `rust-embed` (`src/http.rs`): debug builds read `ui/` from disk, release builds embed. Verify UI changes under `cargo run`, rebuild the image for release behavior.
 
 ## Conventions

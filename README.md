@@ -8,21 +8,25 @@
   <img src="docs/images/viewer.png" alt="The Lumen viewer: a live browser session on the right, sessions and feedback on the left" width="920">
 </p>
 
-One service that gives every agent its own isolated Chromium, Quickshell desktop,
-or ratatui terminal surface and gives the human a live, controllable view of the
-same session. Agents drive real pages over a capability API or CDP, render
-terminals as text, and desktop surfaces natively; the human watches the active
-tab, desktop, or grid, can take over input at any moment, and leaves annotated
-feedback the agent reads back.
+One service that gives every agent its own isolated Chromium, Qt application,
+Quickshell desktop, or terminal surface and gives the human a live, controllable
+view of the same session. Agents drive real pages over a capability API or CDP,
+read and click a Qt application through its accessibility tree, and render
+terminals as text; the human watches the active surface, can take over input at
+any moment, and leaves annotated feedback the agent reads back.
 
 ## How it fits together
 
 - **Control plane** — an HTTP/JSON API (`/v1/...`) for sessions, browser
-  navigation, tabs, viewport, screenshots, terminal text, and raw CDP.
-- **View plane** — browser sessions use CDP screencasting; Quickshell sessions use
-  native Wayland screencopy; ratatui sessions stream styled cells from the app's
-  own buffer diff. All three are rendered to the same viewer canvas, and zoom is
-  view-only.
+  navigation, tabs, viewport, screenshots, terminal text, accessibility, and raw
+  CDP.
+- **View plane** — browser sessions use CDP screencasting; Qt and Quickshell
+  sessions use native Wayland screencopy; terminal sessions stream styled cells
+  from the app's own buffer diff. All are rendered to the same viewer canvas,
+  and zoom is view-only.
+- **Accessibility** — a Qt session publishes a structured tree of its controls
+  (role, name, state, and screen bounds). An agent reads it and clicks elements
+  by reference, the desktop analogue of the browser DOM.
 - **Feedback** — humans drag a rectangle, type a note; it lands in SQLite and
   the agent picks it up with one command. No watcher, no polling surface files.
 
@@ -117,6 +121,44 @@ the Avenge Media Dank Linux PPA and is installed from the Ubuntu 25.10 package
 repositories because Quickshell requires Qt 6.6 or newer. Host deployments may
 still override the binary paths through configuration or environment variables.
 
+## Run a Qt application
+
+A Qt session runs one headless Sway compositor, one private D-Bus, and one
+application per session. The path is an absolute program plus arguments:
+
+```bash
+lumen ensure gitnaga --qt "/opt/gitnaga/bin/gitnaga" --owner desktop-agent
+```
+
+The application publishes its controls on the accessibility bus, and an agent
+reads them as a structured tree instead of guessing pixels from a screenshot:
+
+```bash
+lumen accessibility gitnaga                 # JSON: role, name, states, bounds, ref
+lumen click gitnaga ":1.5|/org/a11y/atspi/accessible/42"
+lumen type  gitnaga "hello"
+```
+
+Each node carries an opaque `ref`, its `role`, `name`, `description`, `states`,
+and, when it has geometry, `bounds` in output pixels. `lumen click` resolves the
+element's own rectangle and clicks its centre through the same virtual pointer
+the viewer uses, so it is exact whatever the viewer's zoom. The HTTP equivalents
+are `GET /v1/sessions/{name}/accessibility`, `POST …/accessibility/click`, and
+`POST …/accessibility/type`.
+
+<p align="center">
+  <img src="docs/images/viewer-qt.png" alt="The Lumen viewer running a Qt application session: the session list on the left shows the Qt app, and its live window streams on the canvas" width="920">
+</p>
+
+The application must be a normal Qt program — Qt Widgets, or QML loaded through
+`QQmlApplicationEngine` or `QQuickView`. Quickshell shells render Qt Quick but
+do not publish an accessibility tree, so they remain screenshot-only.
+
+The `dbus_bin` (`LUMEN_DBUS`) and `at_spi_registryd` (`LUMEN_ATSPI_REGISTRYD`)
+settings select the session bus and the AT-SPI registry daemon. Lumen starts the
+registry with the session rather than relying on lazy activation, which cannot
+reach a private bus when the host runs systemd.
+
 ## Run a terminal
 
 There are two terminal paths, and which one applies decides what you can run.
@@ -193,6 +235,7 @@ The service also exposes the same capabilities over plain HTTP:
 | viewport / page scale | `PUT/DELETE /v1/sessions/{name}/viewport`, `PUT …/page-scale` |
 | screenshot | `POST /v1/sessions/{name}/screenshot?full=true` |
 | terminal screen | `GET /v1/sessions/{name}/screen` (ratatui, plain text) |
+| accessibility | `GET /v1/sessions/{name}/accessibility`, `POST …/accessibility/click`, `POST …/accessibility/type` |
 | raw CDP | `POST /v1/sessions/{name}/cdp` |
 | stream + input | `GET /v1/sessions/{name}/stream` (WebSocket) |
 | feedback | `GET/POST /v1/sessions/{name}/feedback`, `GET …/feedback/{id}/screenshot`, `POST …/ack-all` |
@@ -243,9 +286,9 @@ the host at `http://127.0.0.1:<port>` (`host.containers.internal` and
 | `make help` | every target, grouped |
 
 Configuration lives in `config/lumen.toml`; `LUMEN_CONFIG`, `LUMEN_PORT`,
-`LUMEN_CHROME`, `LUMEN_SWAY`, `LUMEN_QUICKSHELL`, and `LUMEN_WTYPE` override it,
-and `LUMEN_LOG` sets the service's log level (see
-`.env.example`). A globally exported `RUST_LOG` is deliberately ignored so a
+`LUMEN_CHROME`, `LUMEN_SWAY`, `LUMEN_QUICKSHELL`, `LUMEN_WTYPE`, `LUMEN_DBUS`,
+and `LUMEN_ATSPI_REGISTRYD` override it, and `LUMEN_LOG` sets the service's log
+level (see `.env.example`). A globally exported `RUST_LOG` is deliberately ignored so a
 shell setting cannot silently change the container's verbosity. The systemd
 user unit (`make install-systemd`) keeps the service running across logouts via
 linger.
@@ -321,16 +364,21 @@ program runs with the service's privileges. The host navigation policy covers
 HTTP browsing and does not constrain what a terminal program does on the
 network.
 
+A Qt session path is the same boundary: an absolute executable plus arguments,
+validated exactly like a terminal command and run with the service's
+privileges. Its accessibility tree is read-only observation and input through
+the same virtual pointer the viewer already uses.
+
 ## Layout
 
 ```
 Containerfile          multi-stage image: Rust builder -> Playwright runtime
 compose.yaml           one service (host network, /data volume)
 config/lumen.toml      the only config file
-src/                   supervisor, cdp, desktop, ratatui, pty, capabilities, view, feedback, client, http
+src/                   supervisor, cdp, desktop, accessibility, ratatui, pty, capabilities, view, feedback, client, http
 crates/lumen-ratatui/  app-side backend, session, and wire protocol (built by terminal apps)
 ui/                    no-build viewer (ES modules + CSS), embedded in the binary
-tests/e2e/             Playwright suite (viewer, API, lifecycle, ratatui)
+tests/e2e/             Playwright suite (viewer, API, lifecycle, ratatui, Qt accessibility)
 docs/                  screenshots and images
 systemd/lumen.service  the only unit
 bin/                   bootstrap, build/up/down, install, pw.sh, smoke
