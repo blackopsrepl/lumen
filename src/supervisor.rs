@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 use crate::cdp::CdpSession;
 use crate::config::Config;
 use crate::desktop::{DesktopApp, DesktopBins, DesktopSession};
+use crate::feedback::FeedbackStore;
 use crate::pty::PtySession;
 use crate::ratatui::RatatuiSession;
 use crate::view::ViewHub;
@@ -46,6 +47,10 @@ static PROFILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Owns every agent session: launch, isolation, discovery, and teardown.
 pub struct Supervisor {
     config: Arc<Config>,
+    /// Audit trail for the reaping this supervisor performs on its own: an
+    /// explicit delete is recorded by the HTTP handler, but a backend that
+    /// dies by itself used to be erased without a trace.
+    audit: Arc<FeedbackStore>,
     agents: Mutex<HashMap<String, Arc<AgentBrowser>>>,
     /// Held for the process lifetime; dropping it releases the profile-root
     /// lock to the next instance.
@@ -307,12 +312,13 @@ impl Supervisor {
     /// Reconciliation happens before the service accepts requests: no browser
     /// can be live yet, so every directory under the profile root is residue
     /// from a crash, an interrupted teardown, or a restart.
-    pub fn new(config: Arc<Config>) -> Result<Self> {
+    pub fn new(config: Arc<Config>, audit: Arc<FeedbackStore>) -> Result<Self> {
         let root = profile_root(&config.data_dir);
         let lock = lock_profile_root(&root)?;
         reconcile_profile_root(&root)?;
         Ok(Self {
             config,
+            audit,
             agents: Mutex::new(HashMap::new()),
             _lock: lock,
         })
@@ -437,6 +443,7 @@ impl Supervisor {
             agent
         };
         agent.shutdown().await;
+        self.record_reap(name).await;
         None
     }
 
@@ -643,6 +650,26 @@ impl Supervisor {
         };
         for agent in dead {
             agent.shutdown().await;
+            self.record_reap(&agent.name).await;
+        }
+    }
+
+    /// Record that a session was removed because its backend exited.
+    ///
+    /// A dead session disappears from the registry on the next API call, so
+    /// without this entry a silently vanished session — for instance one the
+    /// human just annotated — is undiagnosable after the fact.
+    async fn record_reap(&self, name: &str) {
+        if let Err(err) = self
+            .audit
+            .record(
+                name,
+                "reap",
+                "backend exited; session removed and profile reclaimed",
+            )
+            .await
+        {
+            tracing::warn!("audit write failed: {err}");
         }
     }
 

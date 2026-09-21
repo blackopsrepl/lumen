@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use base64::Engine as _;
 use chromiumoxide::cdp::browser_protocol::page::EventScreencastFrame;
 use futures::StreamExt;
-use lumen::{cdp::CdpSession, config::Config, supervisor::Supervisor};
+use lumen::{cdp::CdpSession, config::Config, feedback::FeedbackStore, supervisor::Supervisor};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -70,7 +70,9 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&out_dir).context("create output dir")?;
 
     let viewport = config.default_viewport;
-    let supervisor = Supervisor::new(Arc::new(config))?;
+    let audit_db = out_dir.join("audit.db");
+    let audit = Arc::new(FeedbackStore::open(&audit_db, 100)?);
+    let supervisor = Supervisor::new(Arc::new(config), audit)?;
     println!("default viewport: {}x{}", viewport.width, viewport.height);
 
     let agent = supervisor.ensure("spike").await?;

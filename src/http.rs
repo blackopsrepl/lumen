@@ -57,14 +57,17 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: Config) -> anyhow::Result<Self> {
-        let feedback = FeedbackStore::open(&config.feedback_db, config.audit_retain)?;
+        let feedback = Arc::new(FeedbackStore::open(
+            &config.feedback_db,
+            config.audit_retain,
+        )?);
         let config = Arc::new(config);
-        let supervisor = Arc::new(Supervisor::new(config.clone())?);
+        let supervisor = Arc::new(Supervisor::new(config.clone(), feedback.clone())?);
         supervisor.spawn_janitor();
         let (shutdown, _) = broadcast::channel(1);
         Ok(Self {
             supervisor,
-            feedback: Arc::new(feedback),
+            feedback,
             config,
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             shutdown,
