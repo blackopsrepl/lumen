@@ -181,6 +181,99 @@ test("draws and sends a feedback annotation", async ({ page, request }) => {
   }
 });
 
+test("keeps feedback scoped to its session across a switch", async ({ page, request }) => {
+  const first = sessionName("fb-a");
+  const second = sessionName("fb-b");
+  // Held feedback responses freeze the panel: a stale render for a session
+  // the viewer left must be caught as the last writer, before the polling
+  // loop can repaint the correct state over it.
+  let releaseFirstFeedback;
+  let releaseOtherFeedback;
+  const firstHeld = new Promise((resolve) => {
+    releaseFirstFeedback = resolve;
+  });
+  const othersHeld = new Promise((resolve) => {
+    releaseOtherFeedback = resolve;
+  });
+  const pattern = "**/feedback*";
+  try {
+    await createFromViewer(page, first);
+    // From here on, no feedback response completes on its own: the first
+    // session's are released on cue, the rest stay held for the test.
+    await page.route(pattern, async (route) => {
+      if (route.request().url().includes(`/v1/sessions/${first}/feedback`)) {
+        await firstHeld;
+      } else {
+        await othersHeld;
+      }
+      // The test may have torn the route down while this was parked.
+      await route.continue().catch(() => {});
+    });
+
+    // Leave a note on the first session. Its panel cannot learn of it while
+    // the hold is in place, so the note exists only on the server.
+    await request.post(`/v1/sessions/${encodeURIComponent(first)}/feedback`, {
+      data: { comment: "note left on the first session" },
+    });
+    // A pending-notes request for the first session, issued while it is
+    // still selected, is now parked inside the route handler.
+    const held = page.waitForRequest((req) =>
+      req.url().includes(`/v1/sessions/${first}/feedback`),
+    );
+
+    // Switch to a second session. Its panel refresh is held too, so the DOM
+    // stays exactly as the first session left it.
+    await request.post("/v1/sessions", { data: { name: second } });
+    await expect(page.locator(`[data-name="${second}"]`)).toBeVisible();
+    await page.locator(`[data-name="${second}"]`).click();
+    await expect(page.locator("#conn-status")).toHaveText(`live · ${second}`);
+    await expect(page.locator("#feedback-list")).toContainText("No pending notes");
+
+    await held;
+    releaseFirstFeedback();
+
+    // The parked response for the first session now resolves while the
+    // second is selected and nothing can repaint over it: the panel must
+    // keep showing the second session's empty state.
+    await expect(page.locator("#feedback-list")).toContainText("No pending notes");
+    await expect(page.locator("#feedback-list")).not.toContainText(
+      "note left on the first session",
+    );
+    await expect(page.locator("#feedback-count")).toBeHidden();
+
+    // The annotated session is untouched by the switch; its note is intact.
+    await expect(page.locator(`[data-name="${first}"]`)).toBeVisible();
+    await page.unroute(pattern);
+    await page.locator(`[data-name="${first}"]`).click();
+    await expect(page.locator("#conn-status")).toHaveText(`live · ${first}`);
+    await expect(page.locator("#feedback-list")).toContainText("note left on the first session");
+    await expect(page.locator("#feedback-count")).toHaveText("1");
+  } finally {
+    await page.unroute(pattern).catch(() => {});
+    releaseFirstFeedback();
+    releaseOtherFeedback();
+    await deleteSession(request, first);
+    await deleteSession(request, second);
+  }
+});
+
+test("says so when the viewed session ends", async ({ page, request }) => {
+  const name = sessionName("ended");
+  try {
+    await createFromViewer(page, name);
+
+    const response = await request.delete(`/v1/sessions/${encodeURIComponent(name)}`);
+    expect(response.status()).toBe(204);
+
+    // The end must be visible as an ended state, not a silent return to idle.
+    await expect(page.locator("#conn-status")).toHaveText(`ended · ${name}`);
+    await expect(page.locator("#toasts")).toContainText(`session ${name} ended`);
+    await expect(page.locator(`[data-name="${name}"]`)).toHaveCount(0);
+  } finally {
+    await deleteSession(request, name);
+  }
+});
+
 test("reaches a host-loopback development server", async ({ page, request }) => {
   const name = sessionName("host");
   const server = http.createServer((_, response) => {
