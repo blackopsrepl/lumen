@@ -361,8 +361,17 @@ must be bounded regardless of who drives it, make the network the enforcement
 point instead.
 
 The audit trail (`GET /v1/audit`) records navigations, tab operations, raw CDP
-calls, and feedback that pass through Lumen's API. Actions an agent takes
-directly over CDP do not pass through Lumen and are not audited.
+calls, and feedback that pass through Lumen's API. It also records `reap`
+entries when the supervisor removes a session because its backend process
+exited — a session can therefore vanish from the list without someone calling
+`DELETE`, but never without a trace. Actions an agent takes directly over CDP
+do not pass through Lumen and are not audited.
+
+Human notes are durable and keyed by session name: a session that ends with
+unacknowledged notes leaves them queued, and the next `lumen ensure` of the
+same name hands them to whoever attaches. The viewer reports a viewed
+session's end explicitly (`ended · <name>`) and says how many notes stay
+queued.
 
 Quickshell configuration is executable QML supplied by the caller. Lumen
 validates that the path is absolute and exists, but does not sandbox the QML or
