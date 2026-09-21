@@ -499,17 +499,22 @@ function terminalScreenshot(rect) {
 }
 
 async function sendComment() {
+  const session = state.session;
   const comment = el("comment-text").value.trim();
-  if (!comment || !state.session) return;
+  if (!comment || !session) return;
   try {
-    await api(sessionPath(state.session) + "/feedback", {
+    await api(sessionPath(session) + "/feedback", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ comment, screenshot: selectionScreenshot() }),
     });
-    el("comment-text").value = "";
-    setAnnotating(false);
-    state.feedbackSig = null;
+    // Only reset the annotation state if the viewer is still on the session
+    // the note was addressed to; a switch may have happened mid-request.
+    if (state.session === session) {
+      el("comment-text").value = "";
+      setAnnotating(false);
+      state.feedbackSig = null;
+    }
     toast("Note sent to the agent");
     loadFeedback();
   } catch (error) {
@@ -520,13 +525,18 @@ async function sendComment() {
 // --------------------------------------------------------------- feedback
 
 async function loadFeedback() {
-  if (!state.session) return;
+  // Pin the session for the whole flow: the fetch below outlives the click
+  // that started it, and a response for a session the viewer has already
+  // left must never reach the panel, the badge, or the screenshot URLs.
+  const session = state.session;
+  if (!session) return;
   let items = [];
   try {
-    items = await api(sessionPath(state.session) + "/feedback?pending=true");
+    items = await api(sessionPath(session) + "/feedback?pending=true");
   } catch {
     return;
   }
+  if (state.session !== session) return;
   const badge = el("feedback-count");
   badge.textContent = items.length;
   badge.hidden = items.length === 0;
@@ -569,7 +579,7 @@ async function loadFeedback() {
       shot.className = "shot";
       shot.alt = "The annotated region";
       shot.loading = "lazy";
-      shot.src = sessionPath(state.session) + `/feedback/${item.id}/screenshot`;
+      shot.src = sessionPath(session) + `/feedback/${item.id}/screenshot`;
       li.append(shot);
     }
 
@@ -583,7 +593,9 @@ async function loadFeedback() {
     resolve.onclick = async (event) => {
       event.stopPropagation();
       try {
-        await api(sessionPath(state.session) + `/feedback/${item.id}/ack`, { method: "POST" });
+        // Pinned to the session this row was rendered for, never to whichever
+        // session the viewer shows by the time the button is clicked.
+        await api(sessionPath(session) + `/feedback/${item.id}/ack`, { method: "POST" });
         state.feedbackSig = null;
         loadFeedback();
       } catch (error) {
