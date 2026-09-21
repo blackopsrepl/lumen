@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.13.5](https://github.com/blackopsrepl/lumen/compare/v0.13.4...v0.13.5) (2026-09-21)
+
+### Bug Fixes
+
+* **supervisor:** audit sessions reaped for a dead backend ([9ce53de](https://github.com/blackopsrepl/lumen/commit/9ce53de6fd58e68292a9ae4ddd8bac1f0a758720))
+* **viewer:** say when the viewed session ends ([49b59b1](https://github.com/blackopsrepl/lumen/commit/49b59b1bee23b4e4c792e803fa28cf60a24f5427))
+* **viewer:** scope the feedback panel to the selected session ([1bbae25](https://github.com/blackopsrepl/lumen/commit/1bbae2563af9c3977e1bdab368acdff1f00f3fc1))
+
 ## [0.13.4](https://github.com/blackopsrepl/lumen/compare/v0.13.3...v0.13.4) (2026-09-20)
 
 ### Features
