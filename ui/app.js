@@ -25,6 +25,7 @@ const state = {
   drawEnd: null,
   drawing: false,
   feedbackSig: null,
+  feedbackPending: 0,
   sessionsSig: null,
   sessionOrigin: null,
   sessionKind: null,
@@ -534,6 +535,10 @@ async function loadFeedback() {
   if (signature === state.feedbackSig) return;
   state.feedbackSig = signature;
 
+  // Remembered so a later "session ended" report can say whether the human's
+  // notes are still queued for the agent.
+  state.feedbackPending = items.length;
+
   const list = el("feedback-list");
   list.replaceChildren();
 
@@ -692,7 +697,7 @@ function clearReconnect() {
   }
 }
 
-function clearSession(name) {
+function clearSession(name, ended = false) {
   if (state.session !== name) return;
   clearReconnect();
   if (state.ws) {
@@ -717,7 +722,20 @@ function clearSession(name) {
   badge.hidden = true;
   setControlsEnabled(false);
   setState("empty");
-  setStatus("idle", "off");
+  if (ended) {
+    // The session did not merely go idle: its backend ended, so say what
+    // happened and where the human's notes went. The inbox is durable and
+    // keyed by name, so the agent's next ensure/consume still receives them.
+    setStatus(`ended · ${name}`, "off");
+    const pending = state.feedbackPending;
+    toast(
+      pending > 0
+        ? `session ${name} ended · ${pending} note${pending === 1 ? "" : "s"} stay queued for the agent`
+        : `session ${name} ended`,
+    );
+  } else {
+    setStatus("idle", "off");
+  }
   markActive(null);
 }
 
@@ -746,6 +764,7 @@ async function connect(name) {
   canvas.dataset.frameReady = "false";
   state.fit = true;
   state.feedbackSig = null;
+  state.feedbackPending = 0;
   el("cdp").textContent = "connecting…";
   el("attach").hidden = true;
   el("empty").hidden = true;
@@ -765,7 +784,8 @@ async function connect(name) {
   } catch (error) {
     if (state.session !== name) return;
     if (error.status === 404) {
-      clearSession(name);
+      // The row the user clicked belongs to a session that has since ended.
+      clearSession(name, true);
     } else {
       scheduleReconnect(name);
     }
@@ -921,7 +941,7 @@ async function pollInfo() {
     el("page-title").textContent = active.title || "";
     document.title = active.title ? `${active.title} · Lumen` : "Lumen";
   } catch (error) {
-    if (error.status === 404) clearSession(session);
+    if (error.status === 404) clearSession(session, true);
   } finally {
     state.pollInFlight = false;
     if (state.pollQueued) {
