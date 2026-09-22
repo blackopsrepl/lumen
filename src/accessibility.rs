@@ -74,11 +74,60 @@ impl Node {
     }
 }
 
+/// What a walk observed about the tree's content.
+///
+/// The registry always exposes its own chrome: a desktop root plus one
+/// `application` entry per publishing process, and the process entry carries
+/// the process name. Counts therefore cover only what the application
+/// published: `nodes` counts the application subtrees, and `named` counts
+/// named objects strictly below the `application` level, so a window title
+/// counts as published identity but the process name does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TreeStats {
+    /// Applications publishing on the session's bus.
+    pub applications: usize,
+    /// Objects in the application subtrees, applications included.
+    pub nodes: usize,
+    /// Named objects below the `application` level.
+    pub named: usize,
+}
+
+/// A walked tree with its measured content.
+pub struct Tree {
+    pub root: Node,
+    pub stats: TreeStats,
+}
+
+impl Tree {
+    /// Find a node by its reference, depth-first.
+    pub fn find(&self, reference: &str) -> Option<&Node> {
+        self.root.find(reference)
+    }
+}
+
+/// Measure what the application published, given the registry's root node.
+fn measure(root: &Node) -> TreeStats {
+    fn subtree_size(node: &Node) -> usize {
+        1 + node.children.iter().map(subtree_size).sum::<usize>()
+    }
+    fn named_below(node: &Node) -> usize {
+        node.children
+            .iter()
+            .map(|child| usize::from(!child.name.is_empty()) + named_below(child))
+            .sum()
+    }
+    TreeStats {
+        applications: root.children.len(),
+        nodes: root.children.iter().map(subtree_size).sum(),
+        named: root.children.iter().map(named_below).sum(),
+    }
+}
+
 /// Walk the accessibility tree of the application on `session_address`.
 ///
 /// `session_address` is the session's D-Bus address; the accessibility bus is
 /// discovered through it, exactly as a toolkit client would.
-pub async fn tree(session_address: &str) -> Result<Node> {
+pub async fn tree(session_address: &str) -> Result<Tree> {
     let connection = connect(session_address).await?;
     let bus = connection.connection();
     let root = AccessibleProxy::builder(bus)
@@ -90,8 +139,9 @@ pub async fn tree(session_address: &str) -> Result<Node> {
         .build()
         .await
         .context("opening the accessibility registry root")?;
-    let (node, _) = walk(bus, root, 0, MAX_NODES).await?;
-    Ok(node)
+    let (root, _) = walk(bus, root, 0, MAX_NODES).await?;
+    let stats = measure(&root);
+    Ok(Tree { root, stats })
 }
 
 /// Connect to a session bus and resolve its accessibility bus.
@@ -273,6 +323,75 @@ mod tests {
             bounds: None,
             children: Vec::new(),
         }
+    }
+
+    fn named(reference: &str, role: &str, name: &str) -> Node {
+        let mut node = leaf(reference, role);
+        node.name = name.into();
+        node
+    }
+
+    #[test]
+    fn measure_counts_what_the_application_publishes() {
+        let mut frame = named("frame", "frame", "Lumen Qt Fixture");
+        let mut filler = leaf("filler", "filler");
+        let mut text = named("l2", "text", "Name field");
+        text.children.push(named("l4", "label", "Name"));
+        filler.children = vec![
+            named("l1", "label", "0"),
+            text,
+            named("l3", "push button", "Increment"),
+        ];
+        frame.children.push(filler);
+        let mut app = named("app", "application", "qt-fixture");
+        app.children.push(frame);
+        let mut root = named("root", "desktop frame", "main");
+        root.children.push(app);
+
+        let stats = measure(&root);
+        assert_eq!(stats.applications, 1);
+        // application, frame, filler, label, text, text's label, button.
+        assert_eq!(stats.nodes, 7);
+        // Everything named below the application, text's label included.
+        assert_eq!(stats.named, 5);
+    }
+
+    #[test]
+    fn measure_reports_zero_named_for_a_chrome_only_application() {
+        // A bare rectangle publishes no accessible object at all, so only the
+        // window chrome remains, unnamed below the application entry.
+        let mut frame = leaf("frame", "frame");
+        frame.children.push(leaf("filler", "filler"));
+        let mut app = named("app", "application", "qt-loader");
+        app.children.push(frame);
+        let mut root = named("root", "desktop frame", "main");
+        root.children.push(app);
+
+        let stats = measure(&root);
+        assert_eq!(stats.applications, 1);
+        assert_eq!(stats.nodes, 3);
+        assert_eq!(stats.named, 0);
+    }
+
+    #[test]
+    fn measure_reports_no_application_after_the_app_exits() {
+        // The registry drops a departed application and keeps only its root.
+        let root = named("root", "desktop frame", "main");
+        let stats = measure(&root);
+        assert_eq!(stats.applications, 0);
+        assert_eq!(stats.nodes, 0);
+        assert_eq!(stats.named, 0);
+    }
+
+    #[test]
+    fn measure_ignores_the_registry_process_names() {
+        // The desktop root and the application entry always carry names; they
+        // are registry chrome, not published content.
+        let mut app = named("app", "application", "qt-loader");
+        app.children.push(leaf("frame", "frame"));
+        let mut root = named("root", "desktop frame", "main");
+        root.children.push(app);
+        assert_eq!(measure(&root).named, 0);
     }
 
     #[test]

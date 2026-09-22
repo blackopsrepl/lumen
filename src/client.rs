@@ -122,14 +122,20 @@ pub fn status(base: &str) -> Result<()> {
 
 /// Print a desktop session's accessibility tree as JSON.
 pub fn accessibility(base: &str, name: &str) -> Result<()> {
-    let value: serde_json::Value = check(
+    let response = check(
         client()?
             .get(format!("{base}/v1/sessions/{name}/accessibility"))
             .send()?,
     )
-    .context("connecting to lumen")?
-    .json()
-    .context("parsing the accessibility tree")?;
+    .context("connecting to lumen")?;
+    if let Some(warning) = response
+        .headers()
+        .get("x-lumen-tree-warning")
+        .and_then(|value| value.to_str().ok())
+    {
+        eprintln!("warning: {warning}");
+    }
+    let value: serde_json::Value = response.json().context("parsing the accessibility tree")?;
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }

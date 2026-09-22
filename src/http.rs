@@ -11,7 +11,7 @@ use crate::supervisor::{
 use crate::view::{Control, ViewHub};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
@@ -38,6 +38,10 @@ const MAX_FEEDBACK_BODY: usize = 8 * 1024 * 1024;
 const MAX_SCREENSHOT_BYTES: usize = 4 * 1024 * 1024;
 /// The PNG magic bytes; the viewer only ever captures `image/png`.
 const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
+/// Response header naming a tree whose application published no named object,
+/// so a caller can tell "nothing addressable" from a short-but-real tree.
+const TREE_WARNING_HEADER: header::HeaderName =
+    header::HeaderName::from_static("x-lumen-tree-warning");
 
 /// Shared control-plane state.
 #[derive(Clone)]
@@ -624,13 +628,42 @@ fn accessibility_bus(session: &crate::desktop::DesktopSession) -> Result<&str, A
 ///
 /// This is the desktop analogue of the terminal `/screen` endpoint: a
 /// structured view an agent can read without a screenshot.
+///
+/// A tree is not silently empty. When no application publishes on the
+/// session's bus — before the application has registered, or after it
+/// exited — the endpoint answers 409 rather than a bare registry skeleton.
+/// When the application publishes objects but none carries a name, the tree
+/// is still served (references and bounds remain actionable) with a
+/// `x-lumen-tree-warning` header, and one warning is logged per session.
 async fn accessibility(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<accessibility::Node>, ApiError> {
+) -> Result<Response, ApiError> {
     let session = desktop_session(&state, &name).await?;
     let tree = accessibility::tree(accessibility_bus(&session)?).await?;
-    Ok(Json(tree))
+    if tree.stats.applications == 0 {
+        return Err(ApiError::conflict(
+            "no application is publishing an accessibility tree on this session's bus; the application may still be starting or may have exited",
+        ));
+    }
+    let mut response = Json(tree.root).into_response();
+    if tree.stats.named == 0 {
+        if session.first_sparse_tree() {
+            tracing::warn!(
+                agent = name,
+                objects = tree.stats.nodes,
+                "the application publishes an accessibility tree without names; targets cannot be addressed by identity"
+            );
+        }
+        let warning = format!(
+            "no accessible object below the application publishes a name ({} objects)",
+            tree.stats.nodes
+        );
+        if let Ok(value) = HeaderValue::from_str(&warning) {
+            response.headers_mut().insert(TREE_WARNING_HEADER, value);
+        }
+    }
+    Ok(response)
 }
 
 #[derive(Deserialize)]

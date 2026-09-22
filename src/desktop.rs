@@ -84,6 +84,9 @@ pub struct DesktopSession {
     app: Mutex<Option<Child>>,
     dbus: Mutex<Option<Child>>,
     registryd: Mutex<Option<Child>>,
+    /// Set at the first observation of a nameless accessibility tree, so a
+    /// warning is logged once per session instead of on every poll.
+    sparse_warned: std::sync::atomic::AtomicBool,
 }
 
 impl DesktopSession {
@@ -317,6 +320,7 @@ impl DesktopSession {
             app: Mutex::new(Some(app_child)),
             dbus: Mutex::new(dbus),
             registryd: Mutex::new(registryd_child),
+            sparse_warned: std::sync::atomic::AtomicBool::new(false),
         });
 
         let ready = tokio::task::spawn_blocking(move || {
@@ -341,6 +345,16 @@ impl DesktopSession {
     /// accessibility tree.
     pub fn bus_address(&self) -> Option<&str> {
         self.bus_address.as_deref()
+    }
+
+    /// Whether this is the session's first nameless-tree observation.
+    ///
+    /// The accessibility endpoint is polled, so the sparse-tree warning must
+    /// fire once and not on every read.
+    pub fn first_sparse_tree(&self) -> bool {
+        !self
+            .sparse_warned
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn set_streaming(&self, streaming: bool) -> Result<()> {
