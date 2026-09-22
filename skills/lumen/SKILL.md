@@ -71,13 +71,15 @@ of guessing pixels from a screenshot:
 Click first to focus a text field, then `type` into it. Re-read the tree after
 acting to confirm the state changed — that is the verification loop.
 
-Reading the boundary: the endpoint answers **409** while no application is
-publishing (still starting, or already exited — retry). A served tree whose
-application published no named object carries a `x-lumen-tree-warning` header
-(`lumen accessibility` prints it on stderr): the application renders its own
-controls, so no control is addressable by name — fall back to screenshots and
-coordinate clicks. Bare `Rectangle`s in QML never appear in the tree unless
-they set `Accessible.name`.
+Reading the boundary: the body is the registry root node plus a `stats`
+object (`applications`, `nodes`, `named`, `max_depth`). The endpoint answers
+**409** while no application is publishing (still starting, or already
+exited — retry). `stats.named == 0` means the application published objects
+but nothing addressable by name; the response then also carries a
+`x-lumen-tree-warning` header (`lumen accessibility` prints it on stderr).
+That means the application renders its own controls — fall back to
+screenshots and coordinate clicks. Bare `Rectangle`s in QML never appear in
+the tree unless they set `Accessible.name`.
 
 The same operations over HTTP, if you are not using the CLI:
 
