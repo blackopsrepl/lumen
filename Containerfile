@@ -44,6 +44,7 @@ LABEL org.opencontainers.image.revision=$LUMEN_REVISION
 RUN export DEBIAN_FRONTEND=noninteractive \
   && apt-get update \
   && apt-get install -y --no-install-recommends curl gnupg sway wtype grim xwayland tmux dbus at-spi2-core \
+       gnome-keyring libsecret-tools \
   && install -d -m 0755 /etc/apt/keyrings \
   && curl -4fsSL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x45FECBE587307AAA3F0A4BE9FC44813D2A7788B7' \
        | gpg --batch --dearmor -o /etc/apt/keyrings/avengemedia-danklinux.gpg \
@@ -66,6 +67,8 @@ RUN export DEBIAN_FRONTEND=noninteractive \
    && command -v grim \
    && command -v tmux \
    && dbus-daemon --version >/dev/null \
+   && command -v secret-tool \
+   && command -v gnome-keyring-daemon \
    && find /usr/libexec -name at-spi-bus-launcher -print -quit | grep -q . \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf "$(ls /ms-playwright/chromium-*/chrome-linux*/chrome | head -1)" /usr/local/bin/chromium \
@@ -75,6 +78,10 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 
 COPY --from=builder /src/target/release/lumen /usr/local/bin/lumen
 COPY config/lumen.toml /etc/lumen/lumen.toml
+# Sessions inherit the entrypoint's environment, so the session bus and the
+# unlocked keyring it starts are available inside every session.
+COPY scripts/entrypoint.sh /usr/local/bin/lumen-entrypoint
+RUN chmod 0755 /usr/local/bin/lumen-entrypoint
 
 ENV LUMEN_CONFIG=/etc/lumen/lumen.toml \
     HOME=/home/ubuntu \
@@ -82,4 +89,4 @@ ENV LUMEN_CONFIG=/etc/lumen/lumen.toml \
 
 VOLUME ["/data"]
 EXPOSE 8899
-ENTRYPOINT ["lumen"]
+ENTRYPOINT ["/usr/local/bin/lumen-entrypoint"]
