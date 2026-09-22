@@ -163,7 +163,7 @@ ci: ## Local mirror of the Forgejo CI gates, in CI order
 
 clean: ## Remove the container image
 	@printf "$(ARROW) Removing container image...\n"
-	@-$(BIN)/ctr.sh rmi localhost/lumen:$${LUMEN_VERSION:-0.13.5}
+	@-$(BIN)/ctr.sh rmi localhost/lumen:$${LUMEN_VERSION:-0.13.6}
 	@printf "$(GREEN)$(CHECK) Clean complete$(RESET)\n\n"
 
 # ============== Help ==============

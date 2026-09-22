@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.13.6](https://github.com/blackopsrepl/lumen/compare/v0.13.5...v0.13.6) (2026-09-22)
+
+### Features
+
+* **container:** provide a Secret Service keyring ([9ee7601](https://github.com/blackopsrepl/lumen/commit/9ee7601a3cccd36fbc95db99239350bebc1af635))
+
+### Bug Fixes
+
+* **accessibility:** measure the tree into the response body ([2f8db88](https://github.com/blackopsrepl/lumen/commit/2f8db88410e954a4f0df70db5a71f7bd699787c0))
+* **accessibility:** never let a window title mask a sparse tree ([5a9346d](https://github.com/blackopsrepl/lumen/commit/5a9346d923577e97115dca4e2227bdf10cd1488d))
+* **accessibility:** surface an unusable tree instead of serving it silently ([a22a690](https://github.com/blackopsrepl/lumen/commit/a22a6905619b86927b900aa9a6e83fd0fcc8e96d))
+
 ## [0.13.5](https://github.com/blackopsrepl/lumen/compare/v0.13.4...v0.13.5) (2026-09-21)
 
 ### Bug Fixes
