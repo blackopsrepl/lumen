@@ -147,6 +147,25 @@ the viewer uses, so it is exact whatever the viewer's zoom. The HTTP equivalents
 are `GET /v1/sessions/{name}/accessibility`, `POST …/accessibility/click`, and
 `POST …/accessibility/type`.
 
+The endpoint never returns a silently useless tree:
+
+- **409 Conflict** when no application is publishing on the session's bus —
+  before the application has registered, or after it exited. While the
+  application is still starting this is transient; poll until it answers.
+- **`x-lumen-tree-warning` header** when the application publishes objects
+  but none carries a name below the application entry. Qt publishes nothing
+  for plain rectangles or custom-painted canvases, so an application that
+  draws its controls itself produces exactly this: a tree of structural
+  frames and fillers with nothing to address. The response is still 200 —
+  references and bounds remain actionable — and `lumen accessibility` prints
+  the warning on stderr. The service logs it once per session.
+
+The application must be a normal Qt program — Qt Widgets, or QML loaded through
+`QQmlApplicationEngine` or `QQuickView`. Controls that carry text expose it as
+their accessible name automatically; bare `Rectangle`s never appear in the tree
+unless they set `Accessible.name`. Quickshell shells render Qt Quick but
+publish no accessible objects, so they remain screenshot-only.
+
 <p align="center">
   <img src="docs/images/viewer-qt.png" alt="The Lumen viewer running GitNaga, a native Qt application: the session list on the left shows the Qt session, and GitNaga's window streams live on the canvas" width="920">
 </p>
