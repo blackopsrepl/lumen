@@ -74,12 +74,12 @@ acting to confirm the state changed — that is the verification loop.
 Reading the boundary: the body is the registry root node plus a `stats`
 object (`applications`, `nodes`, `named`, `max_depth`). The endpoint answers
 **409** while no application is publishing (still starting, or already
-exited — retry). `stats.named == 0` means the application published objects
-but nothing addressable by name; the response then also carries a
+exited — retry). `stats.named == 0` means nothing inside the application's
+windows carries a name — window titles do not count, so a titled window over
+a painted canvas is still sparse; the response then also carries a
 `x-lumen-tree-warning` header (`lumen accessibility` prints it on stderr).
-That means the application renders its own controls — fall back to
-screenshots and coordinate clicks. Bare `Rectangle`s in QML never appear in
-the tree unless they set `Accessible.name`.
+Fall back to screenshots and coordinate clicks. Bare `Rectangle`s in QML
+never appear in the tree unless they set `Accessible.name`.
 
 The same operations over HTTP, if you are not using the CLI:
 
