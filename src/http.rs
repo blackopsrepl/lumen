@@ -669,7 +669,7 @@ async fn accessibility(
             );
         }
         let warning = format!(
-            "no accessible object below the application publishes a name ({} objects)",
+            "no accessible object inside the application's windows publishes a name ({} objects)",
             tree.stats.nodes
         );
         if let Ok(value) = HeaderValue::from_str(&warning) {

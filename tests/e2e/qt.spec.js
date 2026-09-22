@@ -21,17 +21,19 @@ function findByName(node, wanted) {
   return null;
 }
 
-// True when any object below the application entries carries a name. The
-// desktop root and the application entries themselves are registry chrome
-// that always carry names, so they must not count.
-function hasNamedBelowApplication(node) {
+// True when any object inside the application's windows carries a name. The
+// desktop root, the application entries, and the window titles are registry
+// and window identity, not the identity of a target, so they must not count.
+function hasNamedInsideWindows(node) {
   if (!node || !node.children) return false;
   for (const app of node.children) {
-    const stack = [...(app.children || [])];
-    while (stack.length > 0) {
-      const current = stack.pop();
-      if (current.name) return true;
-      stack.push(...(current.children || []));
+    for (const window of app.children || []) {
+      const stack = [...(window.children || [])];
+      while (stack.length > 0) {
+        const current = stack.pop();
+        if (current.name) return true;
+        stack.push(...(current.children || []));
+      }
     }
   }
   return false;
@@ -135,7 +137,11 @@ test.describe("qt sparse tree", () => {
       ).toBeTruthy();
 
       const tree = await response.json();
-      expect(hasNamedBelowApplication(tree), "nothing below the application is named").toBe(false);
+      expect(hasNamedInsideWindows(tree), "nothing inside the windows is named").toBe(false);
+      // The window title is present in the body but must not mask the sparse
+      // measurement: the title names the window, not a target.
+      const frame = tree.children[0].children[0];
+      expect(frame.name, "the sparse window is titled").toBe("Sparse Fixture");
       // The body itself must carry the signal, for a caller that reads no
       // headers: measured emptiness, not just a bare node skeleton.
       expect(tree.stats.applications).toBeGreaterThanOrEqual(1);

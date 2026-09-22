@@ -77,20 +77,21 @@ impl Node {
 /// What a walk observed about the tree's content.
 ///
 /// The registry always exposes its own chrome: a desktop root plus one
-/// `application` entry per publishing process, and the process entry carries
-/// the process name. Counts therefore cover only what the application
-/// published: `nodes` and `max_depth` describe the application subtrees, and
-/// `named` counts named objects strictly below the `application` level, so a
-/// window title counts as published identity but the process name does not.
-/// `named == 0` means the application publishes objects but nothing
-/// addressable by name.
+/// `application` entry per publishing process, and each process entry carries
+/// the process name, while its direct children are the application's
+/// top-level windows carrying their titles. Counts therefore cover only what
+/// the application published inside its windows: `nodes` and `max_depth`
+/// describe the application subtrees, and `named` counts named objects
+/// strictly below the top-level windows, so neither the process name nor a
+/// window title masks a control surface that publishes no names.
+/// `named == 0` means nothing the agent could act on carries identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct TreeStats {
     /// Applications publishing on the session's bus.
     pub applications: usize,
     /// Objects in the application subtrees, applications included.
     pub nodes: usize,
-    /// Named objects below the `application` level.
+    /// Named objects strictly below the application's top-level windows.
     pub named: usize,
     /// Deepest application subtree, applications counted as level one.
     pub max_depth: usize,
@@ -123,10 +124,18 @@ fn measure(root: &Node) -> TreeStats {
             .map(|child| usize::from(!child.name.is_empty()) + named_below(child))
             .sum()
     }
+    // Named objects are counted below the top-level windows: the process
+    // entry and the window titles are the registry's and the window's own
+    // identity, never the identity of a target the agent could act on.
+    let named = root
+        .children
+        .iter()
+        .map(|app| app.children.iter().map(named_below).sum::<usize>())
+        .sum();
     TreeStats {
         applications: root.children.len(),
         nodes: root.children.iter().map(subtree_size).sum(),
-        named: root.children.iter().map(named_below).sum(),
+        named,
         max_depth: root.children.iter().map(subtree_depth).max().unwrap_or(0),
     }
 }
@@ -360,10 +369,30 @@ mod tests {
         assert_eq!(stats.applications, 1);
         // application, frame, filler, label, text, text's label, button.
         assert_eq!(stats.nodes, 7);
-        // Everything named below the application, text's label included.
-        assert_eq!(stats.named, 5);
+        // The window title does not count: only controls inside the window.
+        assert_eq!(stats.named, 4);
         // application > frame > filler > text > text's label.
         assert_eq!(stats.max_depth, 5);
+    }
+
+    #[test]
+    fn measure_reports_zero_named_for_a_titled_window_over_unnamed_controls() {
+        // A window title names the window, not a target: even with a title,
+        // an unnamed control surface must measure zero named objects.
+        let mut filler = leaf("filler", "filler");
+        filler.children.push(leaf("button", "push button"));
+        let mut frame = named("frame", "frame", "Painted Canvas");
+        frame.children.push(filler);
+        let mut app = named("app", "application", "qt-loader");
+        app.children.push(frame);
+        let mut root = named("root", "desktop frame", "main");
+        root.children.push(app);
+
+        let stats = measure(&root);
+        assert_eq!(stats.applications, 1);
+        assert_eq!(stats.nodes, 4);
+        assert_eq!(stats.named, 0);
+        assert_eq!(stats.max_depth, 4);
     }
 
     #[test]
