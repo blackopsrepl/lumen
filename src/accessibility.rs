@@ -79,10 +79,12 @@ impl Node {
 /// The registry always exposes its own chrome: a desktop root plus one
 /// `application` entry per publishing process, and the process entry carries
 /// the process name. Counts therefore cover only what the application
-/// published: `nodes` counts the application subtrees, and `named` counts
-/// named objects strictly below the `application` level, so a window title
-/// counts as published identity but the process name does not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// published: `nodes` and `max_depth` describe the application subtrees, and
+/// `named` counts named objects strictly below the `application` level, so a
+/// window title counts as published identity but the process name does not.
+/// `named == 0` means the application publishes objects but nothing
+/// addressable by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct TreeStats {
     /// Applications publishing on the session's bus.
     pub applications: usize,
@@ -90,6 +92,8 @@ pub struct TreeStats {
     pub nodes: usize,
     /// Named objects below the `application` level.
     pub named: usize,
+    /// Deepest application subtree, applications counted as level one.
+    pub max_depth: usize,
 }
 
 /// A walked tree with its measured content.
@@ -110,6 +114,9 @@ fn measure(root: &Node) -> TreeStats {
     fn subtree_size(node: &Node) -> usize {
         1 + node.children.iter().map(subtree_size).sum::<usize>()
     }
+    fn subtree_depth(node: &Node) -> usize {
+        1 + node.children.iter().map(subtree_depth).max().unwrap_or(0)
+    }
     fn named_below(node: &Node) -> usize {
         node.children
             .iter()
@@ -120,6 +127,7 @@ fn measure(root: &Node) -> TreeStats {
         applications: root.children.len(),
         nodes: root.children.iter().map(subtree_size).sum(),
         named: root.children.iter().map(named_below).sum(),
+        max_depth: root.children.iter().map(subtree_depth).max().unwrap_or(0),
     }
 }
 
@@ -354,6 +362,8 @@ mod tests {
         assert_eq!(stats.nodes, 7);
         // Everything named below the application, text's label included.
         assert_eq!(stats.named, 5);
+        // application > frame > filler > text > text's label.
+        assert_eq!(stats.max_depth, 5);
     }
 
     #[test]
@@ -371,6 +381,7 @@ mod tests {
         assert_eq!(stats.applications, 1);
         assert_eq!(stats.nodes, 3);
         assert_eq!(stats.named, 0);
+        assert_eq!(stats.max_depth, 3);
     }
 
     #[test]
@@ -381,6 +392,7 @@ mod tests {
         assert_eq!(stats.applications, 0);
         assert_eq!(stats.nodes, 0);
         assert_eq!(stats.named, 0);
+        assert_eq!(stats.max_depth, 0);
     }
 
     #[test]
@@ -391,7 +403,9 @@ mod tests {
         app.children.push(leaf("frame", "frame"));
         let mut root = named("root", "desktop frame", "main");
         root.children.push(app);
-        assert_eq!(measure(&root).named, 0);
+        let stats = measure(&root);
+        assert_eq!(stats.named, 0);
+        assert_eq!(stats.max_depth, 2);
     }
 
     #[test]

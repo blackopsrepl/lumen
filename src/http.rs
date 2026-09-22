@@ -9,6 +9,7 @@ use crate::supervisor::{
     SessionConflict, SessionKind, Supervisor, TerminalBackend,
 };
 use crate::view::{Control, ViewHub};
+use anyhow::Context as _;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
@@ -629,6 +630,11 @@ fn accessibility_bus(session: &crate::desktop::DesktopSession) -> Result<&str, A
 /// This is the desktop analogue of the terminal `/screen` endpoint: a
 /// structured view an agent can read without a screenshot.
 ///
+/// The body is the registry root node plus a `stats` object measuring what
+/// the application published (`applications`, `nodes`, `named`,
+/// `max_depth`), so a caller reading only the body can tell a populated
+/// tree from an empty one.
+///
 /// A tree is not silently empty. When no application publishes on the
 /// session's bus — before the application has registered, or after it
 /// exited — the endpoint answers 409 rather than a bare registry skeleton.
@@ -646,7 +652,14 @@ async fn accessibility(
             "no application is publishing an accessibility tree on this session's bus; the application may still be starting or may have exited",
         ));
     }
-    let mut response = Json(tree.root).into_response();
+    let mut body = serde_json::to_value(&tree.root).context("encoding the accessibility tree")?;
+    if let Some(object) = body.as_object_mut() {
+        object.insert(
+            "stats".into(),
+            serde_json::to_value(tree.stats).context("encoding the tree stats")?,
+        );
+    }
+    let mut response = Json(body).into_response();
     if tree.stats.named == 0 {
         if session.first_sparse_tree() {
             tracing::warn!(

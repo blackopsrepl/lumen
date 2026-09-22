@@ -88,10 +88,15 @@ test.describe("qt accessibility", () => {
       const after = await waitForTree(request, name, (candidate) => findByName(candidate, "1"));
       expect(findByName(after, "1"), "clicking the button advances the counter").not.toBeNull();
 
-      // A tree with named objects carries no warning.
+      // A tree with named objects carries no warning, and its body stats
+      // report the named objects the agent can address.
       const healthy = await request.get(`/v1/sessions/${name}/accessibility`);
       expect(healthy.ok()).toBeTruthy();
       expect(healthy.headers()["x-lumen-tree-warning"]).toBeUndefined();
+      const stats = (await healthy.json()).stats;
+      expect(stats.applications).toBeGreaterThanOrEqual(1);
+      expect(stats.named).toBeGreaterThan(0);
+      expect(stats.max_depth).toBeGreaterThan(0);
     } finally {
       await request.delete(`/v1/sessions/${name}`);
     }
@@ -131,6 +136,12 @@ test.describe("qt sparse tree", () => {
 
       const tree = await response.json();
       expect(hasNamedBelowApplication(tree), "nothing below the application is named").toBe(false);
+      // The body itself must carry the signal, for a caller that reads no
+      // headers: measured emptiness, not just a bare node skeleton.
+      expect(tree.stats.applications).toBeGreaterThanOrEqual(1);
+      expect(tree.stats.nodes).toBeGreaterThan(0);
+      expect(tree.stats.named).toBe(0);
+      expect(typeof tree.stats.max_depth).toBe("number");
     } finally {
       await request.delete(`/v1/sessions/${name}`);
     }
