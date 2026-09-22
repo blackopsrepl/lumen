@@ -3,10 +3,13 @@
 // The suite only runs when LUMEN_QT_APP names a real Qt application, which
 // bin/ui-test.sh sets after it builds tests/fixtures/qt_app. Without it the
 // spec skips, so a host with no Qt development toolchain still gets a green
-// run instead of a false failure.
+// run instead of a false failure. LUMEN_QT_SPARSE_APP names the same binary
+// loading a QML that publishes no named accessible object; it covers the
+// sparse-tree warning.
 const { test, expect } = require("@playwright/test");
 
 const qtApp = process.env.LUMEN_QT_APP;
+const sparseApp = process.env.LUMEN_QT_SPARSE_APP;
 
 function findByName(node, wanted) {
   if (!node) return null;
@@ -16,6 +19,22 @@ function findByName(node, wanted) {
     if (found) return found;
   }
   return null;
+}
+
+// True when any object below the application entries carries a name. The
+// desktop root and the application entries themselves are registry chrome
+// that always carry names, so they must not count.
+function hasNamedBelowApplication(node) {
+  if (!node || !node.children) return false;
+  for (const app of node.children) {
+    const stack = [...(app.children || [])];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (current.name) return true;
+      stack.push(...(current.children || []));
+    }
+  }
+  return false;
 }
 
 async function fetchTree(request, name) {
@@ -68,6 +87,50 @@ test.describe("qt accessibility", () => {
 
       const after = await waitForTree(request, name, (candidate) => findByName(candidate, "1"));
       expect(findByName(after, "1"), "clicking the button advances the counter").not.toBeNull();
+
+      // A tree with named objects carries no warning.
+      const healthy = await request.get(`/v1/sessions/${name}/accessibility`);
+      expect(healthy.ok()).toBeTruthy();
+      expect(healthy.headers()["x-lumen-tree-warning"]).toBeUndefined();
+    } finally {
+      await request.delete(`/v1/sessions/${name}`);
+    }
+  });
+});
+
+test.describe("qt sparse tree", () => {
+  test.skip(!sparseApp, "LUMEN_QT_SPARSE_APP is not set (no sparse Qt fixture)");
+
+  test("warns when the application publishes no named object", async ({ request }) => {
+    test.setTimeout(90_000);
+    const name = `qt-sparse-${Date.now()}`;
+
+    const created = await request.post("/v1/sessions", {
+      data: { name, kind: "qt", path: sparseApp },
+    });
+    expect(created.ok(), await created.text()).toBeTruthy();
+
+    try {
+      // The application may not have registered on the bus yet; the endpoint
+      // answers 409 until then, so poll for the first served tree.
+      let response = null;
+      const deadline = Date.now() + 25_000;
+      while (Date.now() < deadline) {
+        const candidate = await request.get(`/v1/sessions/${name}/accessibility`);
+        if (candidate.ok()) {
+          response = candidate;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      expect(response, "the sparse tree is served").not.toBeNull();
+      expect(
+        response.headers()["x-lumen-tree-warning"],
+        "a tree without named objects carries a warning header",
+      ).toBeTruthy();
+
+      const tree = await response.json();
+      expect(hasNamedBelowApplication(tree), "nothing below the application is named").toBe(false);
     } finally {
       await request.delete(`/v1/sessions/${name}`);
     }

@@ -28,8 +28,11 @@ trex="$(cargo metadata --no-deps --format-version 1 \
   | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);console.log(m.target_directory+"/debug/examples/trex")})')"
 
 # The Qt E2E drives a real Qt application. Build the fixture when a Qt6
-# development toolchain is present; otherwise the spec skips itself.
+# development toolchain is present; otherwise the spec skips itself. A second
+# QML drives the same binary with content that publishes no named accessible
+# object, covering the sparse-tree warning.
 qt_app="${LUMEN_QT_APP:-}"
+qt_sparse_app=""
 if [ -z "${qt_app}" ] && command -v g++ >/dev/null 2>&1 \
     && pkg-config --exists Qt6Quick Qt6Qml 2>/dev/null; then
   qt_bin="${run_dir}/qt-fixture"
@@ -38,6 +41,7 @@ if [ -z "${qt_app}" ] && command -v g++ >/dev/null 2>&1 \
   # shellcheck disable=SC2086
   if g++ -fPIC "${PROJECT_DIR}/tests/fixtures/qt_app.cpp" -o "${qt_bin}" ${qt_flags} 2>/dev/null; then
     qt_app="${qt_bin} ${PROJECT_DIR}/tests/fixtures/qt_app.qml"
+    qt_sparse_app="${qt_bin} ${PROJECT_DIR}/tests/fixtures/qt_sparse.qml"
     log "Qt E2E fixture built"
   else
     log "Qt E2E fixture did not build; the Qt spec will skip"
@@ -51,4 +55,5 @@ LUMEN_PORT="${port}" \
   LUMEN_CHROME="${chromium}" \
   LUMEN_TREX="${trex}" \
   LUMEN_QT_APP="${qt_app}" \
+  LUMEN_QT_SPARSE_APP="${qt_sparse_app}" \
   npm run test:e2e --silent
