@@ -16,23 +16,28 @@ jobs:
 
       # Keep this job on the same Playwright/Ubuntu runtime as GitHub CI. The
       # runner image only supplies the Docker executor and is not the test OS.
+      #
+      # The steps that reach the network retry: this runner has hit transient
+      # external outages (DNS resolution and routing) that fail apt and curl
+      # inside the job container for minutes at a time.
       - name: Toolchain
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends curl gnupg build-essential pkg-config
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+          retry() { for i in 1 2 3 4 5; do "$@" && return 0; echo "attempt $i failed: $*"; sleep 5; done; return 1; }
+          retry apt-get update
+          retry apt-get install -y --no-install-recommends curl gnupg build-essential pkg-config
+          retry bash -c "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none"
           export PATH="$HOME/.cargo/bin:$PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          retry rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
 
       - name: Desktop dependencies
         run: |
+          retry() { for i in 1 2 3 4 5; do "$@" && return 0; echo "attempt $i failed: $*"; sleep 5; done; return 1; }
           export DEBIAN_FRONTEND=noninteractive
-          apt-get install -y --no-install-recommends sway wtype grim xwayland dbus at-spi2-core
+          retry apt-get install -y --no-install-recommends sway wtype grim xwayland dbus at-spi2-core
           install -d -m 0755 /etc/apt/keyrings
-          curl -4fsSL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x45FECBE587307AAA3F0A4BE9FC44813D2A7788B7' \
-            | gpg --batch --dearmor -o /etc/apt/keyrings/avengemedia-danklinux.gpg
+          retry bash -c "curl -4fsSL --retry 5 --retry-all-errors 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x45FECBE587307AAA3F0A4BE9FC44813D2A7788B7' | gpg --batch --dearmor -o /etc/apt/keyrings/avengemedia-danklinux.gpg"
           test "$(gpg --show-keys --with-colons /etc/apt/keyrings/avengemedia-danklinux.gpg | awk -F: '$1 == "fpr" { print $10; exit }')" = '45FECBE587307AAA3F0A4BE9FC44813D2A7788B7'
           printf '%s\n' \
             'deb [signed-by=/etc/apt/keyrings/avengemedia-danklinux.gpg] https://ppa.launchpadcontent.net/avengemedia/danklinux/ubuntu questing main' \
@@ -40,8 +45,8 @@ jobs:
             'deb http://archive.ubuntu.com/ubuntu/ questing-updates main universe' \
             'deb http://security.ubuntu.com/ubuntu questing-security main universe' \
             > /etc/apt/sources.list.d/ubuntu-questing.list
-          apt-get update
-          apt-get install -y --no-install-recommends \
+          retry apt-get update
+          retry apt-get install -y --no-install-recommends \
             quickshell qml6-module-qtquick-controls qml6-module-qtquick-layouts
           command -v sway
           command -v Xwayland
