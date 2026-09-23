@@ -72,14 +72,16 @@ Click first to focus a text field, then `type` into it. Re-read the tree after
 acting to confirm the state changed — that is the verification loop.
 
 Reading the boundary: the body is the registry root node plus a `stats`
-object (`applications`, `nodes`, `named`, `max_depth`). The endpoint answers
-**409** while no application is publishing (still starting, or already
-exited — retry). `stats.named == 0` means nothing inside the application's
-windows carries a name — window titles do not count, so a titled window over
-a painted canvas is still sparse; the response then also carries a
-`x-lumen-tree-warning` header (`lumen accessibility` prints it on stderr).
-Fall back to screenshots and coordinate clicks. Bare `Rectangle`s in QML
-never appear in the tree unless they set `Accessible.name`.
+object (`applications`, `nodes`, `named`, `interior`, `max_depth`). The
+endpoint answers **409** while no application is publishing (still starting,
+or already exited — retry), and **409** when the application published nothing
+addressable (`stats.named == 0` and `stats.interior == 0`: a canvas that draws
+its own controls, so only screenshots and pointer input apply). `stats.named ==
+0` with `stats.interior > 0` means it published real objects under no names;
+the tree is served with a `x-lumen-tree-warning` header (`lumen accessibility`
+prints it on stderr) — address those controls by `ref` and `bounds`. Window
+titles do not count as names. Bare `Rectangle`s in QML never appear in the
+tree unless they set `Accessible.name`.
 
 The same operations over HTTP, if you are not using the CLI:
 

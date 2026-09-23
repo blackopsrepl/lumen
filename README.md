@@ -149,22 +149,27 @@ are `GET /v1/sessions/{name}/accessibility`, `POST …/accessibility/click`, and
 
 The endpoint never returns a silently useless tree. The body is the registry
 root node plus a `stats` object — `applications`, `nodes`, `named`,
-`max_depth` — measuring what the application published, so a caller reading
-only the body can tell a populated tree from an empty one. `named` counts
-named objects strictly inside the application's windows: process names and
-window titles are identity of the window, never of a target:
+`interior`, `max_depth` — measuring what the application published, so a
+caller reading only the body can tell a populated tree from an empty one.
+`named` counts named objects strictly inside the application's windows
+(process names and window titles are the identity of the window, never of a
+target), and `interior` counts objects whose rectangle differs from their
+window's — the objects a pointer can actually address:
 
 - **409 Conflict** when no application is publishing on the session's bus —
   before the application has registered, or after it exited. While the
   application is still starting this is transient; poll until it answers.
-- **`x-lumen-tree-warning` header** when the application publishes objects
-  but nothing inside its windows carries a name (`stats.named == 0`) — even
-  when the window is titled. Qt publishes nothing for plain rectangles or
-  custom-painted canvases, so an application that draws its controls itself
-  produces exactly this: a tree of structural frames and fillers with
-  nothing to address. The response is still 200 — references and bounds
-  remain actionable — and `lumen accessibility` prints the warning on
-  stderr. The service logs it once per session.
+- **409 Conflict** when the application published only window-level
+  containers (`stats.named == 0` and `stats.interior == 0`). Qt publishes
+  nothing for plain rectangles or custom-painted canvases, so an application
+  that draws its controls itself produces exactly this: a tree of structural
+  frames and fillers with nothing to address. The endpoint refuses it rather
+  than serving a skeleton the caller cannot tell from a real tree.
+- **`x-lumen-tree-warning` header** when the application published real
+  objects but none carries a name (`stats.named == 0`, `stats.interior > 0`).
+  The tree is served with 200 — references and bounds address those objects —
+  and `lumen accessibility` prints the warning on stderr. The service logs it
+  once per session.
 
 The application must be a normal Qt program — Qt Widgets, or QML loaded through
 `QQmlApplicationEngine` or `QQuickView`. Controls that carry text expose it as
