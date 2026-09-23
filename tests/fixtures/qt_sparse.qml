@@ -1,11 +1,11 @@
 import QtQuick
 import QtQuick.Controls
 
-// Publishes no named accessible object: a bare rectangle never appears in
-// the tree, so only the window chrome remains. The window carries a title on
-// purpose: a title names the window, not a target, so the tree must still
-// measure as sparse. The sparse-tree E2E proves the warning surfaces instead
-// of a silent 200.
+// Publishes no accessible object at all: a bare rectangle never enters the
+// tree, and Qt's content filler spans the window exactly, so nothing is
+// addressable. The window carries a title on purpose: a title names the
+// window, not a target. The empty-tree E2E proves the service refuses this
+// tree instead of serving a bare registry skeleton.
 ApplicationWindow {
     visible: true
     width: 480
