@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.13.7](https://github.com/blackopsrepl/lumen/compare/v0.13.6...v0.13.7) (2026-09-23)
+
+### Bug Fixes
+
+* **accessibility:** refuse a tree that published nothing ([15528be](https://github.com/blackopsrepl/lumen/commit/15528be3911be6d76eac68d34709d997f862f023))
+
 ## [0.13.6](https://github.com/blackopsrepl/lumen/compare/v0.13.5...v0.13.6) (2026-09-22)
 
 ### Features
