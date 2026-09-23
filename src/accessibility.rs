@@ -81,10 +81,15 @@ impl Node {
 /// the process name, while its direct children are the application's
 /// top-level windows carrying their titles. Counts therefore cover only what
 /// the application published inside its windows: `nodes` and `max_depth`
-/// describe the application subtrees, and `named` counts named objects
+/// describe the application subtrees, and `named` and `interior` count
 /// strictly below the top-level windows, so neither the process name nor a
 /// window title masks a control surface that publishes no names.
-/// `named == 0` means nothing the agent could act on carries identity.
+///
+/// The two counts separate the two ways a tree can be useless: `interior`
+/// counts objects whose rectangle differs from their window's, so zero means
+/// the application published nothing but window-level containers, while
+/// `named == 0` with `interior > 0` means it published real objects that
+/// carry no identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct TreeStats {
     /// Applications publishing on the session's bus.
@@ -93,6 +98,8 @@ pub struct TreeStats {
     pub nodes: usize,
     /// Named objects strictly below the application's top-level windows.
     pub named: usize,
+    /// Objects below the windows whose rectangle differs from the window's.
+    pub interior: usize,
     /// Deepest application subtree, applications counted as level one.
     pub max_depth: usize,
 }
@@ -124,18 +131,46 @@ fn measure(root: &Node) -> TreeStats {
             .map(|child| usize::from(!child.name.is_empty()) + named_below(child))
             .sum()
     }
-    // Named objects are counted below the top-level windows: the process
-    // entry and the window titles are the registry's and the window's own
-    // identity, never the identity of a target the agent could act on.
+    // An object the application published inside a window: it is below the
+    // window and either has a rectangle of its own or sits under a window
+    // whose own rectangle is unknown. A window-level container (Qt's filler
+    // spans the window exactly) is not an object the agent can address.
+    fn interior_below(node: &Node, window: Option<Bounds>) -> usize {
+        node.children
+            .iter()
+            .map(|child| {
+                let interior = match (child.bounds, window) {
+                    (Some(bounds), Some(rect)) => bounds != rect,
+                    (Some(_), None) => true,
+                    (None, _) => false,
+                };
+                usize::from(interior) + interior_below(child, window)
+            })
+            .sum()
+    }
+    // Named objects and interior objects are counted below the top-level
+    // windows: the process entry and the window titles are the registry's and
+    // the window's own identity, never the identity of a target.
     let named = root
         .children
         .iter()
         .map(|app| app.children.iter().map(named_below).sum::<usize>())
         .sum();
+    let interior = root
+        .children
+        .iter()
+        .map(|app| {
+            app.children
+                .iter()
+                .map(|window| interior_below(window, window.bounds))
+                .sum::<usize>()
+        })
+        .sum();
     TreeStats {
         applications: root.children.len(),
         nodes: root.children.iter().map(subtree_size).sum(),
         named,
+        interior,
         max_depth: root.children.iter().map(subtree_depth).max().unwrap_or(0),
     }
 }
@@ -348,16 +383,28 @@ mod tests {
         node
     }
 
+    /// Place a node at a rectangle, as the application's own component reports it.
+    fn at(mut node: Node, x: i32, y: i32, width: i32, height: i32) -> Node {
+        node.bounds = Some(Bounds {
+            x,
+            y,
+            width,
+            height,
+        });
+        node
+    }
+
     #[test]
     fn measure_counts_what_the_application_publishes() {
-        let mut frame = named("frame", "frame", "Lumen Qt Fixture");
-        let mut filler = leaf("filler", "filler");
-        let mut text = named("l2", "text", "Name field");
-        text.children.push(named("l4", "label", "Name"));
+        let mut frame = at(named("frame", "frame", "Lumen Qt Fixture"), 0, 0, 480, 320);
+        let mut filler = at(leaf("filler", "filler"), 0, 0, 480, 320);
+        let mut text = at(named("l2", "text", "Name field"), 150, 160, 180, 30);
+        text.children
+            .push(at(named("l4", "label", "Name"), 155, 165, 40, 20));
         filler.children = vec![
-            named("l1", "label", "0"),
+            at(named("l1", "label", "0"), 200, 120, 40, 20),
             text,
-            named("l3", "push button", "Increment"),
+            at(named("l3", "push button", "Increment"), 180, 200, 120, 32),
         ];
         frame.children.push(filler);
         let mut app = named("app", "application", "qt-fixture");
@@ -371,17 +418,22 @@ mod tests {
         assert_eq!(stats.nodes, 7);
         // The window title does not count: only controls inside the window.
         assert_eq!(stats.named, 4);
+        // Every control has a rectangle of its own; the filler spans the window.
+        assert_eq!(stats.interior, 4);
         // application > frame > filler > text > text's label.
         assert_eq!(stats.max_depth, 5);
     }
 
     #[test]
-    fn measure_reports_zero_named_for_a_titled_window_over_unnamed_controls() {
-        // A window title names the window, not a target: even with a title,
-        // an unnamed control surface must measure zero named objects.
-        let mut filler = leaf("filler", "filler");
-        filler.children.push(leaf("button", "push button"));
-        let mut frame = named("frame", "frame", "Painted Canvas");
+    fn measure_counts_unnamed_controls_as_addressable_interior() {
+        // A titled window over an unnamed icon-only button: the title names
+        // the window, not the button, so nothing is named — but the button is
+        // a real object with its own rectangle, so the tree stays addressable.
+        let mut filler = at(leaf("filler", "filler"), 0, 0, 480, 320);
+        filler
+            .children
+            .push(at(leaf("button", "push button"), 226, 146, 28, 28));
+        let mut frame = at(named("frame", "frame", "Painted Canvas"), 0, 0, 480, 320);
         frame.children.push(filler);
         let mut app = named("app", "application", "qt-loader");
         app.children.push(frame);
@@ -392,15 +444,19 @@ mod tests {
         assert_eq!(stats.applications, 1);
         assert_eq!(stats.nodes, 4);
         assert_eq!(stats.named, 0);
+        assert_eq!(stats.interior, 1);
         assert_eq!(stats.max_depth, 4);
     }
 
     #[test]
-    fn measure_reports_zero_named_for_a_chrome_only_application() {
+    fn measure_reports_nothing_published_for_a_chrome_only_application() {
         // A bare rectangle publishes no accessible object at all, so only the
-        // window chrome remains, unnamed below the application entry.
-        let mut frame = leaf("frame", "frame");
-        frame.children.push(leaf("filler", "filler"));
+        // window chrome remains; the filler spans the window exactly, so the
+        // application published nothing addressable.
+        let mut frame = at(leaf("frame", "frame"), 0, 0, 480, 320);
+        frame
+            .children
+            .push(at(leaf("filler", "filler"), 0, 0, 480, 320));
         let mut app = named("app", "application", "qt-loader");
         app.children.push(frame);
         let mut root = named("root", "desktop frame", "main");
@@ -410,6 +466,7 @@ mod tests {
         assert_eq!(stats.applications, 1);
         assert_eq!(stats.nodes, 3);
         assert_eq!(stats.named, 0);
+        assert_eq!(stats.interior, 0);
         assert_eq!(stats.max_depth, 3);
     }
 
@@ -434,6 +491,7 @@ mod tests {
         root.children.push(app);
         let stats = measure(&root);
         assert_eq!(stats.named, 0);
+        assert_eq!(stats.interior, 0);
         assert_eq!(stats.max_depth, 2);
     }
 

@@ -631,16 +631,19 @@ fn accessibility_bus(session: &crate::desktop::DesktopSession) -> Result<&str, A
 /// structured view an agent can read without a screenshot.
 ///
 /// The body is the registry root node plus a `stats` object measuring what
-/// the application published (`applications`, `nodes`, `named`,
-/// `max_depth`), so a caller reading only the body can tell a populated
-/// tree from an empty one.
+/// the application published (`applications`, `nodes`, `named`, `interior`,
+/// `max_depth`), so a caller reading only the body can tell a populated tree
+/// from an empty one.
 ///
-/// A tree is not silently empty. When no application publishes on the
+/// A tree is never silently useless. When no application publishes on the
 /// session's bus — before the application has registered, or after it
-/// exited — the endpoint answers 409 rather than a bare registry skeleton.
-/// When the application publishes objects but none carries a name, the tree
-/// is still served (references and bounds remain actionable) with a
-/// `x-lumen-tree-warning` header, and one warning is logged per session.
+/// exited — the endpoint answers 409. So does an application that published
+/// nothing but window-level containers: nothing in its tree is addressable,
+/// and serving it would invite a pixel fallback the caller cannot
+/// distinguish from a real tree. Only when the application published real
+/// objects that carry no name is the tree served (references and bounds
+/// address them) with a `x-lumen-tree-warning` header and one log per
+/// session.
 async fn accessibility(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -650,6 +653,11 @@ async fn accessibility(
     if tree.stats.applications == 0 {
         return Err(ApiError::conflict(
             "no application is publishing an accessibility tree on this session's bus; the application may still be starting or may have exited",
+        ));
+    }
+    if tree.stats.named == 0 && tree.stats.interior == 0 {
+        return Err(ApiError::conflict(
+            "the application publishes no accessible objects inside its windows; only screenshots and pointer input can address it",
         ));
     }
     let mut body = serde_json::to_value(&tree.root).context("encoding the accessibility tree")?;
