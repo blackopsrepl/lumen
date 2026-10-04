@@ -6,6 +6,7 @@
 
 #include "daemonclient.h"
 #include "daemoncontrol.h"
+#include "frameprovider.h"
 #include "theme.h"
 
 #include <QCoreApplication>
@@ -59,6 +60,9 @@ int main(int argc, char **argv) {
     DaemonControl control;
 
     QQmlApplicationEngine engine;
+    // The frame is served through the image provider: an Image source is a URL
+    // and a QImage cannot be assigned to it.
+    engine.addImageProvider(QStringLiteral("lumen"), new FrameProvider(&client));
     engine.rootContext()->setContextProperty(QStringLiteral("daemon"), &client);
     engine.rootContext()->setContextProperty(QStringLiteral("daemonControl"), &control);
     // The palette is handed to QML as a context property rather than as a

@@ -21,10 +21,26 @@ QString runtimeSocket(const QString &leaf) {
     return runtime + QLatin1Char('/') + leaf;
 }
 
+/// Honour an explicit path when one is published.
+///
+/// A viewer running inside a Lumen session has its own XDG_RUNTIME_DIR, so it
+/// cannot derive the daemon's socket location; the daemon exports it instead.
+QString publishedSocket(const char *envVar, const QString &fallback) {
+    const QByteArray published = qgetenv(envVar);
+    return published.isEmpty() ? fallback : QString::fromLocal8Bit(published);
+}
+
 } // namespace
 
-QString DaemonClient::controlSocketPath() { return runtimeSocket(QStringLiteral("lumen-agent.sock")); }
-QString DaemonClient::streamSocketPath() { return runtimeSocket(QStringLiteral("lumen-stream.sock")); }
+QString DaemonClient::controlSocketPath() {
+    return publishedSocket("LUMEN_AGENT_SOCKET",
+                           runtimeSocket(QStringLiteral("lumen-agent.sock")));
+}
+
+QString DaemonClient::streamSocketPath() {
+    return publishedSocket("LUMEN_STREAM_SOCKET",
+                           runtimeSocket(QStringLiteral("lumen-stream.sock")));
+}
 
 DaemonClient::DaemonClient(QObject *parent) : QObject(parent) {
     m_control = new QLocalSocket(this);
@@ -154,6 +170,10 @@ void DaemonClient::onStreamData() {
         QImage image;
         if (image.loadFromData(jpeg, "JPEG")) {
             m_frame = image;
+            // The URL carries a counter so QML treats each frame as a new
+            // image; an unchanging URL would be served from cache and the view
+            // would sit on the first frame forever.
+            m_frameUrl = QStringLiteral("image://lumen/frame/%1").arg(++m_frameSerial);
             emit frameChanged();
         }
     }

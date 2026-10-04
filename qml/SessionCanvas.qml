@@ -9,6 +9,8 @@ import QtQuick
 Item {
     id: stage
     required property var frame
+    /// URL of the current frame, served by the daemon's image provider.
+    required property string frameUrl
     required property string activeName
     required property bool humanControlling
 
@@ -19,10 +21,11 @@ Item {
     Image {
         id: frameImage
         anchors.fill: parent
-        source: stage.frame
+        source: stage.frameUrl
         fillMode: Image.PreserveAspectFit
         smooth: true
         cache: false
+        asynchronous: true
     }
 
     // Forward clicks to the daemon, mapped to surface coordinates.

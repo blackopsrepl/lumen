@@ -14,6 +14,7 @@ Item {
     signal takeControl()
     signal fullscreenRequested()
     signal annotateToggled()
+    signal settingsRequested()
 
     implicitHeight: 44
 
@@ -69,6 +70,14 @@ Item {
                 text: bar.humanControlling ? "Release control" : "Take control"
                 highlighted: bar.humanControlling
                 onClicked: bar.humanControlling ? bar.releaseControl() : bar.takeControl()
+            }
+
+            // Settings live behind here rather than in the sidebar: the daemon
+            // is configured once, and the main window belongs to the session.
+            Button {
+                text: "⚙"
+                flat: true
+                onClicked: bar.settingsRequested()
             }
         }
 

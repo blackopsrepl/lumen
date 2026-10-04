@@ -71,6 +71,10 @@ bool Session::start(const QString &socketName, const QString &profileDir,
                     bool accessibility) {
     m_profileDir = profileDir;
     QDir().mkpath(profileDir);
+    // XDG_RUNTIME_DIR must be private to the session: 0700, or Qt refuses it and
+    // every runtime path resolves somewhere shared instead.
+    QFile::setPermissions(profileDir, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                          | QFileDevice::ExeOwner);
 
     // The compositor's socket is named by an absolute path, not a bare name: a
     // session runs with its own XDG_RUNTIME_DIR (its private bus lives there),

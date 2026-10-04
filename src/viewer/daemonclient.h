@@ -22,6 +22,12 @@ class DaemonClient : public QObject {
     Q_PROPERTY(QVariantList sessions READ sessions NOTIFY sessionsChanged)
     Q_PROPERTY(QString activeName READ activeName WRITE setActiveName NOTIFY activeNameChanged)
     Q_PROPERTY(QImage frame READ frame NOTIFY frameChanged)
+    /// URL for the current frame, changing with every new frame.
+    ///
+    /// An Image source is a URL and a QImage cannot be assigned to it, so the
+    /// frame is served by the image provider. The token must change or QML will
+    /// serve the first frame from cache and the view will freeze.
+    Q_PROPERTY(QString frameUrl READ frameUrl NOTIFY frameChanged)
 
 public:
     explicit DaemonClient(QObject *parent = nullptr);
@@ -29,8 +35,11 @@ public:
     bool connected() const { return m_connected; }
     QVariantList sessions() const { return m_sessions; }
     QString activeName() const { return m_activeName; }
-    void setActiveName(const QString &name);
+    /// Select the session to watch. Invokable so QML can call it directly, not
+    /// only through the property.
+    Q_INVOKABLE void setActiveName(const QString &name);
     QImage frame() const { return m_frame; }
+    QString frameUrl() const { return m_frameUrl; }
 
     /// Reconnect and refresh the session list.
     Q_INVOKABLE void refresh();
@@ -81,6 +90,9 @@ private:
     QVariantList m_sessions;
     QString m_activeName;
     QImage m_frame;
+    QString m_frameUrl;
+    /// Increments per frame so each one gets a distinct URL.
+    quint64 m_frameSerial = 0;
     QByteArray m_streamBuffer;
     /// Accumulates control responses until a newline completes one.
     QByteArray m_controlBuffer;

@@ -27,12 +27,19 @@ ApplicationWindow {
     }
 
     // An agent driving a session shows it, so what is being driven is visible.
+    // The first session to appear is selected on its own: with nothing selected
+    // there is no frame subscription and the view stays blank, which reads as
+    // the stream being broken rather than as nothing having been chosen.
     Connections {
         target: daemon
         function onSessionsChanged() {
-            // If the active session disappeared, clear it.
             if (window.activeName !== "" && !window.activeSession) {
+                // The session being watched is gone.
                 window.activeName = ""
+                daemon.setActiveName("")
+            }
+            if (window.activeName === "" && daemon.sessions.length > 0) {
+                window.connectSession(daemon.sessions[0].name)
             }
         }
     }
@@ -117,14 +124,6 @@ ApplicationWindow {
                         daemon.resolveNote(window.activeName, id)
                     }
                 }
-
-                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.lineSoft }
-
-                // --- settings ---
-                SettingsPanel {
-                    Layout.fillWidth: true
-                    Layout.margins: 12
-                }
             }
         }
 
@@ -148,6 +147,7 @@ ApplicationWindow {
                     else window.showFullScreen()
                 }
                 onAnnotateToggled: window.annotating = !window.annotating
+                onSettingsRequested: settingsDialog.open()
             }
 
             Item {
@@ -160,6 +160,7 @@ ApplicationWindow {
                     id: canvas
                     anchors.fill: parent
                     frame: daemon.frame
+                    frameUrl: daemon.frameUrl
                     activeName: window.activeName
                     humanControlling: window.humanControlling
                     onPointerDown: (x, y) => daemon.click(x, y)
@@ -310,6 +311,11 @@ ApplicationWindow {
         sequence: StandardKey.Cancel
         enabled: window.humanControlling
         onActivated: window.humanControlling = false
+    }
+
+    // Daemon configuration, reached from the gear in the toolbar.
+    SettingsPanel {
+        id: settingsDialog
     }
 
     // One probe for the palette: if Theme did not resolve, its colours are

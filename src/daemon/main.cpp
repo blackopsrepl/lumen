@@ -66,6 +66,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Publish the socket paths for anything that runs inside a session. A
+    // session's XDG_RUNTIME_DIR is its own private directory, so a nested
+    // client — including another Lumen viewer — cannot derive the daemon's
+    // paths from it and would look in the wrong place.
+    qputenv("LUMEN_AGENT_SOCKET", config->agentSocketPath().toUtf8());
+    qputenv("LUMEN_STREAM_SOCKET", config->streamSocketPath().toUtf8());
+
     // Viewers attach here. The daemon keeps running with none attached.
     auto *frames = new FrameStream(compositor, &app);
     if (!frames->listen(config->streamSocketPath())) {
