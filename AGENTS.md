@@ -21,6 +21,34 @@ clang-format, the build and the suite on any change to source, QML or CMake.
   `QT_QPA_PLATFORMTHEME`. Without the empty theme the platform theme plugin
   reaches for a display and every test aborts at startup.
 - Tests that host a client need the `qt_fixture` target built.
+- A test that starts a compositor needs its own `XDG_RUNTIME_DIR` (mode `0700`).
+  A desktop session has one; a container does not, and the compositor then cannot
+  open its socket. `test_integration` and `test_framerender` create theirs in
+  `initTestCase` rather than depending on the ambient environment.
+
+## Qt on a runner
+
+**Ubuntu 24.04's Qt is not usable here, and no version bump fixes it.** The
+distribution's `qt6-wayland-dev` is defective: its
+`Qt6DmaBufServerBufferIntegrationPluginTargets.cmake` references a
+`libqt-wayland-compositor-dmabuf-server-buffer.so` the package does not ship, so
+`find_package(Qt6 … WaylandCompositor)` aborts before anything compiles. Its Qt
+is also 6.4 where this project needs 6.6.
+
+Both CI files install Qt with `aqtinstall` (`6.8.2` + the
+`qtwaylandcompositor` module) and keep apt only for the runtime libraries the
+SDK does not carry — the SQLite driver, dbus, at-spi, and the
+GL/xkb/wayland/fontconfig stack. Configure needs
+`-DCMAKE_PREFIX_PATH=<Qt>/<version>/gcc_64`.
+
+Two traps when working on the Forgejo runner specifically:
+
+- **act runs the job as root and `sudo` is not installed.** Call `zypper` /
+  `ldconfig` bare; a `sudo` prefix fails every attempt with
+  `sudo: command not found`.
+- **`runs-on` must name a label a registered runner actually offers.** The
+  C++ runner here is labelled `qt`; a label no runner has does not fail — the job
+  queues forever and the check never turns red.
 
 ## Architecture invariants
 
@@ -84,6 +112,20 @@ clang-format, the build and the suite on any change to source, QML or CMake.
   load before the next frame arrives.
 - A `Dialog` does not lay out its `contentItem`; use a `ColumnLayout`, whose
   implicit size it does pick up. `Column.implicitHeight` is read-only.
+- **A control's `background` reaches its control through `parent`.** Qt reparents
+  the background item to the control, and nothing assigns a `required property
+  var control` — so every state test reads an undefined object and the control
+  renders completely unstyled, with no error. Read `parent`.
+- **Styling `background` alone doubles a button's label.** The control still
+  draws its own `text` over whatever the background paints. Override
+  `contentItem` too, or use `IconButton`/`Icon`.
+- **Do not set an icon as a text glyph.** `⤢` and `⚙` are not in the fonts
+  here and Qt falls back to a tofu box — a visible square. Icons are vector
+  paths in `Icon.qml`.
+- **A `ShapePath` has no `visible` property.** Switch the whole `Shape`.
+- Every button is `IconButton` (icon + surface + tooltip) or `Icon` directly;
+  surfaces live in `ButtonSurface`, `FieldSurface`, `DialogSurface`,
+  `DialogFrame`, `StatusDot`.
 
 ## Conventions
 

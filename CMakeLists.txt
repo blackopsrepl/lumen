@@ -66,7 +66,6 @@ qt_add_qml_module(lumen
         qml/DialogSurface.qml
         qml/DialogFrame.qml
         qml/StatusDot.qml
-        qml/StyledButton.qml
         qml/IconButton.qml
         qml/Icon.qml
     SOURCES
