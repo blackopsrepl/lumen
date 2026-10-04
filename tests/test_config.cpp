@@ -5,7 +5,7 @@
 class TestConfig : public QObject {
     Q_OBJECT
 
-private slots:
+  private slots:
     void rejects_path_components_as_names() {
         QVERIFY(!Config::isValidSessionName(QStringLiteral(".")));
         QVERIFY(!Config::isValidSessionName(QStringLiteral("..")));

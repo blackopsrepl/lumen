@@ -48,18 +48,18 @@ namespace {
 constexpr char kSocketName[] = "lumen-spike";
 constexpr char kClickedTitle[] = "SPIKE-FIXTURE-CLICKED";
 
-void say(const QString &line) {
+void say(const QString& line) {
     std::fputs(qPrintable(line + QLatin1Char('\n')), stdout);
     std::fflush(stdout);
 }
 
-bool markerPresent(const char *path) {
+bool markerPresent(const char* path) {
     return QFile::exists(QString::fromLatin1(path));
 }
 
 } // namespace
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     Q_UNUSED(argc);
     Q_UNUSED(argv);
@@ -70,14 +70,14 @@ int main(int argc, char **argv) {
         say(QStringLiteral("SPIKE FAIL: compositor QML did not load"));
         return 2;
     }
-    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     if (!window) {
         say(QStringLiteral("SPIKE FAIL: root object is not a window"));
         return 2;
     }
     say(QStringLiteral("SPIKE compositor up, socket=%1").arg(QLatin1String(kSocketName)));
 
-    auto *client = new QProcess(&app);
+    auto* client = new QProcess(&app);
     client->setProcessChannelMode(QProcess::MergedChannels);
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("wayland"));
@@ -85,10 +85,10 @@ int main(int argc, char **argv) {
     env.insert(QStringLiteral("QT_QUICK_BACKEND"), QStringLiteral("software"));
     client->setProcessEnvironment(env);
 
-    auto *view = window->findChild<QQuickItem *>(QStringLiteral("view"));
+    auto* view = window->findChild<QQuickItem*>(QStringLiteral("view"));
 
     int exitCode = -1;
-    auto finish = [&](int code, const QString &verdict) {
+    auto finish = [&](int code, const QString& verdict) {
         say(verdict);
         exitCode = code;
         client->terminate();
@@ -103,14 +103,15 @@ int main(int argc, char **argv) {
     bool clicked = false;
     bool clickSent = false;
 
-    auto *poll = new QTimer(&app);
+    auto* poll = new QTimer(&app);
     QObject::connect(poll, &QTimer::timeout, [&]() {
-        if (!surfaceSeen && window->property("surfaceReady").toBool()
-            && window->property("surfaceW").toInt() > 0) {
+        if (!surfaceSeen && window->property("surfaceReady").toBool() &&
+            window->property("surfaceW").toInt() > 0) {
             surfaceSeen = true;
             const int sw = window->property("surfaceW").toInt();
             const int sh = window->property("surfaceH").toInt();
-            say(QStringLiteral("SPIKE surface mapped: client surface %1x%2, item %3x%4, window %5x%6")
+            say(QStringLiteral(
+                    "SPIKE surface mapped: client surface %1x%2, item %3x%4, window %5x%6")
                     .arg(sw)
                     .arg(sh)
                     .arg(view ? qRound(view->width()) : -1)
@@ -119,13 +120,15 @@ int main(int argc, char **argv) {
                     .arg(window->height()));
             QTimer::singleShot(900, [&]() {
                 const QPoint target(sw / 2, sh / 2);
-                say(QStringLiteral("SPIKE clicking inside surface at %1,%2").arg(target.x()).arg(target.y()));
+                say(QStringLiteral("SPIKE clicking inside surface at %1,%2")
+                        .arg(target.x())
+                        .arg(target.y()));
                 QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, target);
                 clickSent = true;
             });
         }
-        if (clickSent && !clicked
-            && window->property("toplevelTitle").toString() == QLatin1String(kClickedTitle)) {
+        if (clickSent && !clicked &&
+            window->property("toplevelTitle").toString() == QLatin1String(kClickedTitle)) {
             clicked = true;
             poll->stop();
             say(QStringLiteral("SPIKE input delivered: client title is now '%1'")

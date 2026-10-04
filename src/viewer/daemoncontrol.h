@@ -16,8 +16,8 @@ class DaemonControl : public QObject {
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
     Q_PROPERTY(bool enabled READ enabled NOTIFY enabledChanged)
 
-public:
-    explicit DaemonControl(QObject *parent = nullptr);
+  public:
+    explicit DaemonControl(QObject* parent = nullptr);
 
     static QString unitName() { return QStringLiteral("lumen.service"); }
 
@@ -33,11 +33,11 @@ public:
     /// Whether the daemon starts at login.
     Q_INVOKABLE void setEnabled(bool enabled);
 
-signals:
+  signals:
     void activeChanged();
     void enabledChanged();
 
-private:
+  private:
     bool m_active = false;
     bool m_enabled = false;
 };

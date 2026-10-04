@@ -1,0 +1,32 @@
+# The project's C++ style.
+#
+# Based on LLVM with the width the code is written to. The one non-default
+# choice that matters is ConstructorInitializerIndentWidth and the 100-column
+# limit: this code is written with the initializer lists and trailing return
+# types that fit inside it, so the formatter does not fight the source.
+---
+Language: Cpp
+BasedOnStyle: LLVM
+ColumnLimit: 100
+IndentWidth: 4
+ConstructorInitializerIndentWidth: 4
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Attach
+DerivePointerAlignment: false
+PointerAlignment: Left
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # The project's own headers first, then Qt, then the C++ standard library.
+  - Regex: '^"'
+    Priority: 1
+  - Regex: '^<Qt[A-Za-z]*/'
+    Priority: 2
+  - Regex: '^<Q[A-Za-z]+>'
+    Priority: 3
+  - Regex: '^<[a-z_]+>'
+    Priority: 4
+  - Regex: '.*'
+    Priority: 5

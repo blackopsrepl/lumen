@@ -11,20 +11,20 @@
 // clicked. The title is observed through the compositor's toplevel, so the test
 // verifies the full round trip: click -> client -> title change -> compositor.
 
-#include <QtTest>
+#include "compositor.h"
+
+#include <QDir>
+#include <QEventLoop>
 #include <QProcess>
 #include <QProcessEnvironment>
-#include <QEventLoop>
-#include <QTimer>
-#include <QDir>
 #include <QStandardPaths>
-
-#include "compositor.h"
+#include <QTimer>
+#include <QtTest>
 
 class TestIntegration : public QObject {
     Q_OBJECT
 
-private slots:
+  private slots:
     void click_reaches_the_client();
 };
 
@@ -35,12 +35,11 @@ void TestIntegration::click_reaches_the_client() {
     QString sessionName;
     bool clicked = false;
 
-    connect(&compositor, &LumenCompositor::surfaceReady, this, [&](const QString &session) {
-        sessionName = session;
-    });
+    connect(&compositor, &LumenCompositor::surfaceReady, this,
+            [&](const QString& session) { sessionName = session; });
 
     connect(&compositor, &LumenCompositor::titleChanged, this,
-            [&](const QString &, const QString &title) {
+            [&](const QString&, const QString& title) {
                 if (title == QLatin1String("SPIKE-FIXTURE-CLICKED")) {
                     clicked = true;
                 }
@@ -52,13 +51,15 @@ void TestIntegration::click_reaches_the_client() {
     // Use an absolute path so the fixture finds the compositor socket regardless
     // of its own XDG_RUNTIME_DIR.
     QString runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-    if (runtimeDir.isEmpty()) runtimeDir = QDir::tempPath();
+    if (runtimeDir.isEmpty())
+        runtimeDir = QDir::tempPath();
     env.insert("WAYLAND_DISPLAY", runtimeDir + "/lumen-test");
     env.insert("QT_QPA_PLATFORM", "wayland");
     env.insert("XDG_RUNTIME_DIR", runtimeDir);
     fixture.setProcessEnvironment(env);
     fixture.start(QCoreApplication::applicationDirPath() + "/qt_fixture",
-                  QStringList() << QCoreApplication::applicationDirPath() + "/../src/spike/fixture.qml");
+                  QStringList() << QCoreApplication::applicationDirPath() +
+                                       "/../src/spike/fixture.qml");
     // Register the pid immediately after start, before the fixture connects.
     compositor.expectProcess("fixture", fixture.processId());
     QVERIFY(fixture.waitForStarted(5000));
@@ -91,11 +92,12 @@ void TestIntegration::click_reaches_the_client() {
         timeout.setSingleShot(true);
         timeout.setInterval(5000);
         connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-        connect(&compositor, &LumenCompositor::titleChanged, &loop, [&](const QString &, const QString &title) {
-            if (title == QLatin1String("SPIKE-FIXTURE-CLICKED")) {
-                loop.quit();
-            }
-        });
+        connect(&compositor, &LumenCompositor::titleChanged, &loop,
+                [&](const QString&, const QString& title) {
+                    if (title == QLatin1String("SPIKE-FIXTURE-CLICKED")) {
+                        loop.quit();
+                    }
+                });
         timeout.start();
         loop.exec();
     }

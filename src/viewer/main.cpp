@@ -29,7 +29,7 @@ namespace {
 QFile g_log;
 QTextStream g_logStream;
 
-void messageHandler(QtMsgType, const QMessageLogContext &, const QString &message) {
+void messageHandler(QtMsgType, const QMessageLogContext&, const QString& message) {
     QTextStream(stderr) << message << '\n';
     if (g_logStream.device()) {
         g_logStream << message << '\n';
@@ -39,7 +39,7 @@ void messageHandler(QtMsgType, const QMessageLogContext &, const QString &messag
 
 } // namespace
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("lumen"));
     app.setOrganizationName(QStringLiteral("lumen"));
@@ -71,12 +71,11 @@ int main(int argc, char **argv) {
     // window renders in the default palette; a context property cannot fail
     // that way, and it stays `Theme.bg` to the QML either way.
     engine.rootContext()->setContextProperty(QStringLiteral("Theme"), Theme::instance());
-    QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, []() {
-        qCritical("lumen: QML object creation failed");
-    });
+    QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
+                     []() { qCritical("lumen: QML object creation failed"); });
     QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app,
-                     [](const QList<QQmlError> &warnings) {
-                         for (const QQmlError &warning : warnings) {
+                     [](const QList<QQmlError>& warnings) {
+                         for (const QQmlError& warning : warnings) {
                              qCritical("lumen: %s", qPrintable(warning.toString()));
                          }
                      });

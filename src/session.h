@@ -8,8 +8,8 @@
 
 #pragma once
 
-#include <QObject>
 #include <QFile>
+#include <QObject>
 #include <QPointer>
 #include <QProcess>
 #include <QString>
@@ -25,18 +25,17 @@ class Session : public QObject {
     Q_PROPERTY(QString busAddress READ busAddress CONSTANT)
     Q_PROPERTY(bool accessibilityReady READ accessibilityReady NOTIFY accessibilityReadyChanged)
 
-public:
+  public:
     enum class Origin { Agent, Manual };
     Q_ENUM(Origin)
 
-    explicit Session(const QString &name, const QString &command, Origin origin,
-                     const QString &owner, QObject *parent = nullptr);
+    explicit Session(const QString& name, const QString& command, Origin origin,
+                     const QString& owner, QObject* parent = nullptr);
     ~Session() override;
 
     /// Start the application under the compositor's socket, in its own profile.
-    bool start(const QString &socketName, const QString &profileDir,
-               const QString &dbusBin, const QString &registryd,
-               bool accessibility);
+    bool start(const QString& socketName, const QString& profileDir, const QString& dbusBin,
+               const QString& registryd, bool accessibility);
     /// Ask the application to exit, then make sure it did.
     void stop();
 
@@ -50,15 +49,15 @@ public:
     bool accessibilityReady() const { return m_accessibilityReady; }
     qint64 processId() const;
 
-    void setTitle(const QString &title);
-    void setState(const QString &state);
+    void setTitle(const QString& title);
+    void setState(const QString& state);
 
-signals:
+  signals:
     void stateChanged();
     void titleChanged();
     void accessibilityReadyChanged();
 
-private:
+  private:
     void setAccessibilityReady(bool ready);
 
     QString m_name;
@@ -71,8 +70,8 @@ private:
     QString m_profileDir;
     bool m_accessibilityReady = false;
 
-    QProcess *m_process = nullptr;
-    QProcess *m_dbus = nullptr;
-    QProcess *m_registryd = nullptr;
-    QFile *m_outputFile = nullptr;
+    QProcess* m_process = nullptr;
+    QProcess* m_dbus = nullptr;
+    QProcess* m_registryd = nullptr;
+    QFile* m_outputFile = nullptr;
 };

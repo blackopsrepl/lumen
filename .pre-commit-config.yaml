@@ -1,3 +1,8 @@
+# Hooks that must pass before a commit lands.
+#
+# `init-pre-commit` covers Python, Go and Rust; this repository is Qt/C++, so the
+# config is written here by hand. It carries the common hygiene hooks plus the
+# project's real gates: clang-format, a cmake build, and the test suite.
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
@@ -7,8 +12,39 @@ repos:
     -   id: trailing-whitespace
     -   id: check-merge-conflict
     -   id: check-added-large-files
+        args: ["--maxkb=1024"]
 
 -   repo: https://github.com/gitleaks/gitleaks
     rev: v8.18.0
     hooks:
     -   id: gitleaks
+
+-   repo: local
+    hooks:
+    # Reformat rather than complain: the formatter owning the style is the
+    # point, and a failed style check on an otherwise correct commit is noise.
+    -   id: clang-format
+        name: clang-format
+        description: Reformat C++ sources to .clang-format
+        entry: clang-format -i
+        language: system
+        files: '\.(cpp|h)$'
+        require_serial: true
+
+    # A commit must not break the build, and the suite is fast enough that
+    # catching a failure here beats catching it in CI.
+    -   id: cmake-build
+        name: cmake build
+        description: The build must compile
+        entry: bash -c 'cmake -B build -DCMAKE_BUILD_TYPE=Debug >/dev/null && cmake --build build -j"$(nproc)"'
+        language: system
+        files: '\.(cpp|h|txt)$'
+        pass_filenames: false
+
+    -   id: ctest
+        name: ctest
+        description: The test suite must pass
+        entry: bash -c 'cd build && QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME= ctest --output-on-failure'
+        language: system
+        files: '\.(cpp|h|qml|txt|service)$'
+        pass_filenames: false

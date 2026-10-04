@@ -14,12 +14,12 @@
 class DaemonClient;
 
 class FrameProvider : public QQuickImageProvider {
-public:
-    explicit FrameProvider(DaemonClient *client);
+  public:
+    explicit FrameProvider(DaemonClient* client);
 
     /// The frame named by `id`, which is the client's current frame.
-    QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override;
+    QImage requestImage(const QString& id, QSize* size, const QSize& requestedSize) override;
 
-private:
-    DaemonClient *m_client;
+  private:
+    DaemonClient* m_client;
 };

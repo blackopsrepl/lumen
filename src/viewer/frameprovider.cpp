@@ -2,10 +2,10 @@
 
 #include "daemonclient.h"
 
-FrameProvider::FrameProvider(DaemonClient *client)
+FrameProvider::FrameProvider(DaemonClient* client)
     : QQuickImageProvider(QQuickImageProvider::Image), m_client(client) {}
 
-QImage FrameProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize) {
+QImage FrameProvider::requestImage(const QString& id, QSize* size, const QSize& requestedSize) {
     Q_UNUSED(id);
     const QImage frame = m_client->frame();
     if (size) {

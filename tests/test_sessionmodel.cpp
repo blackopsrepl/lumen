@@ -8,14 +8,14 @@
 class TestSessionModel : public QObject {
     Q_OBJECT
 
-private slots:
+  private slots:
     void refuses_an_invalid_name_before_starting_anything() {
         Config config;
         SessionManager manager(&config, nullptr);
         QString error;
         const QString created =
-            manager.create(QStringLiteral("../escape"), QStringLiteral("/bin/true"),
-                           true, QStringLiteral("test"), &error);
+            manager.create(QStringLiteral("../escape"), QStringLiteral("/bin/true"), true,
+                           QStringLiteral("test"), &error);
         QVERIFY(created.isEmpty());
         QCOMPARE(error, QStringLiteral("invalid session name"));
         QCOMPARE(manager.count(), 0);
@@ -25,9 +25,8 @@ private slots:
         Config config;
         SessionManager manager(&config, nullptr);
         QString error;
-        const QString created =
-            manager.create(QStringLiteral("alice"), QStringLiteral("ls"), true,
-                           QStringLiteral("test"), &error);
+        const QString created = manager.create(QStringLiteral("alice"), QStringLiteral("ls"), true,
+                                               QStringLiteral("test"), &error);
         QVERIFY(created.isEmpty());
         QVERIFY(error.contains(QStringLiteral("absolute path")));
         QCOMPARE(manager.count(), 0);

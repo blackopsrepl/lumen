@@ -20,25 +20,25 @@ class QLocalSocket;
 class FrameStream : public QObject {
     Q_OBJECT
 
-public:
-    explicit FrameStream(LumenCompositor *compositor, QObject *parent = nullptr);
+  public:
+    explicit FrameStream(LumenCompositor* compositor, QObject* parent = nullptr);
     ~FrameStream() override;
 
     /// Listen for viewers on `path`. Returns false when it is already taken.
-    bool listen(const QString &path);
+    bool listen(const QString& path);
     QString path() const { return m_path; }
 
     /// Which session a viewer is watching.
-    void subscribe(QLocalSocket *viewer, const QString &session);
+    void subscribe(QLocalSocket* viewer, const QString& session);
 
-private:
+  private:
     void pump();
 
-    LumenCompositor *m_compositor;
-    QLocalServer *m_server = nullptr;
+    LumenCompositor* m_compositor;
+    QLocalServer* m_server = nullptr;
     QString m_path;
     /// The session each viewer is watching.
-    QHash<QLocalSocket *, QString> m_subscriptions;
+    QHash<QLocalSocket*, QString> m_subscriptions;
     /// The session each viewer was last sent a frame for, so a switch resets it.
-    QHash<QLocalSocket *, QString> m_lastSession;
+    QHash<QLocalSocket*, QString> m_lastSession;
 };

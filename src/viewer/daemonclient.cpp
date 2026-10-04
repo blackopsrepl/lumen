@@ -13,7 +13,7 @@ namespace {
 
 /// The socket the daemon listens on, in the user's runtime directory. The viewer
 /// derives it the same way the daemon does, so neither has to be configured.
-QString runtimeSocket(const QString &leaf) {
+QString runtimeSocket(const QString& leaf) {
     QString runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
     if (runtime.isEmpty()) {
         runtime = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -25,7 +25,7 @@ QString runtimeSocket(const QString &leaf) {
 ///
 /// A viewer running inside a Lumen session has its own XDG_RUNTIME_DIR, so it
 /// cannot derive the daemon's socket location; the daemon exports it instead.
-QString publishedSocket(const char *envVar, const QString &fallback) {
+QString publishedSocket(const char* envVar, const QString& fallback) {
     const QByteArray published = qgetenv(envVar);
     return published.isEmpty() ? fallback : QString::fromLocal8Bit(published);
 }
@@ -33,8 +33,7 @@ QString publishedSocket(const char *envVar, const QString &fallback) {
 } // namespace
 
 QString DaemonClient::controlSocketPath() {
-    return publishedSocket("LUMEN_AGENT_SOCKET",
-                           runtimeSocket(QStringLiteral("lumen-agent.sock")));
+    return publishedSocket("LUMEN_AGENT_SOCKET", runtimeSocket(QStringLiteral("lumen-agent.sock")));
 }
 
 QString DaemonClient::streamSocketPath() {
@@ -42,7 +41,7 @@ QString DaemonClient::streamSocketPath() {
                            runtimeSocket(QStringLiteral("lumen-stream.sock")));
 }
 
-DaemonClient::DaemonClient(QObject *parent) : QObject(parent) {
+DaemonClient::DaemonClient(QObject* parent) : QObject(parent) {
     m_control = new QLocalSocket(this);
     connect(m_control, &QLocalSocket::connected, this, [this]() {
         m_connected = true;
@@ -76,14 +75,14 @@ DaemonClient::DaemonClient(QObject *parent) : QObject(parent) {
     // yet when the viewer starts, and a session's state changes on its own
     // (an agent starts one, a client exits). Nothing else reconnects, so a
     // viewer that never dials here would show an empty list forever.
-    QTimer *poll = new QTimer(this);
+    QTimer* poll = new QTimer(this);
     poll->setInterval(1000);
     connect(poll, &QTimer::timeout, this, &DaemonClient::refresh);
     poll->start();
     refresh();
 }
 
-void DaemonClient::handleResponse(const QJsonObject &response) {
+void DaemonClient::handleResponse(const QJsonObject& response) {
     if (response.contains(QStringLiteral("sessions"))) {
         m_sessions = response[QStringLiteral("sessions")].toArray().toVariantList();
         emit sessionsChanged();
@@ -106,12 +105,12 @@ void DaemonClient::handleResponse(const QJsonObject &response) {
     }
 }
 
-void DaemonClient::send(const QByteArray &request) {
+void DaemonClient::send(const QByteArray& request) {
     if (m_control->state() != QLocalSocket::ConnectedState) {
         m_control->connectToServer(controlSocketPath());
         if (!m_control->waitForConnected(1000)) {
-            qWarning("lumen: viewer cannot reach %s: %s",
-                     qPrintable(controlSocketPath()), qPrintable(m_control->errorString()));
+            qWarning("lumen: viewer cannot reach %s: %s", qPrintable(controlSocketPath()),
+                     qPrintable(m_control->errorString()));
             return;
         }
     }
@@ -124,7 +123,7 @@ void DaemonClient::refresh() {
              .toJson(QJsonDocument::Compact));
 }
 
-void DaemonClient::setActiveName(const QString &name) {
+void DaemonClient::setActiveName(const QString& name) {
     if (m_activeName == name) {
         return;
     }
@@ -133,7 +132,7 @@ void DaemonClient::setActiveName(const QString &name) {
     subscribe(name);
 }
 
-void DaemonClient::subscribe(const QString &session) {
+void DaemonClient::subscribe(const QString& session) {
     if (m_stream) {
         m_stream->disconnectFromServer();
         m_stream->deleteLater();
@@ -151,7 +150,8 @@ void DaemonClient::subscribe(const QString &session) {
     }
     // The first line is the subscription; the rest of the socket is frames.
     m_stream->write(QJsonDocument(QJsonObject{{QStringLiteral("session"), session}})
-                        .toJson(QJsonDocument::Compact) + "\n");
+                        .toJson(QJsonDocument::Compact) +
+                    "\n");
     m_stream->flush();
 }
 
@@ -159,9 +159,9 @@ void DaemonClient::onStreamData() {
     m_streamBuffer += m_stream->readAll();
     // Frames are length-prefixed: a 4-byte big-endian size, then a JPEG.
     while (m_streamBuffer.size() >= 4) {
-        const quint32 length =
-            (quint8(m_streamBuffer[0]) << 24) | (quint8(m_streamBuffer[1]) << 16)
-            | (quint8(m_streamBuffer[2]) << 8) | quint8(m_streamBuffer[3]);
+        const quint32 length = (quint8(m_streamBuffer[0]) << 24) |
+                               (quint8(m_streamBuffer[1]) << 16) |
+                               (quint8(m_streamBuffer[2]) << 8) | quint8(m_streamBuffer[3]);
         if (m_streamBuffer.size() < int(4 + length)) {
             return;
         }
@@ -191,7 +191,7 @@ bool DaemonClient::click(qreal x, qreal y) {
     return true;
 }
 
-bool DaemonClient::type(const QString &text) {
+bool DaemonClient::type(const QString& text) {
     if (m_activeName.isEmpty()) {
         return false;
     }
@@ -212,8 +212,8 @@ QString DaemonClient::accessibility() {
     return QString();
 }
 
-void DaemonClient::createSession(const QString &name, const QString &command,
-                                 bool agentOwned, const QString &owner) {
+void DaemonClient::createSession(const QString& name, const QString& command, bool agentOwned,
+                                 const QString& owner) {
     send(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("ensure")},
                                    {QStringLiteral("name"), name},
                                    {QStringLiteral("command"), command},
@@ -221,15 +221,17 @@ void DaemonClient::createSession(const QString &name, const QString &command,
              .toJson(QJsonDocument::Compact));
 }
 
-void DaemonClient::stopSession(const QString &name) {
+void DaemonClient::stopSession(const QString& name) {
     send(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("stop")},
                                    {QStringLiteral("name"), name}})
              .toJson(QJsonDocument::Compact));
 }
 
-QVariantList DaemonClient::notes(const QString &session) { return m_notes.value(session); }
+QVariantList DaemonClient::notes(const QString& session) {
+    return m_notes.value(session);
+}
 
-void DaemonClient::refreshNotes(const QString &session) {
+void DaemonClient::refreshNotes(const QString& session) {
     if (session.isEmpty()) {
         return;
     }
@@ -242,7 +244,7 @@ void DaemonClient::refreshNotes(const QString &session) {
              .toJson(QJsonDocument::Compact));
 }
 
-void DaemonClient::addNote(const QString &session, const QString &comment, const QImage &region) {
+void DaemonClient::addNote(const QString& session, const QString& comment, const QImage& region) {
     if (session.isEmpty() || comment.trimmed().isEmpty()) {
         return;
     }
@@ -255,23 +257,23 @@ void DaemonClient::addNote(const QString &session, const QString &comment, const
         buffer.open(QIODevice::WriteOnly);
         region.save(&buffer, "PNG");
     }
-    send(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("add")},
-                                   {QStringLiteral("name"), session},
-                                   {QStringLiteral("author"), QStringLiteral("human")},
-                                   {QStringLiteral("comment"), comment},
-                                   {QStringLiteral("screenshot"),
-                                    QString::fromLatin1(png.toBase64())}})
+    send(QJsonDocument(
+             QJsonObject{{QStringLiteral("cmd"), QStringLiteral("add")},
+                         {QStringLiteral("name"), session},
+                         {QStringLiteral("author"), QStringLiteral("human")},
+                         {QStringLiteral("comment"), comment},
+                         {QStringLiteral("screenshot"), QString::fromLatin1(png.toBase64())}})
              .toJson(QJsonDocument::Compact));
 }
 
-void DaemonClient::resolveNote(const QString &session, int id) {
+void DaemonClient::resolveNote(const QString& session, int id) {
     send(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("ack")},
                                    {QStringLiteral("name"), session},
                                    {QStringLiteral("id"), id}})
              .toJson(QJsonDocument::Compact));
 }
 
-QString DaemonClient::noteImage(const QString &session, int id) {
+QString DaemonClient::noteImage(const QString& session, int id) {
     // Notes carry their pixels in the daemon's store; the viewer fetches them on
     // demand rather than holding every image in memory.
     QLocalSocket socket;
@@ -282,7 +284,8 @@ QString DaemonClient::noteImage(const QString &session, int id) {
     socket.write(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("note-image")},
                                            {QStringLiteral("name"), session},
                                            {QStringLiteral("id"), id}})
-                     .toJson(QJsonDocument::Compact) + "\n");
+                     .toJson(QJsonDocument::Compact) +
+                 "\n");
     socket.flush();
     if (!socket.waitForReadyRead(3000)) {
         return QString();

@@ -31,55 +31,55 @@ class QWaylandXdgToplevel;
 class LumenCompositor : public QObject {
     Q_OBJECT
 
-public:
-    explicit LumenCompositor(QObject *parent = nullptr);
+  public:
+    explicit LumenCompositor(QObject* parent = nullptr);
     ~LumenCompositor() override;
 
     /// Begin listening on `socketName`. Returns false if the socket is taken.
-    bool start(const QString &socketName);
+    bool start(const QString& socketName);
 
-    QWaylandCompositor *compositor() const { return m_compositor; }
-    QWaylandOutput *output() const { return m_output; }
-    QWaylandSeat *seat() const;
+    QWaylandCompositor* compositor() const { return m_compositor; }
+    QWaylandOutput* output() const { return m_output; }
+    QWaylandSeat* seat() const;
 
     /// The view rendering `session`, or nullptr.
-    QWaylandView *viewFor(const QString &session) const;
+    QWaylandView* viewFor(const QString& session) const;
 
     /// The session a client process id belongs to, when known.
-    QString sessionForPid(const QString &pid) const;
+    QString sessionForPid(const QString& pid) const;
 
     /// Declare which session owns a client process, before it connects.
-    void expectProcess(const QString &session, qint64 pid);
+    void expectProcess(const QString& session, qint64 pid);
 
     /// The session's latest frame, or a null image when it has not drawn yet.
-    QImage frame(const QString &session);
+    QImage frame(const QString& session);
 
     /// Deliver a click at a point in the session's surface coordinates.
     ///
     /// This is the single input path: the daemon's viewer calls it for a human
     /// click and the agent socket calls it for an agent click, so the two can
     /// never diverge.
-    bool click(const QString &session, const QPointF &point);
+    bool click(const QString& session, const QPointF& point);
 
     /// Deliver text to the session's focused element.
-    bool type(const QString &session, const QString &text);
+    bool type(const QString& session, const QString& text);
 
-signals:
-    void surfaceReady(const QString &session);
-    void surfaceGone(const QString &session);
-    void titleChanged(const QString &session, const QString &title);
+  signals:
+    void surfaceReady(const QString& session);
+    void surfaceGone(const QString& session);
+    void titleChanged(const QString& session, const QString& title);
     /// A session drew a new frame.
-    void frameReady(const QString &session);
+    void frameReady(const QString& session);
 
-private:
-    void adoptToplevel(QWaylandXdgToplevel *toplevel);
+  private:
+    void adoptToplevel(QWaylandXdgToplevel* toplevel);
 
-    QWaylandCompositor *m_compositor = nullptr;
-    QWaylandOutput *m_output = nullptr;
-    QWaylandXdgShell *m_shell = nullptr;
+    QWaylandCompositor* m_compositor = nullptr;
+    QWaylandOutput* m_output = nullptr;
+    QWaylandXdgShell* m_shell = nullptr;
     /// Session name by client process id.
     QHash<qint64, QString> m_sessionByPid;
     /// View by session name.
-    QHash<QString, QWaylandView *> m_viewBySession;
-    QHash<QWaylandView *, QString> m_sessionByView;
+    QHash<QString, QWaylandView*> m_viewBySession;
+    QHash<QWaylandView*, QString> m_sessionByView;
 };

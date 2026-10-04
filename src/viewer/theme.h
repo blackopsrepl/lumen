@@ -45,10 +45,10 @@ class Theme : public QObject {
     Q_PROPERTY(int fontSizeSmall READ fontSizeSmall CONSTANT)
     Q_PROPERTY(int fontSizeTitle READ fontSizeTitle CONSTANT)
 
-public:
+  public:
     using QObject::QObject;
 
-    static Theme *instance() {
+    static Theme* instance() {
         static Theme theme;
         return &theme;
     }

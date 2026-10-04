@@ -9,7 +9,7 @@
 
 namespace {
 
-QJsonObject rowToObject(const QSqlQuery &query) {
+QJsonObject rowToObject(const QSqlQuery& query) {
     QJsonObject note;
     note[QStringLiteral("id")] = query.value(0).toLongLong();
     note[QStringLiteral("session")] = query.value(1).toString();
@@ -21,29 +21,26 @@ QJsonObject rowToObject(const QSqlQuery &query) {
     return note;
 }
 
-constexpr char kSelect[] =
-    "SELECT id, session, created_at, author, comment, "
-    "(screenshot IS NOT NULL) AS has_screenshot, status FROM feedback ";
+constexpr char kSelect[] = "SELECT id, session, created_at, author, comment, "
+                           "(screenshot IS NOT NULL) AS has_screenshot, status FROM feedback ";
 
 } // namespace
 
-FeedbackStore::FeedbackStore(const QString &path, QObject *parent) : QObject(parent) {
+FeedbackStore::FeedbackStore(const QString& path, QObject* parent) : QObject(parent) {
     const QFileInfo info(path);
     QDir().mkpath(info.absolutePath());
-    m_db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
-                                     QStringLiteral("lumen-feedback"));
+    m_db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("lumen-feedback"));
     m_db.setDatabaseName(path);
     m_db.open();
     QSqlQuery query(m_db);
-    query.exec(QStringLiteral(
-        "CREATE TABLE IF NOT EXISTS feedback ("
-        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        " session TEXT NOT NULL,"
-        " created_at INTEGER NOT NULL,"
-        " author TEXT NOT NULL,"
-        " comment TEXT NOT NULL,"
-        " screenshot BLOB,"
-        " status TEXT NOT NULL DEFAULT 'pending')"));
+    query.exec(QStringLiteral("CREATE TABLE IF NOT EXISTS feedback ("
+                              " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                              " session TEXT NOT NULL,"
+                              " created_at INTEGER NOT NULL,"
+                              " author TEXT NOT NULL,"
+                              " comment TEXT NOT NULL,"
+                              " screenshot BLOB,"
+                              " status TEXT NOT NULL DEFAULT 'pending')"));
     query.exec(QStringLiteral(
         "CREATE INDEX IF NOT EXISTS feedback_session_status ON feedback (session, status)"));
     migrate();
@@ -73,8 +70,8 @@ void FeedbackStore::migrate() {
     }
 }
 
-QJsonObject FeedbackStore::add(const QString &session, const QString &author,
-                               const QString &comment, const QByteArray &screenshot) {
+QJsonObject FeedbackStore::add(const QString& session, const QString& author,
+                               const QString& comment, const QByteArray& screenshot) {
     const qint64 createdAt = QDateTime::currentSecsSinceEpoch();
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral(
@@ -98,7 +95,7 @@ QJsonObject FeedbackStore::add(const QString &session, const QString &author,
     return note;
 }
 
-QJsonArray FeedbackStore::list(const QString &session, bool pendingOnly) const {
+QJsonArray FeedbackStore::list(const QString& session, bool pendingOnly) const {
     QSqlQuery query(m_db);
     QString sql = QString::fromLatin1(kSelect);
     if (pendingOnly) {
@@ -116,7 +113,7 @@ QJsonArray FeedbackStore::list(const QString &session, bool pendingOnly) const {
     return notes;
 }
 
-QJsonArray FeedbackStore::consume(const QString &session) {
+QJsonArray FeedbackStore::consume(const QString& session) {
     m_db.transaction();
     QJsonArray notes = list(session, true);
     if (!notes.isEmpty()) {
@@ -130,17 +127,17 @@ QJsonArray FeedbackStore::consume(const QString &session) {
     return notes;
 }
 
-bool FeedbackStore::ack(const QString &session, qint64 id) {
+bool FeedbackStore::ack(const QString& session, qint64 id) {
     QSqlQuery query(m_db);
-    query.prepare(QStringLiteral(
-        "UPDATE feedback SET status = 'acked' WHERE session = ? AND id = ?"));
+    query.prepare(
+        QStringLiteral("UPDATE feedback SET status = 'acked' WHERE session = ? AND id = ?"));
     query.addBindValue(session);
     query.addBindValue(id);
     query.exec();
     return query.numRowsAffected() > 0;
 }
 
-QByteArray FeedbackStore::screenshot(const QString &session, qint64 id) const {
+QByteArray FeedbackStore::screenshot(const QString& session, qint64 id) const {
     QSqlQuery query(m_db);
     query.prepare(QStringLiteral("SELECT screenshot FROM feedback WHERE session = ? AND id = ?"));
     query.addBindValue(session);

@@ -7,14 +7,14 @@
 
 namespace {
 
-const char *kSystemdService = "org.freedesktop.systemd1";
-const char *kSystemdPath = "/org/freedesktop/systemd1";
-const char *kManagerInterface = "org.freedesktop.systemd1.Manager";
-const char *kUnitInterface = "org.freedesktop.systemd1.Unit";
+const char* kSystemdService = "org.freedesktop.systemd1";
+const char* kSystemdPath = "/org/freedesktop/systemd1";
+const char* kManagerInterface = "org.freedesktop.systemd1.Manager";
+const char* kUnitInterface = "org.freedesktop.systemd1.Unit";
 
-QDBusInterface *manager() {
+QDBusInterface* manager() {
     static QDBusInterface iface(kSystemdService, kSystemdPath, kManagerInterface,
-                               QDBusConnection::sessionBus());
+                                QDBusConnection::sessionBus());
     return &iface;
 }
 
@@ -26,11 +26,10 @@ QString unitPath() {
 
 } // namespace
 
-DaemonControl::DaemonControl(QObject *parent) : QObject(parent) {
+DaemonControl::DaemonControl(QObject* parent) : QObject(parent) {
     // React to the unit changing state from anywhere, not just from this app.
-    QDBusConnection::sessionBus().connect(
-        kSystemdService, kSystemdPath, kManagerInterface, QStringLiteral("JobRemoved"), this,
-        SLOT(refresh()));
+    QDBusConnection::sessionBus().connect(kSystemdService, kSystemdPath, kManagerInterface,
+                                          QStringLiteral("JobRemoved"), this, SLOT(refresh()));
 }
 
 void DaemonControl::refresh() {
@@ -66,5 +65,5 @@ void DaemonControl::stop() {
 void DaemonControl::setEnabled(bool enabled) {
     manager()->call(enabled ? QStringLiteral("EnableUnitFiles")
                             : QStringLiteral("DisableUnitFiles"),
-                       QVariantList{ QVariantList{ unitName(), false } }, false);
+                    QVariantList{QVariantList{unitName(), false}}, false);
 }

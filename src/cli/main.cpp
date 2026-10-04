@@ -3,8 +3,8 @@
 // Speaks JSON lines to the running application over a unix socket. There is no
 // network surface to reach; the socket lives in the user's runtime directory.
 
-#include <QCoreApplication>
 #include <QCommandLineParser>
+#include <QCoreApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
@@ -21,7 +21,7 @@ QString socketPath() {
     return runtime + QStringLiteral("/lumen-agent.sock");
 }
 
-int send(const QJsonObject &request) {
+int send(const QJsonObject& request) {
     QLocalSocket socket;
     socket.connectToServer(socketPath());
     if (!socket.waitForConnected(3000)) {
@@ -41,31 +41,33 @@ int send(const QJsonObject &request) {
         QTextStream(stderr) << "lumen: " << object[QStringLiteral("error")].toString() << "\n";
         return 1;
     }
-    QTextStream(stdout) << QString::fromUtf8(
-        QJsonDocument(object).toJson(QJsonDocument::Indented));
+    QTextStream(stdout) << QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Indented));
     return 0;
 }
 
 } // namespace
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QCommandLineParser parser;
-    parser.setApplicationDescription(
-        QStringLiteral("Drive Lumen sessions from an agent"));
+    parser.setApplicationDescription(QStringLiteral("Drive Lumen sessions from an agent"));
     parser.addHelpOption();
-    parser.addPositionalArgument(QStringLiteral("command"),
-                                 QStringLiteral("ensure|status|stop|accessibility|click|type|feedback|ack"));
+    parser.addPositionalArgument(
+        QStringLiteral("command"),
+        QStringLiteral("ensure|status|stop|accessibility|click|type|feedback|ack"));
     parser.addPositionalArgument(QStringLiteral("name"), QStringLiteral("session name"));
     parser.addPositionalArgument(QStringLiteral("argument"),
                                  QStringLiteral("command, text, or reference"));
-    QCommandLineOption ownerOption(QStringLiteral("owner"),
-                                   QStringLiteral("agent label"), QStringLiteral("owner"));
+    QCommandLineOption ownerOption(QStringLiteral("owner"), QStringLiteral("agent label"),
+                                   QStringLiteral("owner"));
     QCommandLineOption consumeOption(QStringLiteral("consume"),
                                      QStringLiteral("acknowledge the notes after reading"));
-    QCommandLineOption xOption(QStringLiteral("x"), QStringLiteral("x coordinate"), QStringLiteral("x"));
-    QCommandLineOption yOption(QStringLiteral("y"), QStringLiteral("y coordinate"), QStringLiteral("y"));
-    QCommandLineOption idOption(QStringLiteral("id"), QStringLiteral("note id"), QStringLiteral("id"));
+    QCommandLineOption xOption(QStringLiteral("x"), QStringLiteral("x coordinate"),
+                               QStringLiteral("x"));
+    QCommandLineOption yOption(QStringLiteral("y"), QStringLiteral("y coordinate"),
+                               QStringLiteral("y"));
+    QCommandLineOption idOption(QStringLiteral("id"), QStringLiteral("note id"),
+                                QStringLiteral("id"));
     parser.addOptions({ownerOption, consumeOption, xOption, yOption, idOption});
     parser.process(app);
 
@@ -92,12 +94,10 @@ int main(int argc, char **argv) {
     } else if (command == QLatin1String("click")) {
         // Coordinates are accepted positionally after the name, so the common
         // form `lumen click <session> <x> <y>` works without the options.
-        request[QStringLiteral("x")] = parser.isSet(xOption)
-                                           ? parser.value(xOption).toDouble()
-                                           : args.value(2).toDouble();
-        request[QStringLiteral("y")] = parser.isSet(yOption)
-                                           ? parser.value(yOption).toDouble()
-                                           : args.value(3).toDouble();
+        request[QStringLiteral("x")] =
+            parser.isSet(xOption) ? parser.value(xOption).toDouble() : args.value(2).toDouble();
+        request[QStringLiteral("y")] =
+            parser.isSet(yOption) ? parser.value(yOption).toDouble() : args.value(3).toDouble();
     } else if (command == QLatin1String("feedback")) {
         request[QStringLiteral("consume")] = parser.isSet(consumeOption);
     } else if (command == QLatin1String("ack")) {

@@ -23,7 +23,7 @@ constexpr int kQuality = 80;
 
 } // namespace
 
-FrameStream::FrameStream(LumenCompositor *compositor, QObject *parent)
+FrameStream::FrameStream(LumenCompositor* compositor, QObject* parent)
     : QObject(parent), m_compositor(compositor) {}
 
 FrameStream::~FrameStream() {
@@ -35,7 +35,7 @@ FrameStream::~FrameStream() {
     }
 }
 
-bool FrameStream::listen(const QString &path) {
+bool FrameStream::listen(const QString& path) {
     QLocalServer::removeServer(path);
     m_server = new QLocalServer(this);
     if (!m_server->listen(path)) {
@@ -43,7 +43,7 @@ bool FrameStream::listen(const QString &path) {
     }
     m_path = path;
     connect(m_server, &QLocalServer::newConnection, this, [this]() {
-        while (QLocalSocket *viewer = m_server->nextPendingConnection()) {
+        while (QLocalSocket* viewer = m_server->nextPendingConnection()) {
             connect(viewer, &QLocalSocket::disconnected, this, [this, viewer]() {
                 m_subscriptions.remove(viewer);
                 m_lastSession.remove(viewer);
@@ -57,13 +57,13 @@ bool FrameStream::listen(const QString &path) {
         }
     });
 
-    auto *pump = new QTimer(this);
+    auto* pump = new QTimer(this);
     connect(pump, &QTimer::timeout, this, &FrameStream::pump);
     pump->start(kFrameIntervalMs);
     return true;
 }
 
-void FrameStream::subscribe(QLocalSocket *viewer, const QString &session) {
+void FrameStream::subscribe(QLocalSocket* viewer, const QString& session) {
     m_subscriptions.insert(viewer, session);
     m_lastSession.insert(viewer, QString());
 }
@@ -73,7 +73,7 @@ void FrameStream::pump() {
         return;
     }
     for (auto it = m_subscriptions.constBegin(); it != m_subscriptions.constEnd(); ++it) {
-        QLocalSocket *viewer = it.key();
+        QLocalSocket* viewer = it.key();
         const QString session = it.value();
         if (session.isEmpty() || viewer->state() != QLocalSocket::ConnectedState) {
             continue;

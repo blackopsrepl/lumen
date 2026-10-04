@@ -21,11 +21,11 @@ class Config : public QObject {
     Q_PROPERTY(int defaultHeight READ defaultHeight CONSTANT)
     Q_PROPERTY(int maxSessions READ maxSessions CONSTANT)
 
-public:
-    explicit Config(QObject *parent = nullptr);
+  public:
+    explicit Config(QObject* parent = nullptr);
 
     /// Load from the user's config file, falling back to defaults.
-    static Config *load(QObject *parent = nullptr);
+    static Config* load(QObject* parent = nullptr);
 
     QString dataDir() const { return m_dataDir; }
     QString dbusBin() const { return m_dbusBin; }
@@ -43,14 +43,14 @@ public:
     QString streamSocketPath() const;
 
     /// Validate a session name: no path components, bounded length.
-    static bool isValidSessionName(const QString &name);
+    static bool isValidSessionName(const QString& name);
     /// Validate a session command: absolute path to an executable file.
-    static bool isValidCommand(const QString &command);
+    static bool isValidCommand(const QString& command);
 
     /// Where the AT-SPI registry daemon lives, discovering it if unset.
     QString resolveRegistryd() const;
 
-private:
+  private:
     QString m_dataDir;
     QString m_dbusBin;
     QString m_atSpiRegistryd;

@@ -1,5 +1,8 @@
 #include "session.h"
 
+#include <QtDBus/QDBusConnection>
+#include <QtDBus/QDBusReply>
+
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
@@ -8,15 +11,13 @@
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
-#include <QtDBus/QDBusConnection>
-#include <QtDBus/QDBusReply>
 
 #include <csignal>
 
 namespace {
 
 /// Wait until the private session bus has created its socket.
-bool waitForFile(const QString &path, QProcess *child, int timeoutMs) {
+bool waitForFile(const QString& path, QProcess* child, int timeoutMs) {
     QDeadlineTimer deadline(timeoutMs);
     while (!deadline.hasExpired()) {
         if (QFileInfo::exists(path)) {
@@ -32,17 +33,19 @@ bool waitForFile(const QString &path, QProcess *child, int timeoutMs) {
 
 } // namespace
 
-Session::Session(const QString &name, const QString &command, Origin origin,
-                 const QString &owner, QObject *parent)
+Session::Session(const QString& name, const QString& command, Origin origin, const QString& owner,
+                 QObject* parent)
     : QObject(parent), m_name(name), m_command(command), m_origin(origin), m_owner(owner) {}
 
-Session::~Session() { stop(); }
+Session::~Session() {
+    stop();
+}
 
 qint64 Session::processId() const {
     return m_process ? m_process->processId() : 0;
 }
 
-void Session::setTitle(const QString &title) {
+void Session::setTitle(const QString& title) {
     if (m_title == title) {
         return;
     }
@@ -50,7 +53,7 @@ void Session::setTitle(const QString &title) {
     emit titleChanged();
 }
 
-void Session::setState(const QString &state) {
+void Session::setState(const QString& state) {
     if (m_state == state) {
         return;
     }
@@ -66,24 +69,24 @@ void Session::setAccessibilityReady(bool ready) {
     emit accessibilityReadyChanged();
 }
 
-bool Session::start(const QString &socketName, const QString &profileDir,
-                    const QString &dbusBin, const QString &registryd,
-                    bool accessibility) {
+bool Session::start(const QString& socketName, const QString& profileDir, const QString& dbusBin,
+                    const QString& registryd, bool accessibility) {
     m_profileDir = profileDir;
     QDir().mkpath(profileDir);
     // XDG_RUNTIME_DIR must be private to the session: 0700, or Qt refuses it and
     // every runtime path resolves somewhere shared instead.
-    QFile::setPermissions(profileDir, QFileDevice::ReadOwner | QFileDevice::WriteOwner
-                                          | QFileDevice::ExeOwner);
+    QFile::setPermissions(profileDir,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
 
     // The compositor's socket is named by an absolute path, not a bare name: a
     // session runs with its own XDG_RUNTIME_DIR (its private bus lives there),
     // so a relative WAYLAND_DISPLAY would resolve against the wrong directory
     // and the client would fail to connect.
-    const QString display = socketName.startsWith(QLatin1Char('/'))
-                                ? socketName
-                                : QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation)
-                                      + QLatin1Char('/') + socketName;
+    const QString display =
+        socketName.startsWith(QLatin1Char('/'))
+            ? socketName
+            : QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + QLatin1Char('/') +
+                  socketName;
 
     // A private session bus and an AT-SPI registry, started eagerly. The
     // registry cannot be relied on to start lazily: when the host runs systemd
@@ -96,11 +99,9 @@ bool Session::start(const QString &socketName, const QString &profileDir,
         QProcessEnvironment busEnv = QProcessEnvironment::systemEnvironment();
         busEnv.insert(QStringLiteral("XDG_RUNTIME_DIR"), profileDir);
         m_dbus->setProcessEnvironment(busEnv);
-        m_dbus->start(dbusBin,
-                      {QStringLiteral("--session"), QStringLiteral("--nofork"),
-                       QStringLiteral("--address=") + m_busAddress});
-        if (!m_dbus->waitForStarted(5000)
-            || !waitForFile(busSocket, m_dbus, 10000)) {
+        m_dbus->start(dbusBin, {QStringLiteral("--session"), QStringLiteral("--nofork"),
+                                QStringLiteral("--address=") + m_busAddress});
+        if (!m_dbus->waitForStarted(5000) || !waitForFile(busSocket, m_dbus, 10000)) {
             setState(QStringLiteral("error"));
             m_busAddress.clear();
             return false;
@@ -137,22 +138,20 @@ bool Session::start(const QString &socketName, const QString &profileDir,
     m_outputFile = new QFile(profileDir + QStringLiteral("/session.log"), this);
     m_outputFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
 
-    connect(m_process, &QProcess::finished, this,
-            [this](int code, QProcess::ExitStatus status) {
-                if (m_outputFile) {
-                    // A process that exits immediately can leave its output in
-                    // the pipe buffer: drain what remains before recording.
-                    m_outputFile->write(m_process->readAllStandardOutput());
-                    m_outputFile->write(m_process->readAllStandardError());
-                    m_outputFile->write(
-                        QStringLiteral("exited with code %1, status %2\n")
-                            .arg(code)
-                            .arg(int(status))
-                            .toUtf8());
-                    m_outputFile->flush();
-                }
-                setState(code == 0 ? QStringLiteral("ended") : QStringLiteral("crashed"));
-            });
+    connect(m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
+        if (m_outputFile) {
+            // A process that exits immediately can leave its output in
+            // the pipe buffer: drain what remains before recording.
+            m_outputFile->write(m_process->readAllStandardOutput());
+            m_outputFile->write(m_process->readAllStandardError());
+            m_outputFile->write(QStringLiteral("exited with code %1, status %2\n")
+                                    .arg(code)
+                                    .arg(int(status))
+                                    .toUtf8());
+            m_outputFile->flush();
+        }
+        setState(code == 0 ? QStringLiteral("ended") : QStringLiteral("crashed"));
+    });
     connect(m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
         if (m_outputFile) {
             m_outputFile->write(QStringLiteral("process error %1: %2\n")
@@ -189,7 +188,7 @@ bool Session::start(const QString &socketName, const QString &profileDir,
 }
 
 void Session::stop() {
-    for (QProcess *child : {m_process, m_registryd, m_dbus}) {
+    for (QProcess* child : {m_process, m_registryd, m_dbus}) {
         if (!child || child->state() == QProcess::NotRunning) {
             continue;
         }

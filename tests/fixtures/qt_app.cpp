@@ -11,7 +11,7 @@
 #include <QString>
 #include <QUrl>
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     qputenv("QT_QUICK_BACKEND", QByteArrayLiteral("software"));
     QGuiApplication application(argc, argv);
     QQmlApplicationEngine engine;

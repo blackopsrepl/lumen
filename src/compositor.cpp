@@ -16,11 +16,6 @@
 
 #include "compositor.h"
 
-#include <QImage>
-#include <QKeyEvent>
-#include <QPointF>
-#include <QRegion>
-
 #include <QtWaylandCompositor/QWaylandCompositor>
 #include <QtWaylandCompositor/QWaylandOutput>
 #include <QtWaylandCompositor/QWaylandSeat>
@@ -29,6 +24,11 @@
 #include <QtWaylandCompositor/QWaylandXdgShell>
 #include <QtWaylandCompositor/QWaylandXdgSurface>
 #include <QtWaylandCompositor/QWaylandXdgToplevel>
+
+#include <QImage>
+#include <QKeyEvent>
+#include <QPointF>
+#include <QRegion>
 
 namespace {
 
@@ -48,8 +48,8 @@ constexpr int kOutputRefresh = 60000;
 /// what lets the daemon composite with no window and no Quick scene.
 class SessionView : public QWaylandView {
     Q_OBJECT
-public:
-    explicit SessionView(QObject *parent = nullptr) : QWaylandView(parent) {}
+  public:
+    explicit SessionView(QObject* parent = nullptr) : QWaylandView(parent) {}
 
     /// The client's latest frame, or a null image when it has not drawn yet.
     ///
@@ -63,25 +63,23 @@ public:
         return m_buffer.image();
     }
 
-    QSize size() const {
-        return surface() ? surface()->destinationSize() : QSize();
-    }
+    QSize size() const { return surface() ? surface()->destinationSize() : QSize(); }
 
-protected:
+  protected:
     /// Qt calls this when the client commits a new buffer. Storing it here is
     /// what makes frame() work: the buffer is the client's latest pixels, and
     /// reading an SHM buffer needs no GL context and no render thread.
-    void bufferCommitted(const QWaylandBufferRef &buffer, const QRegion &) override {
+    void bufferCommitted(const QWaylandBufferRef& buffer, const QRegion&) override {
         m_buffer = buffer;
     }
 
-private:
+  private:
     QWaylandBufferRef m_buffer;
 };
 
 } // namespace
 
-LumenCompositor::LumenCompositor(QObject *parent) : QObject(parent) {
+LumenCompositor::LumenCompositor(QObject* parent) : QObject(parent) {
     m_compositor = new QWaylandCompositor(this);
 
     // The output is created without a window. QWaylandOutput accepts a null
@@ -95,15 +93,14 @@ LumenCompositor::LumenCompositor(QObject *parent) : QObject(parent) {
     m_output->setModel(QStringLiteral("Lumen session surface"));
 
     m_shell = new QWaylandXdgShell(m_compositor);
-    connect(m_shell, &QWaylandXdgShell::toplevelCreated, this,
-            [this](QWaylandXdgToplevel *toplevel, QWaylandXdgSurface *) {
-                adoptToplevel(toplevel);
-            });
+    connect(
+        m_shell, &QWaylandXdgShell::toplevelCreated, this,
+        [this](QWaylandXdgToplevel* toplevel, QWaylandXdgSurface*) { adoptToplevel(toplevel); });
 }
 
 LumenCompositor::~LumenCompositor() = default;
 
-bool LumenCompositor::start(const QString &socketName) {
+bool LumenCompositor::start(const QString& socketName) {
     m_compositor->setSocketName(socketName.toUtf8());
     // create() is what actually begins listening; it must run after the output
     // and shell exist, or the first client to connect sees no output.
@@ -111,19 +108,19 @@ bool LumenCompositor::start(const QString &socketName) {
     return m_compositor->isCreated();
 }
 
-QWaylandSeat *LumenCompositor::seat() const {
+QWaylandSeat* LumenCompositor::seat() const {
     return m_compositor ? m_compositor->defaultSeat() : nullptr;
 }
 
-QWaylandView *LumenCompositor::viewFor(const QString &session) const {
+QWaylandView* LumenCompositor::viewFor(const QString& session) const {
     return m_viewBySession.value(session);
 }
 
-void LumenCompositor::expectProcess(const QString &session, qint64 pid) {
+void LumenCompositor::expectProcess(const QString& session, qint64 pid) {
     m_sessionByPid.insert(pid, session);
 }
 
-QString LumenCompositor::sessionForPid(const QString &pid) const {
+QString LumenCompositor::sessionForPid(const QString& pid) const {
     bool ok = false;
     const qint64 numeric = pid.toLongLong(&ok);
     if (!ok) {
@@ -132,15 +129,15 @@ QString LumenCompositor::sessionForPid(const QString &pid) const {
     return m_sessionByPid.value(numeric);
 }
 
-void LumenCompositor::adoptToplevel(QWaylandXdgToplevel *toplevel) {
-    QWaylandSurface *surface = toplevel->xdgSurface()->surface();
+void LumenCompositor::adoptToplevel(QWaylandXdgToplevel* toplevel) {
+    QWaylandSurface* surface = toplevel->xdgSurface()->surface();
     const qint64 pid = surface->client() ? surface->client()->processId() : 0;
     // A surface belongs to a session, and sessions are addressed by name. The
     // client's process id is the only handle the compositor has on it, so it is
     // mapped back to the session that started that process.
     const QString session = m_sessionByPid.value(pid);
 
-    auto *view = new SessionView(this);
+    auto* view = new SessionView(this);
     view->setSurface(surface);
     view->setOutput(m_output);
     view->setPrimary();
@@ -158,9 +155,8 @@ void LumenCompositor::adoptToplevel(QWaylandXdgToplevel *toplevel) {
                             QList<QWaylandXdgToplevel::State>()
                                 << QWaylandXdgToplevel::ActivatedState);
 
-    connect(toplevel, &QWaylandXdgToplevel::titleChanged, this, [this, session, toplevel]() {
-        emit titleChanged(session, toplevel->title());
-    });
+    connect(toplevel, &QWaylandXdgToplevel::titleChanged, this,
+            [this, session, toplevel]() { emit titleChanged(session, toplevel->title()); });
     connect(view, &QWaylandView::surfaceDestroyed, this, [this, view]() {
         const QString gone = m_sessionByView.take(view);
         m_viewBySession.remove(gone);
@@ -177,22 +173,21 @@ void LumenCompositor::adoptToplevel(QWaylandXdgToplevel *toplevel) {
     });
     // A client draws only when told to; without this it never commits its first
     // buffer and never becomes interactive.
-    connect(surface, &QWaylandSurface::redraw, this, [this, session]() {
-        emit frameReady(session);
-    });
+    connect(surface, &QWaylandSurface::redraw, this,
+            [this, session]() { emit frameReady(session); });
 
     emit surfaceReady(session);
     emit titleChanged(session, toplevel->title());
 }
 
-QImage LumenCompositor::frame(const QString &session) {
-    auto *view = qobject_cast<SessionView *>(m_viewBySession.value(session));
+QImage LumenCompositor::frame(const QString& session) {
+    auto* view = qobject_cast<SessionView*>(m_viewBySession.value(session));
     return view ? view->frame() : QImage();
 }
 
-bool LumenCompositor::click(const QString &session, const QPointF &point) {
-    auto *view = m_viewBySession.value(session);
-    QWaylandSeat *seat = this->seat();
+bool LumenCompositor::click(const QString& session, const QPointF& point) {
+    auto* view = m_viewBySession.value(session);
+    QWaylandSeat* seat = this->seat();
     if (!view || !view->surface() || !seat) {
         return false;
     }
@@ -207,9 +202,9 @@ bool LumenCompositor::click(const QString &session, const QPointF &point) {
     return true;
 }
 
-bool LumenCompositor::type(const QString &session, const QString &text) {
-    auto *view = m_viewBySession.value(session);
-    QWaylandSeat *seat = this->seat();
+bool LumenCompositor::type(const QString& session, const QString& text) {
+    auto* view = m_viewBySession.value(session);
+    QWaylandSeat* seat = this->seat();
     if (!view || !view->surface() || !seat) {
         return false;
     }
@@ -218,13 +213,13 @@ bool LumenCompositor::type(const QString &session, const QString &text) {
     // map a scancode through its keymap to get the character. Plain unicode key
     // events depend on that translation, and a client whose keymap has not been
     // delivered drops them silently.
-    for (const QChar &ch : text) {
-        const int key = ch == QLatin1Char('\n') ? Qt::Key_Return
-                      : ch == QLatin1Char('\b') ? Qt::Key_Backspace
-                                                : int(ch.toUpper().unicode());
+    for (const QChar& ch : text) {
+        const int key = ch == QLatin1Char('\n')   ? Qt::Key_Return
+                        : ch == QLatin1Char('\b') ? Qt::Key_Backspace
+                                                  : int(ch.toUpper().unicode());
         QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier,
                         ch == QLatin1Char('\n') || ch == QLatin1Char('\b') ? QString()
-                                                                          : QString(ch));
+                                                                           : QString(ch));
         seat->sendFullKeyEvent(&press);
         QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier, QString());
         seat->sendFullKeyEvent(&release);

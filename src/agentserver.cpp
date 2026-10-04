@@ -9,13 +9,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QPointF>
-#include <QSharedPointer>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QPointF>
+#include <QSharedPointer>
 
-AgentServer::AgentServer(SessionManager *sessions, FeedbackStore *feedback,
-                         LumenCompositor *compositor, QObject *parent)
+AgentServer::AgentServer(SessionManager* sessions, FeedbackStore* feedback,
+                         LumenCompositor* compositor, QObject* parent)
     : QObject(parent), m_sessions(sessions), m_feedback(feedback), m_compositor(compositor) {}
 
 AgentServer::~AgentServer() {
@@ -27,7 +27,7 @@ AgentServer::~AgentServer() {
     }
 }
 
-bool AgentServer::listen(const QString &path) {
+bool AgentServer::listen(const QString& path) {
     // A socket left behind by a crashed instance would otherwise block the
     // bind forever; the lock is per-user, so removing it is safe.
     QLocalServer::removeServer(path);
@@ -37,14 +37,14 @@ bool AgentServer::listen(const QString &path) {
     }
     m_path = path;
     connect(m_server, &QLocalServer::newConnection, this, [this]() {
-        while (QLocalSocket *socket = m_server->nextPendingConnection()) {
+        while (QLocalSocket* socket = m_server->nextPendingConnection()) {
             handleConnection(socket);
         }
     });
     return true;
 }
 
-void AgentServer::handleConnection(QLocalSocket *socket) {
+void AgentServer::handleConnection(QLocalSocket* socket) {
     connect(socket, &QLocalSocket::disconnected, socket, &QLocalSocket::deleteLater);
     // Requests are newline-delimited, and a client that sends more than one on a
     // single connection has them arrive in the same read. Parsing the whole read
@@ -74,7 +74,7 @@ void AgentServer::handleConnection(QLocalSocket *socket) {
     });
 }
 
-QJsonObject AgentServer::dispatch(const QJsonObject &request) {
+QJsonObject AgentServer::dispatch(const QJsonObject& request) {
     const QString command = request[QStringLiteral("cmd")].toString();
     const QString name = request[QStringLiteral("name")].toString();
     QJsonObject response;
@@ -101,7 +101,7 @@ QJsonObject AgentServer::dispatch(const QJsonObject &request) {
         return response;
     }
     if (command == QLatin1String("accessibility-debug")) {
-        Session *session = m_sessions->session(name);
+        Session* session = m_sessions->session(name);
         if (!session) {
             response[QStringLiteral("error")] = QStringLiteral("no such session");
             return response;
@@ -109,7 +109,7 @@ QJsonObject AgentServer::dispatch(const QJsonObject &request) {
         return Accessibility::debugWalk(session->busAddress());
     }
     if (command == QLatin1String("accessibility")) {
-        Session *session = m_sessions->session(name);
+        Session* session = m_sessions->session(name);
         if (!session) {
             response[QStringLiteral("error")] = QStringLiteral("no such session");
             return response;
@@ -153,11 +153,11 @@ QJsonObject AgentServer::dispatch(const QJsonObject &request) {
         // The human's note arrives from the viewer, carrying the annotated
         // region as a base64 PNG so the note still shows what was meant after
         // the surface has moved on.
-        const QByteArray image = QByteArray::fromBase64(
-            request[QStringLiteral("screenshot")].toString().toLatin1());
-        const QJsonObject note = m_feedback->add(name, request[QStringLiteral("author")].toString(),
-                                                 request[QStringLiteral("comment")].toString(),
-                                                 image);
+        const QByteArray image =
+            QByteArray::fromBase64(request[QStringLiteral("screenshot")].toString().toLatin1());
+        const QJsonObject note =
+            m_feedback->add(name, request[QStringLiteral("author")].toString(),
+                            request[QStringLiteral("comment")].toString(), image);
         response[QStringLiteral("note")] = note;
         return response;
     }
@@ -168,7 +168,6 @@ QJsonObject AgentServer::dispatch(const QJsonObject &request) {
         response[QStringLiteral("image")] = QString::fromLatin1(image.toBase64());
         return response;
     }
-    response[QStringLiteral("error")] =
-        QStringLiteral("unknown command '%1'").arg(command);
+    response[QStringLiteral("error")] = QStringLiteral("unknown command '%1'").arg(command);
     return response;
 }

@@ -6,8 +6,8 @@
 
 namespace {
 
-QJsonObject node(const QString &role, const QString &name, bool withBounds = true,
-                 int x = 0, int y = 0, int w = 10, int h = 10) {
+QJsonObject node(const QString& role, const QString& name, bool withBounds = true, int x = 0,
+                 int y = 0, int w = 10, int h = 10) {
     QJsonObject object;
     object[QStringLiteral("role")] = role;
     object[QStringLiteral("name")] = name;
@@ -23,7 +23,7 @@ QJsonObject node(const QString &role, const QString &name, bool withBounds = tru
     return object;
 }
 
-void addChild(QJsonObject &parent, const QJsonObject &child) {
+void addChild(QJsonObject& parent, const QJsonObject& child) {
     QJsonArray children = parent[QStringLiteral("children")].toArray();
     children.append(child);
     parent[QStringLiteral("children")] = children;
@@ -38,22 +38,22 @@ void addChild(QJsonObject &parent, const QJsonObject &child) {
 class TestAccessibility : public QObject {
     Q_OBJECT
 
-private slots:
+  private slots:
     void counts_named_and_interior_controls_inside_a_window() {
         // desktop root > application > frame > filler > (label, text, button)
-        QJsonObject button = node(QStringLiteral("push button"), QStringLiteral("Increment"),
-                                   true, 180, 180, 80, 24);
-        QJsonObject text = node(QStringLiteral("text"), QStringLiteral("Name field"),
-                                true, 180, 144, 120, 24);
-        QJsonObject label = node(QStringLiteral("label"), QStringLiteral("0"),
-                                 true, 180, 116, 8, 16);
+        QJsonObject button = node(QStringLiteral("push button"), QStringLiteral("Increment"), true,
+                                  180, 180, 80, 24);
+        QJsonObject text =
+            node(QStringLiteral("text"), QStringLiteral("Name field"), true, 180, 144, 120, 24);
+        QJsonObject label =
+            node(QStringLiteral("label"), QStringLiteral("0"), true, 180, 116, 8, 16);
         QJsonObject filler = node(QStringLiteral("filler"), QString(), true, 0, 0, 480, 320);
         addChild(filler, label);
         addChild(filler, text);
         addChild(filler, button);
 
-        QJsonObject frame = node(QStringLiteral("frame"), QStringLiteral("Lumen Qt Fixture"),
-                                 true, 0, 0, 480, 320);
+        QJsonObject frame =
+            node(QStringLiteral("frame"), QStringLiteral("Lumen Qt Fixture"), true, 0, 0, 480, 320);
         addChild(frame, filler);
 
         QJsonObject app = node(QStringLiteral("application"), QStringLiteral("qt_a11y_fixture"),
@@ -107,8 +107,8 @@ private slots:
         // real object with its own rectangle, so the tree stays addressable.
         QJsonObject filler = node(QStringLiteral("filler"), QString(), true, 0, 0, 480, 320);
         addChild(filler, node(QStringLiteral("push button"), QString(), true, 226, 146, 28, 28));
-        QJsonObject frame = node(QStringLiteral("frame"), QStringLiteral("Painted Canvas"),
-                                 true, 0, 0, 480, 320);
+        QJsonObject frame =
+            node(QStringLiteral("frame"), QStringLiteral("Painted Canvas"), true, 0, 0, 480, 320);
         addChild(frame, filler);
         QJsonObject app = node(QStringLiteral("application"), QStringLiteral("qt-loader"));
         addChild(app, frame);

@@ -7,15 +7,17 @@
 #include <QDir>
 #include <QFileInfo>
 
-SessionManager::SessionManager(Config *config, LumenCompositor *compositor, QObject *parent)
+SessionManager::SessionManager(Config* config, LumenCompositor* compositor, QObject* parent)
     : QObject(parent), m_config(config), m_compositor(compositor) {}
 
-SessionManager::~SessionManager() { stopAll(); }
+SessionManager::~SessionManager() {
+    stopAll();
+}
 
 QVariantList SessionManager::sessions() const {
     QVariantList list;
-    for (const QString &name : m_order) {
-        Session *session = m_sessions.value(name);
+    for (const QString& name : m_order) {
+        Session* session = m_sessions.value(name);
         if (!session) {
             continue;
         }
@@ -32,13 +34,13 @@ QVariantList SessionManager::sessions() const {
     return list;
 }
 
-QString SessionManager::profileDir(const QString &name) const {
+QString SessionManager::profileDir(const QString& name) const {
     return m_config->profilesDir() + QLatin1Char('/') + name;
 }
 
-QString SessionManager::create(const QString &name, const QString &command, bool agentOwned,
-                               const QString &owner, QString *error) {
-    const auto fail = [error](const QString &message) {
+QString SessionManager::create(const QString& name, const QString& command, bool agentOwned,
+                               const QString& owner, QString* error) {
+    const auto fail = [error](const QString& message) {
         if (error) {
             *error = message;
         }
@@ -52,7 +54,7 @@ QString SessionManager::create(const QString &name, const QString &command, bool
     }
     if (m_sessions.contains(name)) {
         // Reusing a name whose session died is normal; a live one is a conflict.
-        Session *existing = m_sessions.value(name);
+        Session* existing = m_sessions.value(name);
         if (existing && existing->state() == QLatin1String("running")) {
             return fail(QStringLiteral("session '%1' is already running").arg(name));
         }
@@ -62,9 +64,8 @@ QString SessionManager::create(const QString &name, const QString &command, bool
         return fail(QStringLiteral("session limit reached"));
     }
 
-    auto *session = new Session(name, command,
-                                agentOwned ? Session::Origin::Agent : Session::Origin::Manual,
-                                owner, this);
+    auto* session = new Session(
+        name, command, agentOwned ? Session::Origin::Agent : Session::Origin::Manual, owner, this);
     // The compositor identifies a client by its process id, so the session's
     // process must be registered *before* the client connects: the toplevel is
     // created during startup, and an unregistered pid means the surface is never
@@ -83,8 +84,8 @@ QString SessionManager::create(const QString &name, const QString &command, bool
     return name;
 }
 
-bool SessionManager::stop(const QString &name) {
-    Session *session = m_sessions.take(name);
+bool SessionManager::stop(const QString& name) {
+    Session* session = m_sessions.take(name);
     if (!session) {
         return false;
     }
@@ -99,17 +100,17 @@ bool SessionManager::stop(const QString &name) {
 
 void SessionManager::stopAll() {
     const QList<QString> names = m_order;
-    for (const QString &name : names) {
+    for (const QString& name : names) {
         stop(name);
     }
 }
 
-Session *SessionManager::session(const QString &name) const {
+Session* SessionManager::session(const QString& name) const {
     return m_sessions.value(name);
 }
 
-void SessionManager::setTitle(const QString &name, const QString &title) {
-    Session *session = m_sessions.value(name);
+void SessionManager::setTitle(const QString& name, const QString& title) {
+    Session* session = m_sessions.value(name);
     if (!session) {
         return;
     }
@@ -117,12 +118,12 @@ void SessionManager::setTitle(const QString &name, const QString &title) {
     emit sessionsChanged();
 }
 
-QString SessionManager::nameForPid(const QString &pid) const {
+QString SessionManager::nameForPid(const QString& pid) const {
     return m_compositor ? m_compositor->sessionForPid(pid) : QString();
 }
 
-QString SessionManager::processIdFor(const QString &name) const {
-    Session *session = m_sessions.value(name);
+QString SessionManager::processIdFor(const QString& name) const {
+    Session* session = m_sessions.value(name);
     return session ? QString::number(session->processId()) : QString();
 }
 
@@ -138,7 +139,7 @@ void SessionManager::reconcileProfiles() {
     }
     QDir dir(root);
     const QStringList entries = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-    for (const QString &entry : entries) {
+    for (const QString& entry : entries) {
         QDir(root + QLatin1Char('/') + entry).removeRecursively();
     }
 }

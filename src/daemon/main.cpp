@@ -16,12 +16,12 @@
 #include "framestream.h"
 #include "sessionmanager.h"
 
-#include <QGuiApplication>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFile>
+#include <QGuiApplication>
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     // The compositor needs the GUI stack (Wayland protocol objects, QImage) but
     // must never show a window. It is driven by an offscreen platform when the
     // host has no display of its own.
@@ -41,7 +41,7 @@ int main(int argc, char **argv) {
     parser.addOption(socketOption);
     parser.process(app);
 
-    Config *config = Config::load(&app);
+    Config* config = Config::load(&app);
     QDir().mkpath(config->profilesDir());
     QFile marker(config->profilesDir() + QStringLiteral("/.lumen-profile-root"));
     if (!marker.exists()) {
@@ -50,17 +50,17 @@ int main(int argc, char **argv) {
         marker.close();
     }
 
-    auto *compositor = new LumenCompositor(&app);
+    auto* compositor = new LumenCompositor(&app);
     if (!compositor->start(parser.value(socketOption))) {
         qCritical("lumen-daemon: could not take the compositor socket");
         return 1;
     }
 
-    auto *sessions = new SessionManager(config, compositor, &app);
+    auto* sessions = new SessionManager(config, compositor, &app);
     sessions->reconcileProfiles();
 
-    auto *feedback = new FeedbackStore(config->feedbackDbPath(), &app);
-    auto *agentServer = new AgentServer(sessions, feedback, compositor, &app);
+    auto* feedback = new FeedbackStore(config->feedbackDbPath(), &app);
+    auto* agentServer = new AgentServer(sessions, feedback, compositor, &app);
     if (!agentServer->listen(config->agentSocketPath())) {
         qCritical("lumen-daemon: could not take the agent socket");
         return 1;
@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
     qputenv("LUMEN_STREAM_SOCKET", config->streamSocketPath().toUtf8());
 
     // Viewers attach here. The daemon keeps running with none attached.
-    auto *frames = new FrameStream(compositor, &app);
+    auto* frames = new FrameStream(compositor, &app);
     if (!frames->listen(config->streamSocketPath())) {
         qCritical("lumen-daemon: could not take the stream socket");
         return 1;
@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
     // A session's title is reported by the compositor and recorded on the
     // session, so the viewer's list shows what the client calls itself.
     QObject::connect(compositor, &LumenCompositor::titleChanged, sessions,
-                     [sessions](const QString &session, const QString &title) {
+                     [sessions](const QString& session, const QString& title) {
                          sessions->setTitle(session, title);
                      });
 

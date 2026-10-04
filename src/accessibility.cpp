@@ -37,8 +37,9 @@ struct Node {
 };
 
 /// Read the accessibility bus address, discovered through the session bus.
-QString accessibilityBus(const QString &sessionAddress, QString *error) {
-    const QString connectionName = QStringLiteral("lumen-a11y-lookup-%1").arg(qHash(sessionAddress));
+QString accessibilityBus(const QString& sessionAddress, QString* error) {
+    const QString connectionName =
+        QStringLiteral("lumen-a11y-lookup-%1").arg(qHash(sessionAddress));
     QDBusConnection connection = QDBusConnection::connectToBus(sessionAddress, connectionName);
     if (!connection.isConnected()) {
         if (error) {
@@ -58,7 +59,7 @@ QString accessibilityBus(const QString &sessionAddress, QString *error) {
     return reply.arguments().first().toString();
 }
 
-QString busNameFor(const QString &address) {
+QString busNameFor(const QString& address) {
     return QStringLiteral("lumen-a11y-%1").arg(qHash(address));
 }
 
@@ -72,14 +73,14 @@ struct ObjectRef {
     QString path;
 };
 
-QDBusArgument &operator>>(const QDBusArgument &argument, ObjectRef &ref) {
+QDBusArgument& operator>>(const QDBusArgument& argument, ObjectRef& ref) {
     argument.beginStructure();
     argument >> ref.name >> ref.path;
     argument.endStructure();
-    return const_cast<QDBusArgument &>(argument);
+    return const_cast<QDBusArgument&>(argument);
 }
 
-QDBusArgument &operator<<(QDBusArgument &argument, const ObjectRef &ref) {
+QDBusArgument& operator<<(QDBusArgument& argument, const ObjectRef& ref) {
     argument.beginStructure();
     argument << ref.name << ref.path;
     argument.endStructure();
@@ -87,7 +88,7 @@ QDBusArgument &operator<<(QDBusArgument &argument, const ObjectRef &ref) {
 }
 
 /// Read a child list from a reply argument of signature `a(so)`.
-QList<ObjectRef> readChildren(const QVariant &argument) {
+QList<ObjectRef> readChildren(const QVariant& argument) {
     QList<ObjectRef> children;
     const QDBusArgument dbusArgument = argument.value<QDBusArgument>();
     dbusArgument.beginArray();
@@ -101,7 +102,7 @@ QList<ObjectRef> readChildren(const QVariant &argument) {
 }
 
 /// The rectangle of an object, when it has a component interface.
-Bounds readBounds(QDBusConnection &bus, const QString &destination, const QString &path) {
+Bounds readBounds(QDBusConnection& bus, const QString& destination, const QString& path) {
     Bounds bounds;
     QDBusInterface component(destination, path, QStringLiteral("org.a11y.atspi.Component"), bus);
     const QDBusMessage reply = component.call(QStringLiteral("GetExtents"), uint(0));
@@ -127,15 +128,15 @@ Bounds readBounds(QDBusConnection &bus, const QString &destination, const QStrin
 /// value arrives as a QDBusVariant. Qt registers QDBusVariant as its own
 /// metatype (not QMetaType::QVariant), and `toString()` on it yields an empty
 /// string — which makes every object in a populated tree look nameless.
-QString stringValue(const QVariant &argument) {
+QString stringValue(const QVariant& argument) {
     if (argument.metaType().id() == qMetaTypeId<QDBusVariant>()) {
         return argument.value<QDBusVariant>().variant().toString();
     }
     return argument.toString();
 }
 
-QJsonObject walk(QDBusConnection &bus, const QString &destination, const QString &path,
-                 int depth, int *budget) {
+QJsonObject walk(QDBusConnection& bus, const QString& destination, const QString& path, int depth,
+                 int* budget) {
     QJsonObject node;
     node[QStringLiteral("ref")] = destination + QLatin1Char('|') + path;
     node[QStringLiteral("role")] = QString();
@@ -170,9 +171,9 @@ QJsonObject walk(QDBusConnection &bus, const QString &destination, const QString
     QJsonArray children;
     if (depth < kMaxDepth && *budget > 0) {
         const QDBusMessage childrenReply = accessible.call(QStringLiteral("GetChildren"));
-        if (childrenReply.type() == QDBusMessage::ReplyMessage
-            && !childrenReply.arguments().isEmpty()) {
-            for (const ObjectRef &ref : readChildren(childrenReply.arguments().first())) {
+        if (childrenReply.type() == QDBusMessage::ReplyMessage &&
+            !childrenReply.arguments().isEmpty()) {
+            for (const ObjectRef& ref : readChildren(childrenReply.arguments().first())) {
                 if (*budget <= 0) {
                     break;
                 }
@@ -187,17 +188,17 @@ QJsonObject walk(QDBusConnection &bus, const QString &destination, const QString
     return node;
 }
 
-int subtreeSize(const QJsonObject &node) {
+int subtreeSize(const QJsonObject& node) {
     int total = 1;
-    for (const QJsonValue &child : node[QStringLiteral("children")].toArray()) {
+    for (const QJsonValue& child : node[QStringLiteral("children")].toArray()) {
         total += subtreeSize(child.toObject());
     }
     return total;
 }
 
-int subtreeDepth(const QJsonObject &node) {
+int subtreeDepth(const QJsonObject& node) {
     int deepest = 0;
-    for (const QJsonValue &child : node[QStringLiteral("children")].toArray()) {
+    for (const QJsonValue& child : node[QStringLiteral("children")].toArray()) {
         deepest = qMax(deepest, subtreeDepth(child.toObject()));
     }
     return 1 + deepest;
@@ -206,9 +207,9 @@ int subtreeDepth(const QJsonObject &node) {
 /// Named objects strictly below the application's top-level windows. The
 /// registry's process entry and a window's own title are identity of the
 /// container, never of a target, so they must not count.
-int namedBelow(const QJsonObject &node) {
+int namedBelow(const QJsonObject& node) {
     int total = 0;
-    for (const QJsonValue &child : node[QStringLiteral("children")].toArray()) {
+    for (const QJsonValue& child : node[QStringLiteral("children")].toArray()) {
         const QJsonObject object = child.toObject();
         if (!object[QStringLiteral("name")].toString().isEmpty()) {
             total += 1;
@@ -221,20 +222,20 @@ int namedBelow(const QJsonObject &node) {
 /// Whether two objects report the same rectangle. The rectangle is nested under
 /// `bounds`, not spread across the object, so reading it from the top level
 /// compares zeros and makes every object look identical to its window.
-bool sameBounds(const QJsonObject &a, const QJsonObject &b) {
+bool sameBounds(const QJsonObject& a, const QJsonObject& b) {
     const QJsonObject rectA = a[QStringLiteral("bounds")].toObject();
     const QJsonObject rectB = b[QStringLiteral("bounds")].toObject();
-    return rectA[QStringLiteral("x")].toInt() == rectB[QStringLiteral("x")].toInt()
-           && rectA[QStringLiteral("y")].toInt() == rectB[QStringLiteral("y")].toInt()
-           && rectA[QStringLiteral("width")].toInt() == rectB[QStringLiteral("width")].toInt()
-           && rectA[QStringLiteral("height")].toInt() == rectB[QStringLiteral("height")].toInt();
+    return rectA[QStringLiteral("x")].toInt() == rectB[QStringLiteral("x")].toInt() &&
+           rectA[QStringLiteral("y")].toInt() == rectB[QStringLiteral("y")].toInt() &&
+           rectA[QStringLiteral("width")].toInt() == rectB[QStringLiteral("width")].toInt() &&
+           rectA[QStringLiteral("height")].toInt() == rectB[QStringLiteral("height")].toInt();
 }
 
 /// Objects below a window whose rectangle differs from the window's: real
 /// controls the agent can address, as opposed to a window-spanning filler.
-int interiorBelow(const QJsonObject &node, const QJsonObject &window) {
+int interiorBelow(const QJsonObject& node, const QJsonObject& window) {
     int total = 0;
-    for (const QJsonValue &child : node[QStringLiteral("children")].toArray()) {
+    for (const QJsonValue& child : node[QStringLiteral("children")].toArray()) {
         const QJsonObject object = child.toObject();
         if (object.contains(QStringLiteral("bounds")) && !sameBounds(object, window)) {
             total += 1;
@@ -245,17 +246,17 @@ int interiorBelow(const QJsonObject &node, const QJsonObject &window) {
 }
 
 /// Measure what the application published, given the registry's root node.
-QJsonObject computeStatsImpl(const QJsonObject &root) {
+QJsonObject computeStatsImpl(const QJsonObject& root) {
     const QJsonArray applications = root[QStringLiteral("children")].toArray();
     int nodes = 0;
     int named = 0;
     int interior = 0;
     int maxDepth = 0;
-    for (const QJsonValue &appValue : applications) {
+    for (const QJsonValue& appValue : applications) {
         const QJsonObject app = appValue.toObject();
         nodes += subtreeSize(app);
         maxDepth = qMax(maxDepth, subtreeDepth(app));
-        for (const QJsonValue &windowValue : app[QStringLiteral("children")].toArray()) {
+        for (const QJsonValue& windowValue : app[QStringLiteral("children")].toArray()) {
             const QJsonObject window = windowValue.toObject();
             named += namedBelow(window);
             interior += interiorBelow(window, window);
@@ -272,7 +273,7 @@ QJsonObject computeStatsImpl(const QJsonObject &root) {
 
 } // namespace
 
-bool Accessibility::awaitRegistry(const QString &busAddress, int timeoutMs) {
+bool Accessibility::awaitRegistry(const QString& busAddress, int timeoutMs) {
     QString error;
     const QString a11y = accessibilityBus(busAddress, &error);
     if (a11y.isEmpty()) {
@@ -295,7 +296,7 @@ bool Accessibility::awaitRegistry(const QString &busAddress, int timeoutMs) {
     return false;
 }
 
-QJsonObject Accessibility::tree(const QString &busAddress, QString *error) {
+QJsonObject Accessibility::tree(const QString& busAddress, QString* error) {
     QString lookupError;
     const QString a11y = accessibilityBus(busAddress, &lookupError);
     if (a11y.isEmpty()) {
@@ -333,11 +334,11 @@ QJsonObject Accessibility::tree(const QString &busAddress, QString *error) {
     return result;
 }
 
-QJsonObject Accessibility::computeStats(const QJsonObject &root) {
+QJsonObject Accessibility::computeStats(const QJsonObject& root) {
     return computeStatsImpl(root);
 }
 
-QJsonObject Accessibility::debugWalk(const QString &busAddress) {
+QJsonObject Accessibility::debugWalk(const QString& busAddress) {
     QString lookupError;
     const QString a11y = accessibilityBus(busAddress, &lookupError);
     QJsonObject result;

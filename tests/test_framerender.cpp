@@ -5,21 +5,21 @@
 // in an offscreen environment. This test proves whether the daemon can
 // render frames without a display.
 
-#include <QtTest>
+#include "compositor.h"
+
+#include <QDir>
+#include <QEventLoop>
+#include <QImage>
 #include <QProcess>
 #include <QProcessEnvironment>
-#include <QEventLoop>
-#include <QTimer>
-#include <QDir>
 #include <QStandardPaths>
-#include <QImage>
-
-#include "compositor.h"
+#include <QTimer>
+#include <QtTest>
 
 class TestFrameRender : public QObject {
     Q_OBJECT
 
-private slots:
+  private slots:
     void frame_renders_headless();
 };
 
@@ -30,7 +30,7 @@ void TestFrameRender::frame_renders_headless() {
     QString sessionName;
     bool surfaceReady = false;
 
-    connect(&compositor, &LumenCompositor::surfaceReady, this, [&](const QString &session) {
+    connect(&compositor, &LumenCompositor::surfaceReady, this, [&](const QString& session) {
         sessionName = session;
         surfaceReady = true;
     });
@@ -38,13 +38,15 @@ void TestFrameRender::frame_renders_headless() {
     QProcess fixture;
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     QString runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-    if (runtimeDir.isEmpty()) runtimeDir = QDir::tempPath();
+    if (runtimeDir.isEmpty())
+        runtimeDir = QDir::tempPath();
     env.insert("WAYLAND_DISPLAY", runtimeDir + "/lumen-frame-test");
     env.insert("QT_QPA_PLATFORM", "wayland");
     env.insert("XDG_RUNTIME_DIR", runtimeDir);
     fixture.setProcessEnvironment(env);
     fixture.start(QCoreApplication::applicationDirPath() + "/qt_fixture",
-                  QStringList() << QCoreApplication::applicationDirPath() + "/../src/spike/fixture.qml");
+                  QStringList() << QCoreApplication::applicationDirPath() +
+                                       "/../src/spike/fixture.qml");
     compositor.expectProcess("fixture", fixture.processId());
     QVERIFY(fixture.waitForStarted(5000));
 

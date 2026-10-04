@@ -12,20 +12,20 @@
 #include <QString>
 
 class Accessibility {
-public:
+  public:
     /// Walk the accessibility tree of the application on `busAddress`.
     ///
     /// Returns the tree as JSON with a `stats` object, or an empty object with
     /// `error` set when nothing addressable was published.
-    static QJsonObject tree(const QString &busAddress, QString *error);
+    static QJsonObject tree(const QString& busAddress, QString* error);
 
     /// Wait until the session's accessibility registry answers.
-    static bool awaitRegistry(const QString &busAddress, int timeoutMs);
+    static bool awaitRegistry(const QString& busAddress, int timeoutMs);
 
     /// The raw walk, for diagnosing an empty tree.
-    static QJsonObject debugWalk(const QString &busAddress);
+    static QJsonObject debugWalk(const QString& busAddress);
 
     /// Measure what an application published, given the registry's root node.
     /// Exposed so the counting rules can be tested against real tree shapes.
-    static QJsonObject computeStats(const QJsonObject &root);
+    static QJsonObject computeStats(const QJsonObject& root);
 };

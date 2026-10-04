@@ -18,8 +18,8 @@ class SessionManager : public QObject {
     Q_PROPERTY(QVariantList sessions READ sessions NOTIFY sessionsChanged)
     Q_PROPERTY(int count READ count NOTIFY sessionsChanged)
 
-public:
-    SessionManager(Config *config, LumenCompositor *compositor, QObject *parent = nullptr);
+  public:
+    SessionManager(Config* config, LumenCompositor* compositor, QObject* parent = nullptr);
     ~SessionManager() override;
 
     /// The compositor socket every session connects to.
@@ -30,31 +30,31 @@ public:
 
     /// Create and start a session. Returns the name, or an empty string with
     /// `error` set when the request is invalid or the application fails.
-    QString create(const QString &name, const QString &command, bool agentOwned,
-                   const QString &owner, QString *error = nullptr);
-    bool stop(const QString &name);
+    QString create(const QString& name, const QString& command, bool agentOwned,
+                   const QString& owner, QString* error = nullptr);
+    bool stop(const QString& name);
     void stopAll();
-    Session *session(const QString &name) const;
+    Session* session(const QString& name) const;
 
     /// The session owning process `pid`, or an empty string.
-    Q_INVOKABLE QString nameForPid(const QString &pid) const;
+    Q_INVOKABLE QString nameForPid(const QString& pid) const;
     /// The process id of a session's application, as a string.
-    Q_INVOKABLE QString processIdFor(const QString &name) const;
+    Q_INVOKABLE QString processIdFor(const QString& name) const;
 
     /// Record a session's window title, reported by the compositor.
-    void setTitle(const QString &name, const QString &title);
+    void setTitle(const QString& name, const QString& title);
 
     /// Remove every profile directory this service owns, at startup.
     void reconcileProfiles();
 
-signals:
+  signals:
     void sessionsChanged();
 
-private:
-    QString profileDir(const QString &name) const;
+  private:
+    QString profileDir(const QString& name) const;
 
-    Config *m_config;
-    LumenCompositor *m_compositor;
-    QHash<QString, Session *> m_sessions;
+    Config* m_config;
+    LumenCompositor* m_compositor;
+    QHash<QString, Session*> m_sessions;
     QList<QString> m_order;
 };
