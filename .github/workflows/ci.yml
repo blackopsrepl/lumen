@@ -14,31 +14,50 @@ concurrency:
 jobs:
   check:
     # Lumen is a Qt application: it needs Qt 6 with the Wayland compositor
-    # modules, a compiler and cmake, and nothing else. There is no Rust
-    # toolchain, no browser and no container image to build.
+    # modules, a compiler and cmake. There is no Rust toolchain, no browser and
+    # no container image to build.
+    #
+    # Qt comes from aqtinstall rather than apt on purpose. The runner image's
+    # own Qt is 6.4 and Lumen needs 6.6 — and Ubuntu 24.04's qt6-wayland-dev is
+    # broken besides: its Qt6DmaBufServerBufferIntegrationPluginTargets.cmake
+    # points at a libqt-wayland-compositor-dmabuf-server-buffer.so the package
+    # does not ship, so find_package(Qt6 ... WaylandCompositor) fails before
+    # anything is compiled. A distribution package cannot be made to work here.
     runs-on: ubuntu-24.04
+    env:
+      QT_VERSION: 6.8.2
+      QT_ROOT: /opt/Qt
     steps:
       - uses: actions/checkout@v4
 
-      - name: Qt and build dependencies
+      # Runtime libraries the Qt SDK does not carry: the SQLite driver the
+      # feedback store uses, dbus and at-spi for a session's private bus, and
+      # the GL/xkb/wayland/fontconfig stack Qt links against.
+      - name: System libraries
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build \
-            qt6-base-dev qt6-declarative-dev qt6-wayland-dev \
-            qt6-wayland-dev-tools qt6-base-dev-tools \
-            libqt6sql6-sqlite libqt6dbus6 \
-            dbus at-spi2-core libgl1-mesa-dev
+            build-essential cmake ninja-build python3-pip python3-venv \
+            libgl1-mesa-dev libglib2.0-0 dbus at-spi2-core \
+            libxkbcommon-dev libwayland-dev libfontconfig1 libqt6sql6-sqlite
+
+      - name: Qt 6 with the Wayland compositor module
+        run: |
+          python3 -m venv "$RUNNER_TEMP/aqt"
+          "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall
+          "$RUNNER_TEMP/aqt/bin/aqt" install-qt linux desktop "$QT_VERSION" linux_gcc_64 \
+            -m qtwaylandcompositor -O "$QT_ROOT"
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$QT_ROOT/$QT_VERSION/gcc_64"
 
       - name: Build
         run: cmake --build build -j"$(nproc)"
 
       # The tests run a compositor and host a real Wayland client, so they need
-      # a display stack but never a visible window.
+      # a display stack but never a visible window. They provide their own
+      # XDG_RUNTIME_DIR when the environment has none, which is the case here.
       - name: Test
         env:
           QT_QPA_PLATFORM: offscreen
