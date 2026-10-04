@@ -1,6 +1,7 @@
 #include "feedbackstore.h"
 
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QSqlError>
@@ -31,7 +32,11 @@ FeedbackStore::FeedbackStore(const QString& path, QObject* parent) : QObject(par
     QDir().mkpath(info.absolutePath());
     m_db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("lumen-feedback"));
     m_db.setDatabaseName(path);
-    m_db.open();
+    if (!m_db.open()) {
+        // Remember why. Every query below then fails, and without this the only
+        // symptom is notes that save and never appear.
+        m_openError = m_db.lastError().text();
+    }
     QSqlQuery query(m_db);
     query.exec(QStringLiteral("CREATE TABLE IF NOT EXISTS feedback ("
                               " id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -82,7 +87,15 @@ QJsonObject FeedbackStore::add(const QString& session, const QString& author,
     query.addBindValue(author);
     query.addBindValue(comment);
     query.addBindValue(screenshot.isEmpty() ? QVariant() : QVariant(screenshot));
-    query.exec();
+    if (!query.exec()) {
+        // A note that does not save is worse than an error: the human believes
+        // it was left. The insert used to go unchecked, so a failure produced a
+        // note object carrying `id: 0` and the note simply never appeared.
+        qWarning("lumen: could not save note for %s: %s", qPrintable(session),
+                 qPrintable(query.lastError().text()));
+        m_lastError = query.lastError().text();
+        return QJsonObject();
+    }
 
     QJsonObject note;
     note[QStringLiteral("id")] = query.lastInsertId().toLongLong();

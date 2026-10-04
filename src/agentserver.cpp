@@ -158,6 +158,14 @@ QJsonObject AgentServer::dispatch(const QJsonObject& request) {
         const QJsonObject note =
             m_feedback->add(name, request[QStringLiteral("author")].toString(),
                             request[QStringLiteral("comment")].toString(), image);
+        if (note.isEmpty()) {
+            // Do not answer a failed save with a note object: the caller would
+            // read it as success. Say what went wrong instead.
+            response[QStringLiteral("error")] = m_feedback->lastError().isEmpty()
+                                                    ? QStringLiteral("could not save the note")
+                                                    : m_feedback->lastError();
+            return response;
+        }
         response[QStringLiteral("note")] = note;
         return response;
     }

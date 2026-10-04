@@ -59,6 +59,11 @@ Item {
 
     MouseArea {
         anchors.fill: parent
+        // The canvas beneath also grabs the pointer, and a grab is otherwise
+        // stolen on the first movement: onPressed would fire while
+        // onPositionChanged never did, leaving a 0x0 selection that read as a
+        // click which drew nothing.
+        preventStealing: true
         onPressed: (mouse) => {
             overlay.drawStart = Qt.point(mouse.x, mouse.y)
             overlay.drawEnd = overlay.drawStart

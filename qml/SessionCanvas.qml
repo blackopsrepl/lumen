@@ -19,6 +19,12 @@ Item {
     required property string frameUrl
     required property string activeName
     required property bool humanControlling
+    // While annotating, the pointer belongs to the overlay. Both input areas
+    // below are therefore off: leaving either live meant the press reached the
+    // overlay but every movement after it was consumed by the canvas, so the
+    // selection stayed 0x0 and the gesture looked like a click that did
+    // nothing.
+    property bool annotating: false
 
     signal pointerDown(real x, real y)
     signal pointerUp(real x, real y)
@@ -202,7 +208,7 @@ Item {
     MouseArea {
         id: pointer
         anchors.fill: parent
-        enabled: stage.humanControlling
+        enabled: stage.humanControlling && !stage.annotating
         acceptedButtons: Qt.LeftButton
         // The wheel is handled below: while controlling a session it belongs to
         // the session, and only otherwise does it zoom.
@@ -234,7 +240,7 @@ Item {
     MouseArea {
         id: viewportInput
         anchors.fill: parent
-        enabled: !stage.humanControlling
+        enabled: !stage.humanControlling && !stage.annotating
         acceptedButtons: Qt.LeftButton
         hoverEnabled: true
 

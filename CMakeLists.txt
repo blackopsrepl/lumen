@@ -47,6 +47,7 @@ qt_add_executable(lumen
     src/viewer/daemonclient.cpp
     src/viewer/daemoncontrol.cpp
     src/viewer/frameprovider.cpp
+    src/viewer/noteimageprovider.cpp
     src/viewer/theme.cpp
 )
 qt_add_qml_module(lumen

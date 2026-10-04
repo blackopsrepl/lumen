@@ -7,6 +7,7 @@
 #include "daemonclient.h"
 #include "daemoncontrol.h"
 #include "frameprovider.h"
+#include "noteimageprovider.h"
 #include "theme.h"
 
 #include <QCoreApplication>
@@ -63,6 +64,10 @@ int main(int argc, char** argv) {
     // The frame is served through the image provider: an Image source is a URL
     // and a QImage cannot be assigned to it.
     engine.addImageProvider(QStringLiteral("lumen"), new FrameProvider(&client));
+    // The feedback list renders each note's crop from `image://lumen-note/…`.
+    // Without a provider bound to that name the URL resolved to nothing and
+    // every annotated note displayed blank.
+    engine.addImageProvider(QStringLiteral("lumen-note"), new NoteImageProvider(&client));
     engine.rootContext()->setContextProperty(QStringLiteral("daemon"), &client);
     engine.rootContext()->setContextProperty(QStringLiteral("daemonControl"), &control);
     // The palette is handed to QML as a context property rather than as a

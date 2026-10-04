@@ -38,8 +38,17 @@ class FeedbackStore : public QObject {
     /// The PNG attached to a note, or a null array when it has none.
     QByteArray screenshot(const QString& session, qint64 id) const;
 
+    /// The reason the last write failed, or empty when it succeeded. Exposed so
+    /// a caller can report a store that is not taking notes instead of
+    /// reporting success.
+    QString lastError() const { return m_lastError.isEmpty() ? m_openError : m_lastError; }
+
   private:
     void migrate();
 
     QSqlDatabase m_db;
+    /// Why the database would not open, if it would not.
+    QString m_openError;
+    /// Why the last write failed, if it did.
+    QString m_lastError;
 };

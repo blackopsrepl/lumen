@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtCore
 
 // Lumen viewer: a thin client for lumen-daemon.
 //
@@ -17,6 +18,9 @@ ApplicationWindow {
     property string activeName: ""
     property bool humanControlling: false
     property bool annotating: false
+    /// Bumped when the client reports a session's notes changed, so the
+    /// feedback panel's binding re-reads them.
+    property int notesRevision: 0
     /// The region the human drew, held until the note text arrives.
     property var pendingRect: null
     property var activeSession: {
@@ -24,6 +28,15 @@ ApplicationWindow {
             if (s.name === window.activeName) return s
         }
         return null
+    }
+
+    // UI state the human set by hand, remembered. This is viewer-only — it
+    // describes a window, not a session — so it lives in QSettings under the
+    // application name, not in the daemon's config.
+    Settings {
+        id: splitSettings
+        category: "viewer"
+        property real feedbackHeight: 0
     }
 
     // An agent driving a session shows it, so what is being driven is visible.
@@ -56,56 +69,116 @@ ApplicationWindow {
             color: Theme.metalBottom
 
             ColumnLayout {
+                id: sidebarColumn
                 anchors.fill: parent
                 spacing: 0
+
+                // The feedback pane is resizable: the session list and the notes
+                // both want the space, and which deserves more depends on what
+                // the human is doing.
+                //
+                // Three things made the first attempt feel bad, and all three
+                // are fixed here rather than tuned:
+                //
+                //  - A 7px strip is a hard thing to hit. The grabbable band is
+                //    18px (the visual line stays 7px, centred in it), and it
+                //    reaches into the panes either side so the pointer is
+                //    already inside it when the hand arrives.
+                //  - Grabbing moved the pane by the distance from the band's
+                //    top, so the divider jumped to the cursor. The grab is
+                //    anchored instead: the pane takes the offset since press,
+                //    and whatever row you grabbed stays under the pointer.
+                //  - The height died with the window. It is remembered, so the
+                //    split survives a restart and is set once, not every launch.
+                //
+                // Bounds come from the ColumnLayout, not `parent.height` — the
+                // MouseAreas span the band, whose own height is 18. Minimums are
+                // each item's Layout.minimumHeight; only the ceiling is
+                // computed, from whatever the panes were given.
+                readonly property int dividerPx: 18
+                readonly property int linePx: 7
+                readonly property int sessionListMin: 160
+                readonly property int feedbackMin: 90
+                readonly property int feedbackDefault: 240
+
+                function feedbackCeiling() {
+                    return Math.max(feedbackMin,
+                                    height - sessionListMin - dividerPx);
+                }
+
+                function clampFeedback(h) {
+                    return Math.max(feedbackMin, Math.min(h, feedbackCeiling()));
+                }
+
+                // A saved height is only meaningful for this window size: a
+                // split set on a tall window would swallow a short one.
+                function restoreFeedbackHeight() {
+                    if (splitSettings.feedbackHeight > 0) {
+                        feedbackPane.Layout.preferredHeight =
+                            clampFeedback(splitSettings.feedbackHeight);
+                    }
+                }
+
+                Component.onCompleted: restoreFeedbackHeight()
+                onHeightChanged: restoreFeedbackHeight()
 
                 SessionSidebar {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    Layout.minimumHeight: sidebarColumn.sessionListMin
                     sessions: daemon.sessions
                     activeName: window.activeName
                     onSessionActivated: (name) => window.connectSession(name)
                 }
 
-                // The feedback pane is resizable: the session list and the notes
-                // both want the space, and which deserves more depends on what
-                // the human is doing. Drag the divider to trade one for the
-                // other. The range is bounded so neither half can be lost —
-                // a pane collapsed to nothing is a pane that looks broken.
                 Rectangle {
                     id: feedbackDivider
                     Layout.fillWidth: true
-                    implicitHeight: 7
-                    color: dividerMouse.containsMouse || dividerMouse.pressed
-                           ? Theme.accent : Theme.lineSoft
+                    implicitHeight: sidebarColumn.dividerPx
+                    color: "transparent"
 
                     Rectangle {
                         anchors.centerIn: parent
                         width: 34
-                        height: 3
-                        radius: 1.5
+                        height: dividerMouse.containsMouse || dividerMouse.pressed
+                                ? 5 : 3
+                        radius: height / 2
                         color: dividerMouse.containsMouse || dividerMouse.pressed
-                               ? Theme.accentInk : Theme.lineStrong
+                               ? Theme.accent : Theme.lineStrong
                     }
 
                     MouseArea {
                         id: dividerMouse
                         anchors.fill: parent
                         hoverEnabled: true
+                        preventStealing: true
                         cursorShape: Qt.SizeVerCursor
-                        property real grabY: 0
-                        property real grabHeight: 0
+                        property real pressGlobalY: 0
+                        property real pressHeight: 0
                         onPressed: (mouse) => {
-                            grabY = mouse.y
-                            grabHeight = feedbackPane.Layout.preferredHeight
+                            // Window coordinates, not band-local ones. The band
+                            // moves as the pane resizes, so measuring `mouse.y`
+                            // against it feeds the band's own movement back into
+                            // the next delta: the pane then chased the pointer at
+                            // roughly half speed and wobbled. A point mapped to
+                            // the window is the pointer's real position and is
+                            // unaffected by what the divider does.
+                            pressGlobalY = mapToItem(null, mouse.x, mouse.y).y
+                            pressHeight = feedbackPane.height
                         }
                         onPositionChanged: (mouse) => {
                             if (!pressed) return
-                            const next = grabHeight + (mouse.y - grabY)
-                            // The sidebar keeps 160 for the session list; the
-                            // feedback pane keeps 90 so its heading stays visible.
+                            const globalY = mapToItem(null, mouse.x, mouse.y).y
                             feedbackPane.Layout.preferredHeight =
-                                Math.max(90, Math.min(next, parent.height - 160))
+                                sidebarColumn.clampFeedback(
+                                    pressHeight - (globalY - pressGlobalY))
+                        }
+                        onReleased: splitSettings.feedbackHeight = feedbackPane.height
+                        onDoubleClicked: {
+                            feedbackPane.Layout.preferredHeight =
+                                sidebarColumn.clampFeedback(
+                                    sidebarColumn.feedbackDefault)
+                            splitSettings.feedbackHeight = feedbackPane.height
                         }
                     }
                 }
@@ -114,10 +187,25 @@ ApplicationWindow {
                 FeedbackPanel {
                     id: feedbackPane
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 240
-                    Layout.minimumHeight: 90
+                    Layout.preferredHeight: sidebarColumn.feedbackDefault
+                    Layout.minimumHeight: sidebarColumn.feedbackMin
                     sessionName: window.activeName
-                    notes: daemon.notes(window.activeName)
+                    // `daemon.notes(name)` is a method call, and a binding to a
+                    // method call is evaluated once and never again — so the
+                    // panel was handed the empty list from before the notes
+                    // arrived and stayed empty however many notes came in. It is
+                    // re-read here when the client says that session's notes
+                    // changed, which is the event that actually carries them.
+                    notes: {
+                        void notesRevision
+                        return daemon.notes(window.activeName)
+                    }
+                    Connections {
+                        target: daemon
+                        function onNotesChanged(session) {
+                            if (session === window.activeName) notesRevision++
+                        }
+                    }
                     onResolveRequested: (id) => {
                         daemon.resolveNote(window.activeName, id)
                     }
@@ -179,6 +267,7 @@ ApplicationWindow {
                     frameUrl: daemon.frameUrl
                     activeName: window.activeName
                     humanControlling: window.humanControlling
+                    annotating: window.annotating
                     onPointerDown: (x, y) => daemon.click(x, y)
                     onPointerUp: (x, y) => daemon.click(x, y)
                     onKeyTyped: (text) => daemon.type(text)
@@ -190,6 +279,8 @@ ApplicationWindow {
                 AnnotationOverlay {
                     id: overlay
                     anchors.fill: parent
+                    // Above the canvas, below the composer.
+                    z: 1
                     annotating: window.annotating
                     sessionCanvas: canvas
                     onSendRequested: (rect) => {
@@ -202,6 +293,7 @@ ApplicationWindow {
                     id: composer
                     visible: false
                     anchors.centerIn: parent
+                    z: 2
                     onSendRequested: (comment) => {
                         window.sendNote(comment)
                         composer.close()
