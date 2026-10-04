@@ -18,6 +18,7 @@
 
 #include <QImage>
 #include <QPointF>
+#include <QRegion>
 
 #include <QtWaylandCompositor/QWaylandCompositor>
 #include <QtWaylandCompositor/QWaylandOutput>
@@ -50,17 +51,31 @@ public:
     explicit SessionView(QObject *parent = nullptr) : QWaylandView(parent) {}
 
     /// The client's latest frame, or a null image when it has not drawn yet.
+    ///
+    /// Stores the buffer from the surface's bufferCommitted signal and returns
+    /// its image. For SHM buffers (which software-rendered clients use) this
+    /// needs no GL context and no render thread.
     QImage frame() {
-        if (!surface()) {
+        if (m_buffer.isNull()) {
             return QImage();
         }
-        advance();
-        return currentBuffer().image();
+        return m_buffer.image();
     }
 
     QSize size() const {
         return surface() ? surface()->destinationSize() : QSize();
     }
+
+protected:
+    /// Qt calls this when the client commits a new buffer. Storing it here is
+    /// what makes frame() work: the buffer is the client's latest pixels, and
+    /// reading an SHM buffer needs no GL context and no render thread.
+    void bufferCommitted(const QWaylandBufferRef &buffer, const QRegion &) override {
+        m_buffer = buffer;
+    }
+
+private:
+    QWaylandBufferRef m_buffer;
 };
 
 } // namespace
@@ -127,8 +142,15 @@ void LumenCompositor::adoptToplevel(QWaylandXdgToplevel *toplevel) {
     auto *view = new SessionView(this);
     view->setSurface(surface);
     view->setOutput(m_output);
+    view->setPrimary();
     m_viewBySession.insert(session, view);
     m_sessionByView.insert(view, session);
+    // The toplevel waits for the compositor's first configure before it draws.
+    // Acknowledge it at once so the client starts committing frames. The
+    // two-argument overload takes QList<State>, which an empty brace list
+    // cannot disambiguate, so it is spelled out explicitly.
+    toplevel->sendConfigure(QSize(kOutputWidth, kOutputHeight),
+                            QList<QWaylandXdgToplevel::State>());
 
     connect(toplevel, &QWaylandXdgToplevel::titleChanged, this, [this, session, toplevel]() {
         emit titleChanged(session, toplevel->title());
@@ -138,6 +160,14 @@ void LumenCompositor::adoptToplevel(QWaylandXdgToplevel *toplevel) {
         m_viewBySession.remove(gone);
         view->deleteLater();
         emit surfaceGone(gone);
+    });
+    // Tell the client it may draw. Without frame callbacks a client draws once
+    // and then waits forever, so the compositor sends them on every commit.
+    connect(surface, &QWaylandSurface::damaged, this, [this]() {
+        if (m_output) {
+            m_output->frameStarted();
+            m_output->sendFrameCallbacks();
+        }
     });
     // A client draws only when told to; without this it never commits its first
     // buffer and never becomes interactive.

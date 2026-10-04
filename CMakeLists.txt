@@ -97,6 +97,7 @@ lumen_test(test_feedbackstore src/feedbackstore.cpp)
 lumen_test(test_sessionmodel src/config.cpp src/session.cpp src/sessionmanager.cpp src/compositor.cpp)
 lumen_test(test_accessibility src/accessibility.cpp)
 lumen_test(test_integration src/compositor.cpp)
+lumen_test(test_framerender src/compositor.cpp)
 
 # ---------------------------------------------------------------------------
 # The compositor spike is kept as a live regression test of the one

@@ -73,7 +73,6 @@ signals:
 
 private:
     void adoptToplevel(QWaylandXdgToplevel *toplevel);
-    QString sessionForClient(QWaylandView *view) const;
 
     QWaylandCompositor *m_compositor = nullptr;
     QWaylandOutput *m_output = nullptr;
