@@ -235,18 +235,25 @@ void DaemonClient::refreshNotes(const QString& session) {
              .toJson(QJsonDocument::Compact));
 }
 
-void DaemonClient::addNote(const QString& session, const QString& comment, const QImage& region) {
+void DaemonClient::addNote(const QString& session, const QString& comment, int x, int y, int w,
+                           int h) {
     if (session.isEmpty() || comment.trimmed().isEmpty()) {
         return;
     }
-    // The annotated region is encoded here, at send time, so the note carries
-    // the pixels the human was looking at rather than coordinates that a
-    // redraw would move out from under it.
+    // The annotated region is cropped here, at send time, so the note carries the
+    // pixels the human was looking at rather than coordinates a redraw would move
+    // out from under it. The crop lives in C++ because QML cannot build a QImage:
+    // `QImage::copy` is not invokable.
     QByteArray png;
-    if (!region.isNull()) {
-        QBuffer buffer(&png);
-        buffer.open(QIODevice::WriteOnly);
-        region.save(&buffer, "PNG");
+    if (w > 0 && h > 0 && !m_frame.isNull()) {
+        // Clamp to the frame: a selection that runs past the edge would
+        // otherwise produce an empty or malformed crop.
+        const QRect region = QRect(x, y, w, h).intersected(QRect(QPoint(0, 0), m_frame.size()));
+        if (region.width() > 0 && region.height() > 0) {
+            QBuffer buffer(&png);
+            buffer.open(QIODevice::WriteOnly);
+            m_frame.copy(region).save(&buffer, "PNG");
+        }
     }
     send(QJsonDocument(
              QJsonObject{{QStringLiteral("cmd"), QStringLiteral("add")},

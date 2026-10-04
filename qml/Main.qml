@@ -67,12 +67,55 @@ ApplicationWindow {
                     onSessionActivated: (name) => window.connectSession(name)
                 }
 
-                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.lineSoft }
+                // The feedback pane is resizable: the session list and the notes
+                // both want the space, and which deserves more depends on what
+                // the human is doing. Drag the divider to trade one for the
+                // other. The range is bounded so neither half can be lost —
+                // a pane collapsed to nothing is a pane that looks broken.
+                Rectangle {
+                    id: feedbackDivider
+                    Layout.fillWidth: true
+                    implicitHeight: 7
+                    color: dividerMouse.containsMouse || dividerMouse.pressed
+                           ? Theme.accent : Theme.lineSoft
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 34
+                        height: 3
+                        radius: 1.5
+                        color: dividerMouse.containsMouse || dividerMouse.pressed
+                               ? Theme.accentInk : Theme.lineStrong
+                    }
+
+                    MouseArea {
+                        id: dividerMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.SizeVerCursor
+                        property real grabY: 0
+                        property real grabHeight: 0
+                        onPressed: (mouse) => {
+                            grabY = mouse.y
+                            grabHeight = feedbackPane.Layout.preferredHeight
+                        }
+                        onPositionChanged: (mouse) => {
+                            if (!pressed) return
+                            const next = grabHeight + (mouse.y - grabY)
+                            // The sidebar keeps 160 for the session list; the
+                            // feedback pane keeps 90 so its heading stays visible.
+                            feedbackPane.Layout.preferredHeight =
+                                Math.max(90, Math.min(next, parent.height - 160))
+                        }
+                    }
+                }
 
                 // --- feedback ---
                 FeedbackPanel {
+                    id: feedbackPane
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 260
+                    Layout.preferredHeight: 240
+                    Layout.minimumHeight: 90
                     sessionName: window.activeName
                     notes: daemon.notes(window.activeName)
                     onResolveRequested: (id) => {
@@ -95,6 +138,7 @@ ApplicationWindow {
                 activeSession: window.activeSession
                 humanControlling: window.humanControlling
                 annotating: window.annotating
+                zoomPercent: canvas.zoomPercent
                 onTakeControl: window.humanControlling = true
                 onReleaseControl: window.humanControlling = false
                 onFullscreenRequested: {
@@ -103,6 +147,8 @@ ApplicationWindow {
                 }
                 onAnnotateToggled: window.annotating = !window.annotating
                 onSettingsRequested: settingsDialog.open()
+                onFitRequested: canvas.fit()
+                onActualSizeRequested: canvas.actualSize()
                 onStopRequested: {
                     if (window.activeName !== "") daemon.stopSession(window.activeName)
                 }
@@ -234,36 +280,45 @@ ApplicationWindow {
         daemon.refreshNotes(name)
     }
 
-    // Send the drawn region and the note text to the daemon. The pixels are
-    // taken from the frame the human was looking at, so the note keeps showing
-    // what they meant even after the session redraws.
+    // Send the drawn region and the note text to the daemon. The region is
+    // measured in frame pixels here — in QML, which knows the stage — and the
+    // crop itself happens in C++, because QImage::copy is not invokable and the
+    // crop that used to live here threw at the call site without an error.
     function sendNote(comment) {
         if (!comment || !window.activeName) return
-        const region = window.captureRegion(window.pendingRect)
-        daemon.addNote(window.activeName, comment, region)
+        const rect = window.frameRegion(window.pendingRect)
+        daemon.addNote(window.activeName, comment,
+                       rect ? rect.x : 0, rect ? rect.y : 0,
+                       rect ? rect.width : 0, rect ? rect.height : 0)
         window.annotating = false
         overlay.clear()
         window.pendingRect = null
     }
 
-    // Crop the pending region out of the displayed frame, in frame pixels.
-    function captureRegion(rect) {
+    // Map the drawn rectangle from stage coordinates to frame pixels.
+    //
+    // Both ends of the mapping live on the canvas (mapToFrame and zoom/pan), so
+    // this asks it rather than recomputing the transform — a second copy of the
+    // maths here is exactly how a click and a note region drift apart once zoom
+    // exists. Returns geometry, not pixels: QML cannot build a QImage.
+    function frameRegion(rect) {
         if (!rect || !daemon.frame) return null
-        const img = daemon.frame
-        if (!img.width || !img.height) return null
-        // The stage preserves aspect ratio, so the displayed frame is inset
-        // within the canvas; the region is in stage coordinates and must be
-        // mapped back to frame pixels before cropping.
-        const stageW = stageArea.width
-        const stageH = stageArea.height
-        const scale = Math.min(stageW / img.width, stageH / img.height)
-        const offsetX = (stageW - img.width * scale) / 2
-        const offsetY = (stageH - img.height * scale) / 2
-        const x = Math.max(0, Math.round((rect.x - offsetX) / scale))
-        const y = Math.max(0, Math.round((rect.y - offsetY) / scale))
-        const w = Math.max(1, Math.round(rect.width / scale))
-        const h = Math.max(1, Math.round(rect.height / scale))
-        return img.copy(x, y, Math.min(w, img.width - x), Math.min(h, img.height - y))
+        if (!canvas.frameW || !canvas.frameH) return null
+        // The overlay and the stage are siblings inside the same well, so the
+        // drawn rectangle is already in the canvas's own coordinates — the
+        // inset lives inside the canvas, and mapToFrame accounts for it.
+        const topLeft = canvas.mapToFrame(rect.x, rect.y)
+        const bottomRight = canvas.mapToFrame(rect.x + rect.width, rect.y + rect.height)
+        const x = Math.max(0, Math.round(Math.min(topLeft.x, bottomRight.x)))
+        const y = Math.max(0, Math.round(Math.min(topLeft.y, bottomRight.y)))
+        const w = Math.max(1, Math.round(Math.abs(bottomRight.x - topLeft.x)))
+        const h = Math.max(1, Math.round(Math.abs(bottomRight.y - topLeft.y)))
+        return {
+            x: x,
+            y: y,
+            width: Math.min(w, canvas.frameW - x),
+            height: Math.min(h, canvas.frameH - y)
+        }
     }
 
     // Escape releases human control. The handler lives on a Shortcut rather than
@@ -273,6 +328,27 @@ ApplicationWindow {
         sequence: StandardKey.Cancel
         enabled: window.humanControlling
         onActivated: window.humanControlling = false
+    }
+
+    // Zoom keys, as the old viewer had them. They are disabled while the human
+    // is driving a session, because then +/- are the session's keystrokes.
+    Shortcut {
+        sequences: ["+", "="]
+        enabled: !window.humanControlling
+        onActivated: canvas.zoomCenter(1.2)
+    }
+    Shortcut {
+        sequences: ["-", "_"]
+        enabled: !window.humanControlling
+        onActivated: canvas.zoomCenter(1 / 1.2)
+    }
+    Shortcut {
+        sequence: "Ctrl+0"
+        onActivated: canvas.actualSize()
+    }
+    Shortcut {
+        sequence: "Ctrl+9"
+        onActivated: canvas.fit()
     }
 
     // Keyboard input goes to the session while the human holds control. The

@@ -12,12 +12,12 @@ Button {
     id: control
 
     /// "expand" | "gear" | "note" | "control" | "release" | "stop" | "close" |
-    /// "check" | "power" | "login"
+    /// "check" | "power" | "login" | "fit"
     required property string iconKind
     /// The label, carried on hover rather than written in the button.
     property string tooltipText: ""
     /// Larger icons (the commit action) can override; the toolbar uses the default.
-    property real iconSize: 16
+    property real iconSize: 17
     /// An accent-tinted button, for the commit action in a dialog.
     property bool tone: false
 
@@ -28,16 +28,22 @@ Button {
 
     background: ButtonSurface { }
 
-    contentItem: Icon {
-        kind: control.iconKind
-        size: control.iconSize
-        ink: !control.enabled ? Theme.faint
-             : control.tone ? Theme.accentInk
-             : Theme.text
-        opacity: !control.enabled ? 0.55 : control.hovered ? 1.0 : 0.82
+    contentItem: Item {
+        // The icon travels down a hairline while the button is held, which is
+        // what makes a press feel like a press rather than a colour change.
+        Icon {
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: control.pressed || control.down ? 1 : 0
+            kind: control.iconKind
+            size: control.iconSize
+            ink: !control.enabled ? Theme.faint
+                 : control.tone ? Theme.accentInk
+                 : Theme.text
+            opacity: !control.enabled ? 0.55
+                     : control.hovered ? 1.0 : 0.88
 
-        Behavior on opacity {
-            NumberAnimation { duration: 90 }
+            Behavior on opacity { NumberAnimation { duration: 110 } }
+            Behavior on anchors.verticalCenterOffset { NumberAnimation { duration: 70 } }
         }
     }
 

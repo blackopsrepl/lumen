@@ -57,9 +57,17 @@ class DaemonClient : public QObject {
     Q_INVOKABLE QVariantList notes(const QString& session);
     /// Ask the daemon for a session's pending notes.
     Q_INVOKABLE void refreshNotes(const QString& session);
-    /// Add a human note for a session, optionally with the annotated region as
-    /// PNG bytes captured from the frame the human was looking at.
-    Q_INVOKABLE void addNote(const QString& session, const QString& comment, const QImage& region);
+    /// Record a human note on a session, cropping the annotated region out of
+    /// the frame currently on screen.
+    ///
+    /// The region arrives as plain geometry in *frame* pixels — the crop is done
+    /// here, in C++, because a QImage cannot be built from QML: `QImage::copy`
+    /// is not invokable, so the crop that used to live in the viewer's
+    /// `captureRegion()` threw at the call site and the note was never sent, and
+    /// QML gave no error for it. Passing the rectangle is also the easier
+    /// contract — the caller is already working in frame coordinates.
+    Q_INVOKABLE void addNote(const QString& session, const QString& comment, int x, int y, int w,
+                             int h);
     /// Acknowledge one note.
     Q_INVOKABLE void resolveNote(const QString& session, int id);
     /// The PNG a note carries, base64-encoded; empty when it has none.

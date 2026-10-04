@@ -183,6 +183,22 @@ Item {
         }
     }
 
+    /// Fit: a frame with arrows pointing inward, for "fit to window".
+    Shape {
+        anchors.fill: parent
+        visible: icon.kind === "fit"
+        antialiasing: true
+        ShapePath {
+            strokeColor: icon.ink
+            strokeWidth: icon.weight
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+            joinStyle: ShapePath.RoundJoin
+            startX: 0; startY: 0
+            PathSvg { path: "M1.6 1.6H14.4V14.4H1.6Z M5.6 2.2V6H2.2 M10.4 2.2V6H13.8 M5.6 13.8V10H2.2 M10.4 13.8V10H13.8" }
+        }
+    }
+
     Shape {
         anchors.fill: parent
         visible: icon.kind === "check"

@@ -2,18 +2,25 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// The toolbar: what is being watched, and the controls for it.
+// The toolbar: the controls for the session being watched.
+//
+// It carries no title. The session name is already in the sidebar's list and
+// the frame below is its pixels, so naming it here a third time was noise — and
+// a toolbar with nothing but icons on the right reads as chrome rather than as
+// a second heading.
 //
 // Every control is an icon over the shared surface. The actions are few and each
 // has an obvious symbol, so words here would only add weight; the label is
 // carried by a tooltip. The row is separated into two groups — the fullscreen
-// toggle stands alone, then the three actions that operate on the session — by a
+// toggle stands alone, then the actions that operate on the session — by a
 // hairline, which is what keeps a strip of icons legible.
 Item {
     id: bar
     required property var activeSession
     required property bool humanControlling
     required property bool annotating
+    /// The current view zoom, as a percentage, for the readout.
+    required property int zoomPercent
 
     signal releaseControl()
     signal takeControl()
@@ -21,6 +28,8 @@ Item {
     signal annotateToggled()
     signal settingsRequested()
     signal stopRequested()
+    signal fitRequested()
+    signal actualSizeRequested()
 
     implicitHeight: 48
 
@@ -35,29 +44,50 @@ Item {
             GradientStop { position: 1.0; color: Theme.metalMid }
         }
 
-        Text {
-            id: title
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.left: parent.left
-            anchors.leftMargin: 16
-            anchors.right: controls.left
-            anchors.rightMargin: 12
-            text: bar.activeSession
-                  ? (bar.activeSession.title || bar.activeSession.name)
-                  : "No session"
-            color: bar.activeSession ? Theme.text : Theme.faint
-            font.family: Theme.fontSans
-            font.pixelSize: Theme.fontSizeTitle
-            font.weight: Font.Medium
-            elide: Text.ElideRight
-        }
-
         RowLayout {
             id: controls
             anchors.verticalCenter: parent.verticalCenter
             anchors.right: parent.right
             anchors.rightMargin: 14
             spacing: 4
+
+            // The zoom readout. It is a button, not a label: clicking it returns
+            // the view to actual size, which is how the old viewer behaved and
+            // how every document viewer behaves.
+            Button {
+                id: zoomButton
+                flat: true
+                implicitWidth: Math.max(56, zoomText.implicitWidth + 20)
+                background: ButtonSurface { }
+                onClicked: bar.actualSizeRequested()
+                contentItem: Text {
+                    id: zoomText
+                    text: bar.zoomPercent + "%"
+                    color: zoomButton.hovered ? Theme.text : Theme.muted
+                    font.family: Theme.fontMono
+                    font.pixelSize: Theme.fontSizeSmall
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: "Actual size (Ctrl+0)"
+                ToolTip.delay: 500
+            }
+
+            IconButton {
+                iconKind: "fit"
+                tooltipText: "Fit to window (Ctrl+9)"
+                onClicked: bar.fitRequested()
+            }
+
+            Rectangle {
+                Layout.alignment: Qt.AlignVCenter
+                Layout.leftMargin: 4
+                Layout.rightMargin: 4
+                implicitWidth: 1
+                implicitHeight: 18
+                color: Theme.line
+            }
 
             IconButton {
                 iconKind: "expand"
