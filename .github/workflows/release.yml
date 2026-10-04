@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  # A tag only becomes a release after the same gates a push to main must pass.
+  # A tag only becomes a release after the same gates a push to the default branch must pass.
   check:
     uses: ./.github/workflows/ci.yml
 
