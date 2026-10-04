@@ -11,7 +11,7 @@ of Lumen's own daemon, so its pixels and its input belong to Lumen directly.
 There is no screen capture, no input injection, and no network surface — you
 reach it over a unix socket in the user's runtime directory.
 
-Two processes:
+Three binaries:
 
 - `lumen-daemon` — owns the compositor and every session. Runs with no window
   and is a systemd user service, so sessions keep running when no viewer is open.

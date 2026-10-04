@@ -3,7 +3,6 @@
 # CMake build trees. These are generated and enormous, and committing one also
 # feeds CMakeCache.txt to the secret scanner, which reads its package version
 # strings as keys.
-/target/
 /build/
 /build-qt/
 
