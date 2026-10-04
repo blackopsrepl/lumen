@@ -1,5 +1,8 @@
 #include "session.h"
 
+#include "accessibility.h"
+
+#include <QtConcurrent/QtConcurrentRun>
 #include <QtDBus/QDBusConnection>
 #include <QtDBus/QDBusReply>
 
@@ -192,12 +195,45 @@ bool Session::start(const QString& socketName, const QString& profileDir, const 
         return false;
     }
     setState(QStringLiteral("running"));
-    if (accessibility) {
-        // The tree becomes readable once the application registers with the
-        // registry; the accessibility walk reports emptiness until then.
-        QTimer::singleShot(2000, this, [this]() { setAccessibilityReady(true); });
-    }
+    // Accessibility readiness is never assumed. It used to be a blind
+    // two-second timer that reported a tree as ready whether or not one existed
+    // — so `status` promised `accessibilityReady: true` while the walk failed
+    // with "could not connect to the session bus". It is now probed when
+    // asked (see refreshAccessibility), and the answer is whatever the bus
+    // actually says.
     return true;
+}
+
+void Session::refreshAccessibility() {
+    // An application publishes its tree whenever it gets round to it — after
+    // first paint, or seconds later — so a single probe taken at startup
+    // answers for a moment that has passed. Once a tree has answered, it stays
+    // answered; until then, each call re-probes, which is cheap (a D-Bus
+    // GetChildCount on the registry) and makes `status` agree with what
+    // `accessibility` will actually return.
+    if (m_accessibilityReady || m_busAddress.isEmpty()) {
+        return;
+    }
+    const QString busAddress = m_busAddress;
+    QtConcurrent::run([this, busAddress]() {
+        // The `org.a11y.Bus` service is published by the client's own
+        // accessibility bridge, which starts with the application — so there is
+        // a window right after launch where the a11y bus socket exists but
+        // nothing answers on the session bus yet. A single short probe lands in
+        // that window and reports "not ready" for a session that will publish a
+        // moment later, so this retries until it answers rather than sampling
+        // once.
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 15000) {
+            if (Accessibility::awaitRegistry(busAddress, 1000)) {
+                QMetaObject::invokeMethod(
+                    this, [this]() { setAccessibilityReady(true); }, Qt::QueuedConnection);
+                return;
+            }
+            QThread::msleep(250);
+        }
+    });
 }
 
 void Session::stop() {

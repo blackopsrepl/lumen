@@ -61,9 +61,11 @@ landed.
 
 Reading the boundary: the tree is empty while no application is publishing
 (still starting, or already exited — retry). An application that paints its own
-controls and sets no `Accessible.name` publishes structural containers only,
-and there is nothing to address; screenshots and pointer input still apply. Bare
-`Rectangle`s in QML never appear unless they set `Accessible.name`.
+controls and sets no `Accessible.name` publishes structural containers only, and
+there is nothing here to address. **The CLI has no way to read pixels** — there
+is no screenshot command — so for such an application, drive it by coordinate
+and confirm through whatever it does publish (`status` title, a file it writes,
+its own output), or ask the human what they see.
 
 The application must be a normal Qt program — Qt Widgets, or QML loaded through
 `QQmlApplicationEngine` or `QQuickView`.
@@ -121,3 +123,10 @@ anything the session held. Read what you still need first.
 - If `lumen-cli` is not on your PATH it is at `~/.local/bin/lumen-cli`.
 - If the daemon is down there is no socket: `systemctl --user status
   lumen.service`, or the human can start it from the viewer's Settings.
+- The viewer is for watching: it opens fitted to the window, and the human can
+  zoom (`+`/`-`, wheel, `Ctrl+0` actual size, `Ctrl+9` fit) and pan by dragging.
+  Zoom is view-only — it never changes what the session believes its size is, so
+  a click lands where the human aimed whatever the zoom. None of this affects
+  the coordinates `click` takes, which are always in the session's own pixels.
+- A human's note may carry a cropped image of what they were looking at. Fetch
+  it with the `note-image` request after reading the note; it is not inlined.

@@ -274,24 +274,19 @@ QJsonObject computeStatsImpl(const QJsonObject& root) {
 } // namespace
 
 bool Accessibility::awaitRegistry(const QString& busAddress, int timeoutMs) {
-    QString error;
-    const QString a11y = accessibilityBus(busAddress, &error);
-    if (a11y.isEmpty()) {
-        return false;
-    }
-    QDBusConnection connection = QDBusConnection::connectToBus(a11y, busNameFor(busAddress));
-    if (!connection.isConnected()) {
-        return false;
-    }
-    QDBusInterface root(kRegistryName, kRegistryRootPath,
-                        QStringLiteral("org.a11y.atspi.Accessible"), connection);
+    // Readiness means "a walk would return a tree", which is a stricter question
+    // than "the a11y bus answers". The registry replies to GetChildren as soon
+    // as it is up, even with nothing published, so a probe that stops there
+    // reports ready for a window with no accessible controls at all — and then
+    // `accessibility` contradicts `status`. This reuses the walk's own bar.
     QElapsedTimer timer;
     timer.start();
     while (timer.elapsed() < timeoutMs) {
-        if (root.call(QStringLiteral("GetChildCount")).type() == QDBusMessage::ReplyMessage) {
+        QString error;
+        if (!tree(busAddress, &error).isEmpty()) {
             return true;
         }
-        QThread::msleep(100);
+        QThread::msleep(150);
     }
     return false;
 }

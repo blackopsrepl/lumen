@@ -28,6 +28,10 @@ QVariantList SessionManager::sessions() const {
         entry[QStringLiteral("title")] = session->title();
         entry[QStringLiteral("owner")] = session->owner();
         entry[QStringLiteral("agentOwned")] = session->agentOwned();
+        // Kick a re-probe when the session has not yet been seen to publish a
+        // tree, so the flag this returns is what a walk would find rather than
+        // what was true when the session started.
+        session->refreshAccessibility();
         entry[QStringLiteral("accessibilityReady")] = session->accessibilityReady();
         list.append(entry);
     }

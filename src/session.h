@@ -52,6 +52,11 @@ class Session : public QObject {
     void setTitle(const QString& title);
     void setState(const QString& state);
 
+    /// Re-probe whether this session's accessibility tree answers, if it has
+    /// not already been seen to. Called before `accessibilityReady` is reported,
+    /// so the flag can never claim a tree that the walk would fail to return.
+    void refreshAccessibility();
+
   signals:
     void stateChanged();
     void titleChanged();

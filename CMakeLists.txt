@@ -9,7 +9,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 find_package(Qt6 6.6 REQUIRED COMPONENTS
     Core Gui Qml Quick QuickControls2
     WaylandCompositor WaylandCompositorXdgShell
-    Sql DBus Network)
+    Sql DBus Network Concurrent)
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
 qt_standard_project_setup(REQUIRES 6.6)
@@ -98,13 +98,13 @@ enable_testing()
 function(lumen_test name)
     qt_add_executable(${name} tests/${name}.cpp ${ARGN})
     target_include_directories(${name} PRIVATE src)
-    target_link_libraries(${name} PRIVATE Qt6::Core Qt6::Sql Qt6::DBus Qt6::Test Qt6::WaylandCompositor)
+    target_link_libraries(${name} PRIVATE Qt6::Core Qt6::Sql Qt6::DBus Qt6::Test Qt6::WaylandCompositor Qt6::Concurrent)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
 lumen_test(test_config src/config.cpp)
 lumen_test(test_feedbackstore src/feedbackstore.cpp)
-lumen_test(test_sessionmodel src/config.cpp src/session.cpp src/sessionmanager.cpp src/compositor.cpp)
+lumen_test(test_sessionmodel src/config.cpp src/session.cpp src/sessionmanager.cpp src/compositor.cpp src/accessibility.cpp)
 lumen_test(test_accessibility src/accessibility.cpp)
 lumen_test(test_integration src/compositor.cpp)
 lumen_test(test_framerender src/compositor.cpp)
