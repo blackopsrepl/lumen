@@ -9,6 +9,7 @@
 
 #include <QDir>
 #include <QEventLoop>
+#include <QFile>
 #include <QImage>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -20,6 +21,21 @@ class TestFrameRender : public QObject {
     Q_OBJECT
 
   private slots:
+    // The compositor derives its Wayland socket path from XDG_RUNTIME_DIR, and
+    // Qt refuses a runtime dir that is not mode 0700. On a desktop session the
+    // variable is already set; inside a CI container it is not, and the
+    // compositor then cannot open its socket. Give the test its own private
+    // runtime dir so it does not depend on the ambient environment at all.
+    void initTestCase() {
+        if (qEnvironmentVariableIsEmpty("XDG_RUNTIME_DIR")) {
+            QString dir = QDir::tempPath() + "/lumen-frame-test-runtime";
+            QDir().mkpath(dir);
+            QFile::setPermissions(dir, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                           QFileDevice::ExeOwner);
+            qputenv("XDG_RUNTIME_DIR", dir.toUtf8());
+        }
+    }
+
     void frame_renders_headless();
 };
 

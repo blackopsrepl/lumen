@@ -11,23 +11,31 @@ jobs:
     # Lumen is a Qt application: it needs Qt 6 with the Wayland compositor
     # modules, a compiler and cmake, and nothing else. There is no Rust
     # toolchain, no browser and no container image to build.
-    runs-on: ubuntu-24.04
+    #
+    # `qt` is the label this instance's C++ runner offers, and its image is
+    # openSUSE Tumbleweed — the same distribution Lumen is developed on. It
+    # carries Qt 6, cmake and ninja already; the Wayland Compositor module is
+    # the one piece that is not preinstalled.
+    runs-on: qt
     steps:
       - uses: actions/checkout@v4
 
       # The steps that reach the network retry: this runner has hit transient
-      # external outages that fail apt for minutes at a time.
+      # external outages that fail package downloads for minutes at a time.
+      #
+      # Two packages beyond the base image, both load-bearing: the Wayland
+      # Compositor module (headers plus the library the test binaries link
+      # against) and the Qt SQLite driver (the feedback store's SQLite backend,
+      # which the Qt SQL plugin silently lacks without it).
+      #
+      # ldconfig is not optional: without the loader cache rebuilt the test
+      # binaries cannot resolve libQt6WaylandCompositor.so.6.
       - name: Qt and build dependencies
         run: |
           retry() { for i in 1 2 3 4 5; do "$@" && return 0; echo "attempt $i failed: $*"; sleep 5; done; return 1; }
-          export DEBIAN_FRONTEND=noninteractive
-          retry sudo apt-get update
-          retry sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build \
-            qt6-base-dev qt6-declarative-dev qt6-wayland-dev \
-            qt6-wayland-dev-tools qt6-base-dev-tools \
-            libqt6sql6-sqlite libqt6dbus6 \
-            dbus at-spi2-core libgl1-mesa-dev
+          retry sudo zypper --no-refresh --non-interactive install -y \
+            qt6-waylandcompositor-devel qt6-sql-sqlite
+          sudo ldconfig
 
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -36,7 +44,9 @@ jobs:
         run: cmake --build build -j"$(nproc)"
 
       # The tests run a compositor and host a real Wayland client, so they need
-      # a display stack but never a visible window.
+      # a display stack but never a visible window. They provide their own
+      # XDG_RUNTIME_DIR when the environment has none, which is the case in a
+      # container.
       - name: Test
         env:
           QT_QPA_PLATFORM: offscreen
