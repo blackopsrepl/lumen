@@ -1,6 +1,12 @@
 # Build output
 /target/
 
+# CMake build trees. These are generated and enormous; committing them would
+# also feed CMakeCache.txt to the secret scanner, which reads its package
+# version strings as keys.
+/build/
+/build-qt/
+
 # Runtime state, never committed.
 /runtime/
 /data/

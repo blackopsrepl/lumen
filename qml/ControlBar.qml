@@ -2,19 +2,16 @@ import QtQuick
 import QtQuick.Controls
 
 // The toolbar. The address field, tabs and page scale are gone: they were
-// browser concepts, and this application hosts Qt clients. Everything that
-// described a *surface* rather than a page is kept.
+// browser concepts, and this application hosts Qt clients. The viewer displays a
+// frame the daemon rendered, so there is no zoom or annotation state here.
 Item {
     id: bar
     required property var activeSession
     required property bool humanControlling
-    required property real zoomPercent
     required property bool annotating
 
     signal releaseControl()
     signal takeControl()
-    signal fitRequested()
-    signal actualSizeRequested()
     signal fullscreenRequested()
     signal annotateToggled()
 
@@ -48,16 +45,6 @@ Item {
             spacing: 6
 
             Button {
-                text: Math.round(bar.zoomPercent * 100) + "%"
-                flat: true
-                onClicked: bar.actualSizeRequested()
-            }
-            Button {
-                text: "Fit"
-                flat: true
-                onClicked: bar.fitRequested()
-            }
-            Button {
                 text: "⤢"
                 flat: true
                 onClicked: bar.fullscreenRequested()
@@ -70,6 +57,8 @@ Item {
                 color: Theme.line
             }
 
+            // The note path: draw a region on the frame, describe it, and it is
+            // addressed to the session for the agent to pick up.
             Button {
                 text: "Comment"
                 flat: true

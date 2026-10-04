@@ -2,6 +2,7 @@
 
 #include <QDeadlineTimer>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QProcessEnvironment>
 #include <QStandardPaths>
@@ -124,10 +125,44 @@ bool Session::start(const QString &socketName, const QString &profileDir,
         env.insert(QStringLiteral("QT_LINUX_ACCESSIBILITY_ALWAYS_ON"), QStringLiteral("1"));
     }
     m_process->setProcessEnvironment(env);
+    m_process->setWorkingDirectory(profileDir);
     m_process->setProcessChannelMode(QProcess::MergedChannels);
 
-    connect(m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
-        setState(code == 0 ? QStringLiteral("ended") : QStringLiteral("crashed"));
+    // A session's own output is the only record of why it exited, so it is kept
+    // beside the session rather than discarded into the daemon's stderr.
+    m_outputFile = new QFile(profileDir + QStringLiteral("/session.log"), this);
+    m_outputFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+
+    connect(m_process, &QProcess::finished, this,
+            [this](int code, QProcess::ExitStatus status) {
+                if (m_outputFile) {
+                    // A process that exits immediately can leave its output in
+                    // the pipe buffer: drain what remains before recording.
+                    m_outputFile->write(m_process->readAllStandardOutput());
+                    m_outputFile->write(m_process->readAllStandardError());
+                    m_outputFile->write(
+                        QStringLiteral("exited with code %1, status %2\n")
+                            .arg(code)
+                            .arg(int(status))
+                            .toUtf8());
+                    m_outputFile->flush();
+                }
+                setState(code == 0 ? QStringLiteral("ended") : QStringLiteral("crashed"));
+            });
+    connect(m_process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+        if (m_outputFile) {
+            m_outputFile->write(QStringLiteral("process error %1: %2\n")
+                                    .arg(int(error))
+                                    .arg(m_process ? m_process->errorString() : QString())
+                                    .toUtf8());
+            m_outputFile->flush();
+        }
+    });
+    connect(m_process, &QProcess::readyReadStandardOutput, this, [this]() {
+        if (m_process && m_outputFile) {
+            m_outputFile->write(m_process->readAllStandardOutput());
+            m_outputFile->flush();
+        }
     });
 
     const QStringList args = m_command.split(QLatin1Char(' '), Qt::SkipEmptyParts);

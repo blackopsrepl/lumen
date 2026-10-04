@@ -2,9 +2,12 @@ import QtQuick
 import QtQuick.Window
 
 // The session application for the spike: an ordinary Wayland client that knows
-// nothing about Lumen. A click anywhere in it changes its window title, which
-// is how the harness proves that synthesized input actually reached the client
-// — the title is observed back through the compositor's toplevel.
+// nothing about Lumen.
+//
+// The title is the probe. It changes on hover, press, release and click, so the
+// compositor can tell exactly how far a synthesized input event travelled: if a
+// click does not produce the CLICKED title, the title it does show says whether
+// the pointer entered the client and whether the press arrived.
 Window {
     id: w
     visible: true
@@ -15,6 +18,10 @@ Window {
 
     MouseArea {
         anchors.fill: parent
+        hoverEnabled: true
+        onEntered: if (w.title === "SPIKE-FIXTURE") w.title = "SPIKE-FIXTURE-ENTERED"
+        onPressed: w.title = "SPIKE-FIXTURE-PRESSED"
+        onReleased: w.title = "SPIKE-FIXTURE-RELEASED"
         onClicked: w.title = "SPIKE-FIXTURE-CLICKED"
     }
 

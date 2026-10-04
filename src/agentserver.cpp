@@ -10,6 +10,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointF>
+#include <QSharedPointer>
 #include <QLocalServer>
 #include <QLocalSocket>
 
@@ -45,22 +46,31 @@ bool AgentServer::listen(const QString &path) {
 
 void AgentServer::handleConnection(QLocalSocket *socket) {
     connect(socket, &QLocalSocket::disconnected, socket, &QLocalSocket::deleteLater);
-    connect(socket, &QLocalSocket::readyRead, this, [this, socket]() {
-        const QByteArray line = socket->readAll().trimmed();
-        if (line.isEmpty()) {
-            return;
+    // Requests are newline-delimited, and a client that sends more than one on a
+    // single connection has them arrive in the same read. Parsing the whole read
+    // as one document would see the concatenation and reject it as invalid JSON,
+    // which silently turns every such request into an error.
+    auto buffer = QSharedPointer<QByteArray>::create();
+    connect(socket, &QLocalSocket::readyRead, this, [this, socket, buffer]() {
+        *buffer += socket->readAll();
+        int newline = buffer->indexOf('\n');
+        while (newline >= 0) {
+            const QByteArray line = buffer->left(newline).trimmed();
+            buffer->remove(0, newline + 1);
+            if (!line.isEmpty()) {
+                QJsonParseError parseError;
+                const QJsonDocument request = QJsonDocument::fromJson(line, &parseError);
+                QJsonObject response;
+                if (parseError.error != QJsonParseError::NoError) {
+                    response[QStringLiteral("error")] = QStringLiteral("invalid JSON request");
+                } else {
+                    response = dispatch(request.object());
+                }
+                socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + "\n");
+                socket->flush();
+            }
+            newline = buffer->indexOf('\n');
         }
-        QJsonParseError parseError;
-        const QJsonDocument request = QJsonDocument::fromJson(line, &parseError);
-        QJsonObject response;
-        if (parseError.error != QJsonParseError::NoError) {
-            response[QStringLiteral("error")] = QStringLiteral("invalid JSON request");
-        } else {
-            response = dispatch(request.object());
-        }
-        socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + "\n");
-        socket->flush();
-        socket->disconnectFromServer();
     });
 }
 
@@ -137,6 +147,25 @@ QJsonObject AgentServer::dispatch(const QJsonObject &request) {
     if (command == QLatin1String("ack")) {
         response[QStringLiteral("ok")] =
             m_feedback->ack(name, request[QStringLiteral("id")].toInteger());
+        return response;
+    }
+    if (command == QLatin1String("add")) {
+        // The human's note arrives from the viewer, carrying the annotated
+        // region as a base64 PNG so the note still shows what was meant after
+        // the surface has moved on.
+        const QByteArray image = QByteArray::fromBase64(
+            request[QStringLiteral("screenshot")].toString().toLatin1());
+        const QJsonObject note = m_feedback->add(name, request[QStringLiteral("author")].toString(),
+                                                 request[QStringLiteral("comment")].toString(),
+                                                 image);
+        response[QStringLiteral("note")] = note;
+        return response;
+    }
+    if (command == QLatin1String("note-image")) {
+        // The screenshot a note carries, base64-encoded for the viewer.
+        const QByteArray image =
+            m_feedback->screenshot(name, request[QStringLiteral("id")].toInteger());
+        response[QStringLiteral("image")] = QString::fromLatin1(image.toBase64());
         return response;
     }
     response[QStringLiteral("error")] =

@@ -46,13 +46,13 @@ qt_add_executable(lumen
     src/viewer/main.cpp
     src/viewer/daemonclient.cpp
     src/viewer/daemoncontrol.cpp
+    src/viewer/theme.cpp
 )
 qt_add_qml_module(lumen
     URI Lumen
     VERSION 1.0
     QML_FILES
         qml/Main.qml
-        qml/Theme.qml
         qml/SessionSidebar.qml
         qml/ControlBar.qml
         qml/SessionCanvas.qml
@@ -60,8 +60,10 @@ qt_add_qml_module(lumen
         qml/FeedbackPanel.qml
         qml/FeedbackComposer.qml
         qml/SettingsPanel.qml
+    SOURCES
+        src/viewer/theme.h
 )
-target_include_directories(lumen PRIVATE src)
+target_include_directories(lumen PRIVATE src src/viewer)
 target_link_libraries(lumen PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2
     Qt6::Network Qt6::DBus

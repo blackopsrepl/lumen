@@ -1,10 +1,13 @@
 #include "daemonclient.h"
 
+#include <QBuffer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QStandardPaths>
+#include <QTimer>
+#include <QtGlobal>
 
 namespace {
 
@@ -39,19 +42,60 @@ DaemonClient::DaemonClient(QObject *parent) : QObject(parent) {
         emit connectedChanged();
     });
     connect(m_control, &QLocalSocket::readyRead, this, [this]() {
-        const QJsonObject response =
-            QJsonDocument::fromJson(m_control->readAll().trimmed()).object();
-        if (response.contains(QStringLiteral("sessions"))) {
-            m_sessions = response[QStringLiteral("sessions")].toArray().toVariantList();
-            emit sessionsChanged();
+        m_controlBuffer += m_control->readAll();
+        // Responses are newline-delimited and a burst of them can arrive
+        // together, so each complete line is handled on its own.
+        int newline = m_controlBuffer.indexOf('\n');
+        while (newline >= 0) {
+            const QByteArray line = m_controlBuffer.left(newline).trimmed();
+            m_controlBuffer.remove(0, newline + 1);
+            if (!line.isEmpty()) {
+                handleResponse(QJsonDocument::fromJson(line).object());
+            }
+            newline = m_controlBuffer.indexOf('\n');
         }
     });
+
+    // Connect immediately, and keep refreshing: the daemon may not be running
+    // yet when the viewer starts, and a session's state changes on its own
+    // (an agent starts one, a client exits). Nothing else reconnects, so a
+    // viewer that never dials here would show an empty list forever.
+    QTimer *poll = new QTimer(this);
+    poll->setInterval(1000);
+    connect(poll, &QTimer::timeout, this, &DaemonClient::refresh);
+    poll->start();
+    refresh();
+}
+
+void DaemonClient::handleResponse(const QJsonObject &response) {
+    if (response.contains(QStringLiteral("sessions"))) {
+        m_sessions = response[QStringLiteral("sessions")].toArray().toVariantList();
+        emit sessionsChanged();
+    }
+    if (response.contains(QStringLiteral("notes"))) {
+        // The reply to a feedback request; it belongs to the session that asked,
+        // which may not be the one selected now.
+        const QString session = m_notesSession.isEmpty() ? m_activeName : m_notesSession;
+        m_notes.insert(session, response[QStringLiteral("notes")].toArray().toVariantList());
+        emit notesChanged(session);
+    }
+    if (response.contains(QStringLiteral("note"))) {
+        // A note the human just added is echoed back, so the panel can show it
+        // without waiting a full poll interval.
+        const QVariantMap note = response[QStringLiteral("note")].toObject().toVariantMap();
+        QVariantList notes = m_notes.value(m_activeName);
+        notes.append(note);
+        m_notes.insert(m_activeName, notes);
+        emit notesChanged(m_activeName);
+    }
 }
 
 void DaemonClient::send(const QByteArray &request) {
     if (m_control->state() != QLocalSocket::ConnectedState) {
         m_control->connectToServer(controlSocketPath());
         if (!m_control->waitForConnected(1000)) {
+            qWarning("lumen: viewer cannot reach %s: %s",
+                     qPrintable(controlSocketPath()), qPrintable(m_control->errorString()));
             return;
         }
     }
@@ -161,4 +205,69 @@ void DaemonClient::stopSession(const QString &name) {
     send(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("stop")},
                                    {QStringLiteral("name"), name}})
              .toJson(QJsonDocument::Compact));
+}
+
+QVariantList DaemonClient::notes(const QString &session) { return m_notes.value(session); }
+
+void DaemonClient::refreshNotes(const QString &session) {
+    if (session.isEmpty()) {
+        return;
+    }
+    // The reply is matched to the session that asked, so the active session is
+    // tracked while the request is in flight.
+    m_notesSession = session;
+    send(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("feedback")},
+                                   {QStringLiteral("name"), session},
+                                   {QStringLiteral("consume"), false}})
+             .toJson(QJsonDocument::Compact));
+}
+
+void DaemonClient::addNote(const QString &session, const QString &comment, const QImage &region) {
+    if (session.isEmpty() || comment.trimmed().isEmpty()) {
+        return;
+    }
+    // The annotated region is encoded here, at send time, so the note carries
+    // the pixels the human was looking at rather than coordinates that a
+    // redraw would move out from under it.
+    QByteArray png;
+    if (!region.isNull()) {
+        QBuffer buffer(&png);
+        buffer.open(QIODevice::WriteOnly);
+        region.save(&buffer, "PNG");
+    }
+    send(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("add")},
+                                   {QStringLiteral("name"), session},
+                                   {QStringLiteral("author"), QStringLiteral("human")},
+                                   {QStringLiteral("comment"), comment},
+                                   {QStringLiteral("screenshot"),
+                                    QString::fromLatin1(png.toBase64())}})
+             .toJson(QJsonDocument::Compact));
+}
+
+void DaemonClient::resolveNote(const QString &session, int id) {
+    send(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("ack")},
+                                   {QStringLiteral("name"), session},
+                                   {QStringLiteral("id"), id}})
+             .toJson(QJsonDocument::Compact));
+}
+
+QString DaemonClient::noteImage(const QString &session, int id) {
+    // Notes carry their pixels in the daemon's store; the viewer fetches them on
+    // demand rather than holding every image in memory.
+    QLocalSocket socket;
+    socket.connectToServer(controlSocketPath());
+    if (!socket.waitForConnected(1000)) {
+        return QString();
+    }
+    socket.write(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("note-image")},
+                                           {QStringLiteral("name"), session},
+                                           {QStringLiteral("id"), id}})
+                     .toJson(QJsonDocument::Compact) + "\n");
+    socket.flush();
+    if (!socket.waitForReadyRead(3000)) {
+        return QString();
+    }
+    return QJsonDocument::fromJson(socket.readAll().trimmed())
+        .object()[QStringLiteral("image")]
+        .toString();
 }

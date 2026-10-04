@@ -16,6 +16,9 @@ ApplicationWindow {
 
     property string activeName: ""
     property bool humanControlling: false
+    property bool annotating: false
+    /// The region the human drew, held until the note text arrives.
+    property var pendingRect: null
     property var activeSession: {
         for (const s of daemon.sessions) {
             if (s.name === window.activeName) return s
@@ -104,6 +107,19 @@ ApplicationWindow {
 
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.lineSoft }
 
+                // --- feedback ---
+                FeedbackPanel {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 260
+                    sessionName: window.activeName
+                    notes: daemon.notes(window.activeName)
+                    onResolveRequested: (id) => {
+                        daemon.resolveNote(window.activeName, id)
+                    }
+                }
+
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.lineSoft }
+
                 // --- settings ---
                 SettingsPanel {
                     Layout.fillWidth: true
@@ -124,12 +140,14 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 activeSession: window.activeSession
                 humanControlling: window.humanControlling
+                annotating: window.annotating
                 onTakeControl: window.humanControlling = true
                 onReleaseControl: window.humanControlling = false
                 onFullscreenRequested: {
                     if (window.visibility === Window.FullScreen) window.showNormal()
                     else window.showFullScreen()
                 }
+                onAnnotateToggled: window.annotating = !window.annotating
             }
 
             Item {
@@ -146,6 +164,31 @@ ApplicationWindow {
                     humanControlling: window.humanControlling
                     onPointerDown: (x, y) => daemon.click(x, y)
                     onPointerUp: (x, y) => daemon.click(x, y)
+                }
+
+                // The annotation layer and the note composer. A drawn region is
+                // cropped out of the frame the human was looking at, so the note
+                // still shows what they meant after the session has moved on.
+                AnnotationOverlay {
+                    id: overlay
+                    anchors.fill: parent
+                    annotating: window.annotating
+                    sessionCanvas: canvas
+                    onSendRequested: (rect) => {
+                        window.pendingRect = rect
+                        composer.open()
+                    }
+                }
+
+                FeedbackComposer {
+                    id: composer
+                    visible: false
+                    anchors.centerIn: parent
+                    onSendRequested: (comment) => {
+                        window.sendNote(comment)
+                        composer.close()
+                    }
+                    onCancelRequested: composer.close()
                 }
 
                 // Empty state.
@@ -213,7 +256,9 @@ ApplicationWindow {
     function connectSession(name) {
         window.activeName = name
         window.humanControlling = false
+        window.annotating = false
         daemon.setActiveName(name)
+        daemon.refreshNotes(name)
     }
 
     function createSession() {
@@ -226,10 +271,52 @@ ApplicationWindow {
         window.connectSession(name)
     }
 
-    Keys.onPressed: (event) => {
-        if (event.key === Qt.Key_Escape) {
-            if (window.humanControlling) window.humanControlling = false
-        }
+    // Send the drawn region and the note text to the daemon. The pixels are
+    // taken from the frame the human was looking at, so the note keeps showing
+    // what they meant even after the session redraws.
+    function sendNote(comment) {
+        if (!comment || !window.activeName) return
+        const region = window.captureRegion(window.pendingRect)
+        daemon.addNote(window.activeName, comment, region)
+        window.annotating = false
+        overlay.clear()
+        window.pendingRect = null
+    }
+
+    // Crop the pending region out of the displayed frame, in frame pixels.
+    function captureRegion(rect) {
+        if (!rect || !daemon.frame) return null
+        const img = daemon.frame
+        if (!img.width || !img.height) return null
+        // The stage preserves aspect ratio, so the displayed frame is inset
+        // within the canvas; the region is in stage coordinates and must be
+        // mapped back to frame pixels before cropping.
+        const stageW = stageArea.width
+        const stageH = stageArea.height
+        const scale = Math.min(stageW / img.width, stageH / img.height)
+        const offsetX = (stageW - img.width * scale) / 2
+        const offsetY = (stageH - img.height * scale) / 2
+        const x = Math.max(0, Math.round((rect.x - offsetX) / scale))
+        const y = Math.max(0, Math.round((rect.y - offsetY) / scale))
+        const w = Math.max(1, Math.round(rect.width / scale))
+        const h = Math.max(1, Math.round(rect.height / scale))
+        return img.copy(x, y, Math.min(w, img.width - x), Math.min(h, img.height - y))
+    }
+
+    // Escape releases human control. The handler lives on a Shortcut rather than
+    // as Keys.onPressed on the window: an attached Keys property only exists on
+    // an Item, and the window is not one.
+    Shortcut {
+        sequence: StandardKey.Cancel
+        enabled: window.humanControlling
+        onActivated: window.humanControlling = false
+    }
+
+    // One probe for the palette: if Theme did not resolve, its colours are
+    // undefined, which is otherwise invisible — the window simply renders in the
+    // default palette with no error of its own.
+    Component.onCompleted: {
+        console.log("lumen: Theme.bg =", Theme.bg)
     }
 
     Text {

@@ -188,8 +188,14 @@ bool LumenCompositor::click(const QString &session, const QPointF &point) {
     auto *view = m_viewBySession.value(session);
     QWaylandSeat *seat = this->seat();
     if (!view || !view->surface() || !seat) {
+        qWarning("lumen-click: session='%s' view=%p surface=%p seat=%p", qPrintable(session),
+                 (void *)view, view ? (void *)view->surface() : nullptr, (void *)seat);
         return false;
     }
+    qWarning("lumen-click: session='%s' view=%p surface=%p size=%dx%d seat=%p at %.0f,%.0f",
+             qPrintable(session), (void *)view, (void *)view->surface(),
+             view->surface()->destinationSize().width(),
+             view->surface()->destinationSize().height(), (void *)seat, point.x(), point.y());
     // Exactly the sequence Qt's own compositor uses: give the client keyboard
     // focus, tell it where the pointer is, then press and release. A press is
     // only delivered to the seat's current mouse focus, so the move must come

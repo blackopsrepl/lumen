@@ -9,6 +9,7 @@
 #pragma once
 
 #include <QObject>
+#include <QFile>
 #include <QPointer>
 #include <QProcess>
 #include <QString>
@@ -73,4 +74,5 @@ private:
     QProcess *m_process = nullptr;
     QProcess *m_dbus = nullptr;
     QProcess *m_registryd = nullptr;
+    QFile *m_outputFile = nullptr;
 };

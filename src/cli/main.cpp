@@ -90,8 +90,14 @@ int main(int argc, char **argv) {
     } else if (command == QLatin1String("type")) {
         request[QStringLiteral("text")] = argument;
     } else if (command == QLatin1String("click")) {
-        request[QStringLiteral("x")] = parser.value(xOption).toDouble();
-        request[QStringLiteral("y")] = parser.value(yOption).toDouble();
+        // Coordinates are accepted positionally after the name, so the common
+        // form `lumen click <session> <x> <y>` works without the options.
+        request[QStringLiteral("x")] = parser.isSet(xOption)
+                                           ? parser.value(xOption).toDouble()
+                                           : args.value(2).toDouble();
+        request[QStringLiteral("y")] = parser.isSet(yOption)
+                                           ? parser.value(yOption).toDouble()
+                                           : args.value(3).toDouble();
     } else if (command == QLatin1String("feedback")) {
         request[QStringLiteral("consume")] = parser.isSet(consumeOption);
     } else if (command == QLatin1String("ack")) {
