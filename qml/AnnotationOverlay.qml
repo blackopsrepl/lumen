@@ -64,6 +64,12 @@ Item {
         // onPositionChanged never did, leaving a 0x0 selection that read as a
         // click which drew nothing.
         preventStealing: true
+        // Hover tracking, not decoration: without it this area receives no
+        // movement events at all until a button is already down, so a pointer
+        // arriving from the sidebar never registers and the first drag is
+        // swallowed. The selection needs the same events whether or not the
+        // button happens to be up when they arrive.
+        hoverEnabled: true
         onPressed: (mouse) => {
             overlay.drawStart = Qt.point(mouse.x, mouse.y)
             overlay.drawEnd = overlay.drawStart
