@@ -46,7 +46,7 @@ void TestFrameRender::frame_renders_headless() {
     fixture.setProcessEnvironment(env);
     fixture.start(QCoreApplication::applicationDirPath() + "/qt_fixture",
                   QStringList() << QCoreApplication::applicationDirPath() +
-                                       "/../src/spike/fixture.qml");
+                                       "/../tests/fixtures/fixture.qml");
     compositor.expectProcess("fixture", fixture.processId());
     QVERIFY(fixture.waitForStarted(5000));
 

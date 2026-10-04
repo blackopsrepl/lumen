@@ -103,29 +103,10 @@ lumen_test(test_integration src/compositor.cpp)
 lumen_test(test_framerender src/compositor.cpp)
 
 # ---------------------------------------------------------------------------
-# The compositor spike is kept as a live regression test of the one
-# architectural bet the project rests on.
+# The session client the integration and frame tests host. It is an ordinary
+# Wayland application that knows nothing about Lumen: the title is the probe,
+# changing on hover, press, release, click and key, so a test can tell exactly
+# how far a synthesized input event travelled.
 # ---------------------------------------------------------------------------
-qt_add_executable(lumen-spike src/spike/main.cpp)
-qt_add_qml_module(lumen-spike
-    URI LumenSpike
-    VERSION 1.0
-    QML_FILES src/spike/Spike.qml
-)
-target_compile_definitions(lumen-spike PRIVATE
-    SPIKE_QML_PATH="${CMAKE_CURRENT_SOURCE_DIR}/src/spike/Spike.qml"
-    FIXTURE_BIN="$<TARGET_FILE:qt_fixture>"
-    FIXTURE_QML="${CMAKE_CURRENT_SOURCE_DIR}/src/spike/fixture.qml"
-)
-target_link_libraries(lumen-spike PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick
-    Qt6::WaylandCompositor Qt6::Test
-)
-
-qt_add_executable(qt_fixture src/spike/qt_fixture.cpp)
+qt_add_executable(qt_fixture tests/fixtures/qt_fixture.cpp)
 target_link_libraries(qt_fixture PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick)
-
-# The accessibility fixture: named controls whose tree an agent can read and act
-# on, reused from the project's own test assets.
-qt_add_executable(qt_a11y_fixture tests/fixtures/qt_app.cpp)
-target_link_libraries(qt_a11y_fixture PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick)
