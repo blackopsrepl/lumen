@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 
 // Daemon settings.
 //
@@ -28,7 +29,7 @@ Dialog {
 
     header: Rectangle {
         color: Theme.panel
-        height: 44
+        implicitHeight: 44
         Text {
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left
@@ -46,16 +47,11 @@ Dialog {
         }
     }
 
-    contentItem: Column {
+    // A ColumnLayout computes its implicit size from its children, which is what
+    // a Dialog needs in order to size itself; a plain Column does not, and the
+    // content is silently clipped.
+    contentItem: ColumnLayout {
         spacing: 14
-        // Explicit sizing: a Dialog does not lay out its content item for you,
-        // so without padding and a width the content is clipped. The height is
-        // left to the Column, which derives it from its children.
-        leftPadding: 16
-        rightPadding: 16
-        topPadding: 16
-        bottomPadding: 16
-        width: 420
 
         Text {
             text: "Daemon"
@@ -67,16 +63,16 @@ Dialog {
         }
 
         Text {
+            Layout.preferredWidth: 380
+            wrapMode: Text.WordWrap
             text: "The daemon hosts every session and keeps running when this window is "
                   + "closed. It is managed as a systemd user service."
-            width: 380
-            wrapMode: Text.WordWrap
             color: Theme.muted
             font.family: Theme.fontSans
             font.pixelSize: Theme.fontSize
         }
 
-        Row {
+        RowLayout {
             spacing: 8
             Button {
                 text: daemonControl.active ? "Stop daemon" : "Start daemon"
@@ -91,17 +87,17 @@ Dialog {
             }
         }
 
-        Row {
+        RowLayout {
             spacing: 8
             Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
-                width: 8
-                height: 8
+                Layout.alignment: Qt.AlignVCenter
+                implicitWidth: 8
+                implicitHeight: 8
                 radius: 4
                 color: daemonControl.active ? Theme.accent : Theme.faint
             }
             Text {
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.alignment: Qt.AlignVCenter
                 text: (daemonControl.active ? "Running" : "Stopped")
                       + (daemonControl.enabled ? " · starts at login" : "")
                 color: Theme.muted

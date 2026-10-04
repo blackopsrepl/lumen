@@ -35,6 +35,8 @@ Item {
     }
 
     visible: annotating
+    // Only intercept the pointer while a region is actually being drawn;
+    // otherwise this layer would swallow every click meant for the session.
     enabled: annotating
 
     Canvas {

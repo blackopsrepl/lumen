@@ -25,10 +25,15 @@ Item {
         fillMode: Image.PreserveAspectFit
         smooth: true
         cache: false
-        asynchronous: true
+        // Synchronous on purpose: the provider returns an in-memory QImage, so
+        // loading is immediate — and an asynchronous load would be cancelled by
+        // the next frame's URL before it ever completed, leaving the view blank.
+        asynchronous: false
     }
 
-    // Forward clicks to the daemon, mapped to surface coordinates.
+    // Forward clicks to the daemon, mapped to surface coordinates. This is the
+    // human's input path into the session, and the agent's travels the same
+    // route through the daemon's socket, so the two cannot diverge.
     MouseArea {
         id: pointer
         anchors.fill: parent
@@ -44,6 +49,24 @@ Item {
             stage.pointerUp(surface.x, surface.y)
         }
     }
+
+    /// Deliver a key press to the session. Text keys go to the daemon as text,
+    /// so the client's own keyboard handling decides what they mean.
+    function sendKey(event) {
+        if (event.text.length > 0) {
+            stage.keyTyped(event.text)
+            event.accepted = true
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            stage.keyTyped("\n")
+            event.accepted = true
+        } else if (event.key === Qt.Key_Backspace) {
+            stage.keyTyped("\b")
+            event.accepted = true
+        }
+    }
+
+    signal pointerMoved(real x, real y)
+    signal keyTyped(string text)
 
     // Canvas coordinates to surface coordinates.
     function mapToSurface(x, y) {

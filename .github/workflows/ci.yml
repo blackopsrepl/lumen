@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
   workflow_dispatch:
   # Reused by release.yml so a tag cannot publish without passing these gates.
@@ -14,51 +14,34 @@ concurrency:
 
 jobs:
   check:
+    # Lumen is a Qt application: it needs Qt 6 with the Wayland compositor
+    # modules, a compiler and cmake, and nothing else. There is no Rust
+    # toolchain, no browser and no container image to build.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      # The same gates the Forgejo workflow runs; the Makefile owns their order.
-      - name: Toolchain
-        run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
-
-      - name: Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Test dependencies
-        run: |
-          npm ci
-          # GitHub runners do not ship Chromium's runtime libraries.
-          npx playwright install-deps chromium
-
-      - name: Desktop dependencies
+      - name: Qt and build dependencies
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends curl gnupg sway wtype grim xwayland dbus at-spi2-core
-          sudo install -d -m 0755 /etc/apt/keyrings
-          curl -4fsSL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x45FECBE587307AAA3F0A4BE9FC44813D2A7788B7' \
-            | sudo gpg --batch --dearmor -o /etc/apt/keyrings/avengemedia-danklinux.gpg
-          test "$(sudo gpg --show-keys --with-colons /etc/apt/keyrings/avengemedia-danklinux.gpg | awk -F: '$1 == "fpr" { print $10; exit }')" = '45FECBE587307AAA3F0A4BE9FC44813D2A7788B7'
-          printf '%s\n' \
-            'deb [signed-by=/etc/apt/keyrings/avengemedia-danklinux.gpg] https://ppa.launchpadcontent.net/avengemedia/danklinux/ubuntu questing main' \
-            'deb http://archive.ubuntu.com/ubuntu/ questing main universe' \
-            'deb http://archive.ubuntu.com/ubuntu/ questing-updates main universe' \
-            'deb http://security.ubuntu.com/ubuntu questing-security main universe' \
-            | sudo tee /etc/apt/sources.list.d/ubuntu-questing.list >/dev/null
-           sudo apt-get update
-           sudo apt-get install -y --no-install-recommends \
-             quickshell qml6-module-qtquick-controls qml6-module-qtquick-layouts
-          command -v sway
-          command -v Xwayland
-          command -v quickshell
-          command -v wtype
-          command -v grim
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            qt6-base-dev qt6-declarative-dev qt6-wayland-dev \
+            qt6-wayland-dev-tools qt6-base-dev-tools \
+            libqt6sql6-sqlite libqt6dbus6 \
+            dbus at-spi2-core libgl1-mesa-dev
 
-      - name: Gates
-        run: make ci
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      # The tests run a compositor and host a real Wayland client, so they need
+      # a display stack but never a visible window.
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QPA_PLATFORMTHEME: ""
+        run: cd build && ctest --output-on-failure

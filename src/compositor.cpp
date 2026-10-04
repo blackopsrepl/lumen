@@ -17,6 +17,7 @@
 #include "compositor.h"
 
 #include <QImage>
+#include <QKeyEvent>
 #include <QPointF>
 #include <QRegion>
 
@@ -149,8 +150,13 @@ void LumenCompositor::adoptToplevel(QWaylandXdgToplevel *toplevel) {
     // Acknowledge it at once so the client starts committing frames. The
     // two-argument overload takes QList<State>, which an empty brace list
     // cannot disambiguate, so it is spelled out explicitly.
+    //
+    // ActivatedState matters for input: a client that is never told it is
+    // active does not consider itself focused, so its own items refuse
+    // keyboard focus and delivered keys are dropped without a trace.
     toplevel->sendConfigure(QSize(kOutputWidth, kOutputHeight),
-                            QList<QWaylandXdgToplevel::State>());
+                            QList<QWaylandXdgToplevel::State>()
+                                << QWaylandXdgToplevel::ActivatedState);
 
     connect(toplevel, &QWaylandXdgToplevel::titleChanged, this, [this, session, toplevel]() {
         emit titleChanged(session, toplevel->title());
@@ -188,14 +194,8 @@ bool LumenCompositor::click(const QString &session, const QPointF &point) {
     auto *view = m_viewBySession.value(session);
     QWaylandSeat *seat = this->seat();
     if (!view || !view->surface() || !seat) {
-        qWarning("lumen-click: session='%s' view=%p surface=%p seat=%p", qPrintable(session),
-                 (void *)view, view ? (void *)view->surface() : nullptr, (void *)seat);
         return false;
     }
-    qWarning("lumen-click: session='%s' view=%p surface=%p size=%dx%d seat=%p at %.0f,%.0f",
-             qPrintable(session), (void *)view, (void *)view->surface(),
-             view->surface()->destinationSize().width(),
-             view->surface()->destinationSize().height(), (void *)seat, point.x(), point.y());
     // Exactly the sequence Qt's own compositor uses: give the client keyboard
     // focus, tell it where the pointer is, then press and release. A press is
     // only delivered to the seat's current mouse focus, so the move must come
@@ -214,15 +214,20 @@ bool LumenCompositor::type(const QString &session, const QString &text) {
         return false;
     }
     seat->setKeyboardFocus(view->surface());
+    // A full key event carries the text itself, so the client does not have to
+    // map a scancode through its keymap to get the character. Plain unicode key
+    // events depend on that translation, and a client whose keymap has not been
+    // delivered drops them silently.
     for (const QChar &ch : text) {
-        if (ch == QLatin1Char('\n')) {
-            seat->sendKeyPressEvent(Qt::Key_Return);
-            seat->sendKeyReleaseEvent(Qt::Key_Return);
-        } else {
-            const uint code = ch.unicode();
-            seat->sendUnicodeKeyPressEvent(code);
-            seat->sendUnicodeKeyReleaseEvent(code);
-        }
+        const int key = ch == QLatin1Char('\n') ? Qt::Key_Return
+                      : ch == QLatin1Char('\b') ? Qt::Key_Backspace
+                                                : int(ch.toUpper().unicode());
+        QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier,
+                        ch == QLatin1Char('\n') || ch == QLatin1Char('\b') ? QString()
+                                                                          : QString(ch));
+        seat->sendFullKeyEvent(&press);
+        QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier, QString());
+        seat->sendFullKeyEvent(&release);
     }
     return true;
 }

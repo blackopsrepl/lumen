@@ -165,6 +165,7 @@ ApplicationWindow {
                     humanControlling: window.humanControlling
                     onPointerDown: (x, y) => daemon.click(x, y)
                     onPointerUp: (x, y) => daemon.click(x, y)
+                    onKeyTyped: (text) => daemon.type(text)
                 }
 
                 // The annotation layer and the note composer. A drawn region is
@@ -311,6 +312,16 @@ ApplicationWindow {
         sequence: StandardKey.Cancel
         enabled: window.humanControlling
         onActivated: window.humanControlling = false
+    }
+
+    // Keyboard input goes to the session while the human holds control. The
+    // handler is on the stage rather than the window because an attached Keys
+    // property only exists on an Item.
+    Item {
+        id: keySink
+        anchors.fill: parent
+        focus: window.humanControlling
+        Keys.onPressed: (event) => canvas.sendKey(event)
     }
 
     // Daemon configuration, reached from the gear in the toolbar.
