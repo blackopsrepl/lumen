@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.14.1](https://github.com/blackopsrepl/lumen/compare/v0.14.0...v0.14.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **release:** take the notes from the changelog, not generated notes ([8f18cf7](https://github.com/blackopsrepl/lumen/commit/8f18cf7470fe948c30ae352a3fa770794129afbc))
+* **viewer:** every session opens fitted, not just the first ([0e331fa](https://github.com/blackopsrepl/lumen/commit/0e331fa535e9c2838538d4b0c3ede960bac20e1d))
+* **viewer:** notes send again, and the zoom the old viewer had ([c2272ab](https://github.com/blackopsrepl/lumen/commit/c2272abd1408a6d5508a7d711735336aae34b827))
+
 ## [0.14.0](https://github.com/blackopsrepl/lumen/compare/v0.13.7...v0.14.0) (2026-10-04)
 
 
