@@ -50,9 +50,10 @@ ApplicationWindow {
 
         // --- sidebar ---
         Rectangle {
-            Layout.preferredWidth: 280
+            Layout.preferredWidth: 288
             Layout.fillHeight: true
-            color: Theme.panel
+            clip: true
+            color: Theme.metalBottom
 
             ColumnLayout {
                 anchors.fill: parent
@@ -107,11 +108,23 @@ ApplicationWindow {
                 }
             }
 
-            Item {
-                id: stageArea
+            // The stage: a recessed well, so the frame sits in the machine
+            // rather than on it. One hairline border, no bright rim.
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                Layout.margins: 10
                 clip: true
+                radius: Theme.radius
+                border.width: 1
+                border.color: Theme.metalSeam
+                color: Theme.wellTop
+
+                Item {
+                    id: stageArea
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    clip: true
 
                 SessionCanvas {
                     id: canvas
@@ -207,6 +220,7 @@ ApplicationWindow {
                             font.pixelSize: Theme.fontSize
                         }
                     }
+                }
                 }
             }
         }

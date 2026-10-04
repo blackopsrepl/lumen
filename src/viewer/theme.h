@@ -36,7 +36,32 @@ class Theme : public QObject {
     Q_PROPERTY(QColor humanInk READ humanInk CONSTANT)
     Q_PROPERTY(QColor danger READ danger CONSTANT)
 
+    // Interaction states. A control needs a resting, a hovered and a pressed
+    // surface, plus a focus ring, or it reads as an unstyled default widget
+    // sitting in the middle of a designed window.
+    Q_PROPERTY(QColor hover READ hover CONSTANT)
+    Q_PROPERTY(QColor press READ press CONSTANT)
+    Q_PROPERTY(QColor lineStrong READ lineStrong CONSTANT)
+    Q_PROPERTY(QColor focusRing READ focusRing CONSTANT)
+    Q_PROPERTY(QColor scrim READ scrim CONSTANT)
+
+    // A restrained chrome ramp. The reference is a soft machined surface, not a
+    // heavy gradient: the stops differ by a few percent, enough to give a button
+    // a lit top and a shaded bottom without the surface becoming the loudest
+    // thing on screen. The tones sit on the palette's own neutrals.
+    Q_PROPERTY(QColor metalTop READ metalTop CONSTANT)
+    Q_PROPERTY(QColor metalMid READ metalMid CONSTANT)
+    Q_PROPERTY(QColor metalBottom READ metalBottom CONSTANT)
+    Q_PROPERTY(QColor metalEdge READ metalEdge CONSTANT)
+    Q_PROPERTY(QColor metalSeam READ metalSeam CONSTANT)
+    Q_PROPERTY(QColor metalTopActive READ metalTopActive CONSTANT)
+    Q_PROPERTY(QColor metalBottomActive READ metalBottomActive CONSTANT)
+    Q_PROPERTY(QColor wellTop READ wellTop CONSTANT)
+    Q_PROPERTY(QColor wellBottom READ wellBottom CONSTANT)
+
     Q_PROPERTY(int radius READ radius CONSTANT)
+    Q_PROPERTY(int radiusLarge READ radiusLarge CONSTANT)
+    Q_PROPERTY(int controlHeight READ controlHeight CONSTANT)
 
     Q_PROPERTY(QString fontMono READ fontMono CONSTANT)
     Q_PROPERTY(QString fontSans READ fontSans CONSTANT)
@@ -70,7 +95,27 @@ class Theme : public QObject {
     QColor humanInk() const { return QColor(QStringLiteral("#231804")); }
     QColor danger() const { return QColor(QStringLiteral("#d9776a")); }
 
-    int radius() const { return 4; }
+    QColor hover() const { return QColor(QStringLiteral("#2c2a26")); }
+    QColor press() const { return QColor(QStringLiteral("#171614")); }
+    QColor lineStrong() const { return QColor(QStringLiteral("#3b3833")); }
+    QColor focusRing() const { return QColor(163, 194, 200, 110); }
+    QColor scrim() const { return QColor(8, 8, 7, 150); }
+
+    // Soft machined chrome: the stops sit within a few percent of each other.
+    QColor metalTop() const { return QColor(QStringLiteral("#26241f")); }
+    QColor metalMid() const { return QColor(QStringLiteral("#201e1b")); }
+    QColor metalBottom() const { return QColor(QStringLiteral("#1a1917")); }
+    QColor metalEdge() const { return QColor(QStringLiteral("#3a3731")); }
+    QColor metalSeam() const { return QColor(QStringLiteral("#141311")); }
+    QColor metalTopActive() const { return QColor(QStringLiteral("#171614")); }
+    QColor metalBottomActive() const { return QColor(QStringLiteral("#131211")); }
+    // A well is recessed: darker than the shell, and inverted top-to-bottom.
+    QColor wellTop() const { return QColor(QStringLiteral("#0d0c0b")); }
+    QColor wellBottom() const { return QColor(QStringLiteral("#121110")); }
+
+    int radius() const { return 6; }
+    int radiusLarge() const { return 10; }
+    int controlHeight() const { return 30; }
 
     QString fontMono() const { return QStringLiteral("IBM Plex Mono"); }
     QString fontSans() const { return QStringLiteral("IBM Plex Sans"); }

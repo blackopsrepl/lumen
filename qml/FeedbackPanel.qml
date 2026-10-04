@@ -88,9 +88,12 @@ Item {
                         font.family: Theme.fontMono
                         font.pixelSize: Theme.fontSizeSmall
                     }
-                    Button {
-                        text: "Resolve"
-                        flat: true
+                    IconButton {
+                        iconKind: "check"
+                        iconSize: 13
+                        implicitWidth: 26
+                        implicitHeight: 22
+                        tooltipText: "Resolve this note"
                         onClicked: panel.resolveRequested(modelData.id)
                     }
                 }

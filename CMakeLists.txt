@@ -61,6 +61,14 @@ qt_add_qml_module(lumen
         qml/FeedbackPanel.qml
         qml/FeedbackComposer.qml
         qml/SettingsPanel.qml
+        qml/ButtonSurface.qml
+        qml/FieldSurface.qml
+        qml/DialogSurface.qml
+        qml/DialogFrame.qml
+        qml/StatusDot.qml
+        qml/StyledButton.qml
+        qml/IconButton.qml
+        qml/Icon.qml
     SOURCES
         src/viewer/theme.h
 )

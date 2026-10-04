@@ -22,21 +22,33 @@ Item {
         // --- brand ---
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 14
+            Layout.margins: 16
+            Layout.topMargin: 14
+            Layout.bottomMargin: 14
             spacing: 8
             Text {
                 text: "lumen"
                 color: Theme.text
                 font.family: Theme.fontMono
                 font.pixelSize: Theme.fontSizeTitle
+                font.weight: Font.Medium
                 font.letterSpacing: 1
                 Layout.fillWidth: true
             }
-            Text {
-                text: sidebar.sessions.length + " active"
-                color: Theme.faint
-                font.family: Theme.fontMono
-                font.pixelSize: Theme.fontSizeSmall
+            Rectangle {
+                Layout.alignment: Qt.AlignVCenter
+                implicitWidth: activeLabel.width + 16
+                implicitHeight: 18
+                radius: 9
+                color: Theme.raised
+                Text {
+                    id: activeLabel
+                    anchors.centerIn: parent
+                    text: sidebar.sessions.length
+                    color: Theme.muted
+                    font.family: Theme.fontMono
+                    font.pixelSize: 10
+                }
             }
         }
 
@@ -47,6 +59,7 @@ Item {
             id: list
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.topMargin: 6
             clip: true
             model: {
                 const agents = sidebar.group(sidebar.sessions, true)
@@ -62,13 +75,13 @@ Item {
                 id: row
                 required property var modelData
                 width: list.width
-                height: row.modelData.group ? 26 : 52
+                height: row.modelData.group ? 28 : 54
 
                 Text {
                     visible: !!row.modelData.group
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
-                    anchors.leftMargin: 14
+                    anchors.leftMargin: 16
                     text: row.modelData.group || ""
                     color: Theme.faint
                     font.family: Theme.fontSans
@@ -80,16 +93,33 @@ Item {
                 Rectangle {
                     visible: !row.modelData.group
                     anchors.fill: parent
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 8
+                    anchors.topMargin: 1
+                    anchors.bottomMargin: 1
+                    radius: Theme.radius
                     color: sidebar.activeName === row.modelData.name ? Theme.raised
                          : mouse.containsMouse ? Theme.panel2 : "transparent"
+
+                    // The selection marker: a thin accent bar at the leading
+                    // edge, which reads as "current" without a second colour.
+                    Rectangle {
+                        visible: sidebar.activeName === row.modelData.name
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 2
+                        height: parent.height - 16
+                        radius: 1
+                        color: Theme.accent
+                    }
 
                     Column {
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
-                        anchors.leftMargin: 14
-                        anchors.rightMargin: 14
-                        spacing: 3
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        spacing: 4
 
                         Row {
                             spacing: 6
@@ -98,6 +128,7 @@ Item {
                                 color: Theme.text
                                 font.family: Theme.fontSans
                                 font.pixelSize: Theme.fontSize
+                                font.weight: Font.Medium
                                 elide: Text.ElideRight
                             }
                             Rectangle {
