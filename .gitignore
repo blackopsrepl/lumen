@@ -2,9 +2,10 @@
 #
 # CMake build trees. These are generated and enormous, and committing one also
 # feeds CMakeCache.txt to the secret scanner, which reads its package version
-# strings as keys.
-/build/
-/build-qt/
+# strings as keys. The pattern covers any build directory — `build`,
+# `build-qt`, `build-release` — rather than listing each by name, because a new
+# one only has to be forgotten once for a tree to land in a commit.
+/build*/
 
 # Runtime state, never committed. The daemon owns <data_dir>/run and clears it
 # at startup; the feedback database beside it does persist and is still not
