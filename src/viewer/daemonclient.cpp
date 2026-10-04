@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
+#include <QRect>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QtGlobal>

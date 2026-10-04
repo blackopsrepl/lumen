@@ -8,6 +8,7 @@
 
 #include <QDeadlineTimer>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcessEnvironment>
