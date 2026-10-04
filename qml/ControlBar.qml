@@ -15,6 +15,7 @@ Item {
     signal fullscreenRequested()
     signal annotateToggled()
     signal settingsRequested()
+    signal stopRequested()
 
     implicitHeight: 44
 
@@ -70,6 +71,16 @@ Item {
                 text: bar.humanControlling ? "Release control" : "Take control"
                 highlighted: bar.humanControlling
                 onClicked: bar.humanControlling ? bar.releaseControl() : bar.takeControl()
+            }
+
+            // A session is started by an agent; the human can still end the one
+            // being watched, which is the only session-owning action that makes
+            // sense from here.
+            Button {
+                text: "Stop"
+                flat: true
+                enabled: !!bar.activeSession
+                onClicked: bar.stopRequested()
             }
 
             // Settings live behind here rather than in the sidebar: the daemon

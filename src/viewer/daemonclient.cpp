@@ -212,15 +212,6 @@ QString DaemonClient::accessibility() {
     return QString();
 }
 
-void DaemonClient::createSession(const QString& name, const QString& command, bool agentOwned,
-                                 const QString& owner) {
-    send(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("ensure")},
-                                   {QStringLiteral("name"), name},
-                                   {QStringLiteral("command"), command},
-                                   {QStringLiteral("owner"), owner}})
-             .toJson(QJsonDocument::Compact));
-}
-
 void DaemonClient::stopSession(const QString& name) {
     send(QJsonDocument(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("stop")},
                                    {QStringLiteral("name"), name}})

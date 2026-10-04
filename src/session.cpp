@@ -122,6 +122,19 @@ bool Session::start(const QString& socketName, const QString& profileDir, const 
     env.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("wayland"));
     env.insert(QStringLiteral("WAYLAND_DISPLAY"), display);
     env.insert(QStringLiteral("XDG_RUNTIME_DIR"), profileDir);
+    // The compositor reads a session's pixels out of the buffer the client
+    // commits, and that only works for a shared-memory buffer. A client that
+    // renders through GL commits a dmabuf, whose pixels the compositor cannot
+    // map without a GL context — which a windowless daemon does not have — so
+    // the frame comes back null and the session streams nothing.
+    //
+    // The rendering backend is therefore the session's, not the client's
+    // choice: forcing the software rasterizer makes every session commit SHM
+    // buffers, which is what makes the stream work for any Qt application
+    // rather than only the ones that render in software already. It also keeps
+    // sessions off the GPU, which is the right default for applications being
+    // driven headlessly.
+    env.insert(QStringLiteral("QT_QUICK_BACKEND"), QStringLiteral("software"));
     if (!m_busAddress.isEmpty()) {
         env.insert(QStringLiteral("DBUS_SESSION_BUS_ADDRESS"), m_busAddress);
         // Qt only keeps its AT-SPI bridge alive when told to; on a headless

@@ -49,10 +49,8 @@ class DaemonClient : public QObject {
     Q_INVOKABLE bool type(const QString& text);
     /// The accessibility tree of the active session, as JSON text.
     Q_INVOKABLE QString accessibility();
-    /// Create a session on the daemon.
-    Q_INVOKABLE void createSession(const QString& name, const QString& command, bool agentOwned,
-                                   const QString& owner);
-    /// Stop a session on the daemon.
+    /// Stop a session on the daemon. Sessions are started by an agent, never by
+    /// the viewer, so there is no create counterpart here.
     Q_INVOKABLE void stopSession(const QString& name);
 
     /// A session's pending notes, newest last.

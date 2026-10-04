@@ -68,52 +68,6 @@ ApplicationWindow {
 
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.lineSoft }
 
-                // --- new session ---
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.margins: 12
-                    spacing: 6
-                    TextField {
-                        id: newName
-                        Layout.fillWidth: true
-                        placeholderText: "new session"
-                        color: Theme.text
-                        font.family: Theme.fontSans
-                        background: Rectangle {
-                            color: Theme.panel2; radius: Theme.radius
-                            border.color: Theme.lineSoft
-                        }
-                    }
-                    TextField {
-                        id: newCommand
-                        Layout.fillWidth: true
-                        placeholderText: "Qt app command (absolute)"
-                        color: Theme.text
-                        font.family: Theme.fontMono
-                        font.pixelSize: Theme.fontSizeSmall
-                        background: Rectangle {
-                            color: Theme.panel2; radius: Theme.radius
-                            border.color: Theme.lineSoft
-                        }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-                        Button {
-                            text: "Create"
-                            Layout.fillWidth: true
-                            onClicked: window.createSession()
-                        }
-                        Button {
-                            text: "Stop"
-                            enabled: window.activeName !== ""
-                            onClicked: daemon.stopSession(window.activeName)
-                        }
-                    }
-                }
-
-                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.lineSoft }
-
                 // --- feedback ---
                 FeedbackPanel {
                     Layout.fillWidth: true
@@ -148,6 +102,9 @@ ApplicationWindow {
                 }
                 onAnnotateToggled: window.annotating = !window.annotating
                 onSettingsRequested: settingsDialog.open()
+                onStopRequested: {
+                    if (window.activeName !== "") daemon.stopSession(window.activeName)
+                }
             }
 
             Item {
@@ -216,7 +173,7 @@ ApplicationWindow {
                             width: 360
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
-                            text: "A session is one Qt application hosted by Lumen's daemon. Create one, then an agent attaches to it by name."
+                            text: "Sessions are started by an agent with lumen-cli. Start one, then it appears here and you can watch and steer it."
                             color: Theme.muted
                             font.family: Theme.fontSans
                             font.pixelSize: Theme.fontSize
@@ -261,16 +218,6 @@ ApplicationWindow {
         window.annotating = false
         daemon.setActiveName(name)
         daemon.refreshNotes(name)
-    }
-
-    function createSession() {
-        const name = newName.text.trim()
-        const command = newCommand.text.trim()
-        if (!name || !command) return
-        daemon.createSession(name, command, false, "")
-        newName.text = ""
-        newCommand.text = ""
-        window.connectSession(name)
     }
 
     // Send the drawn region and the note text to the daemon. The pixels are
