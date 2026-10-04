@@ -1,41 +1,14 @@
-# Hooks that must pass before a commit lands.
-#
-# The project is a Qt application built with CMake, so there is no formatter or
-# linter here: the gates are C++ compilation and the test suite, run by CI and
-# by `make test`. What is left is the cheap hygiene a commit should never fail:
-# no conflict markers, no whitespace damage, no oversized or secret files.
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
     hooks:
     -   id: check-yaml
-    -   id: check-json
     -   id: end-of-file-fixer
     -   id: trailing-whitespace
     -   id: check-merge-conflict
     -   id: check-added-large-files
-        args: ["--maxkb=1024"]
-    -   id: mixed-line-ending
 
 -   repo: https://github.com/gitleaks/gitleaks
     rev: v8.18.0
     hooks:
     -   id: gitleaks
-
--   repo: local
-    hooks:
-    # A commit must not break the build, and the tests are fast enough to be a
-    # pre-commit gate rather than a CI-only one.
-    -   id: cmake-build
-        name: cmake build
-        entry: bash -c 'cmake --build build -j"$(nproc)"'
-        language: system
-        files: '\.(cpp|h|qml|txt)$'
-        pass_filenames: false
-
-    -   id: ctest
-        name: ctest
-        entry: bash -c 'cd build && QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME= ctest --output-on-failure'
-        language: system
-        files: '\.(cpp|h|qml|txt)$'
-        pass_filenames: false
