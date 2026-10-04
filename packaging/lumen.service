@@ -1,0 +1,19 @@
+[Unit]
+Description=Lumen session daemon
+Documentation=man:lumen(1)
+# The daemon owns a Wayland compositor socket, so it needs the user's runtime
+# directory and nothing else from the session.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/lumen-daemon
+Restart=on-failure
+RestartSec=2
+# The compositor must not be started through a session bus that is going away.
+# It is a user service, so it is stopped by systemctl, not by logout.
+Slice=background.slice
+
+[Install]
+WantedBy=default.target
