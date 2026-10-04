@@ -87,6 +87,8 @@ Every session is listed on the left. The canvas shows the active session's live
 frame. **Take control** forwards your mouse and typing into the session;
 **Escape** hands control back to the agent.
 
+![The Lumen viewer: the session list on the left, a hosted Qt application's live frame in the middle, the session title and controls above it, and the feedback panel below](docs/images/viewer.png)
+
 To leave feedback, click **Comment** and drag a rectangle over the area. Lumen
 crops those pixels out of the frame at the moment you send the note, so it still
 shows what you meant after the session redraws. The agent reads the note on its

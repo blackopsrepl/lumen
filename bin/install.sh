@@ -34,6 +34,20 @@ if systemctl --user is-active --quiet lumen.service; then
     systemctl --user stop lumen.service
 fi
 
+# The daemon owns the compositor, and a session an agent is driving must not die
+# because the human logged out. `enable-linger` is what makes the user manager
+# outlive the last session; without it the service is stopped at logout no
+# matter how it is enabled, so a fresh install would quietly not do what the
+# README promises.
+if [[ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" != "yes" ]]; then
+    if loginctl enable-linger "$(id -un)" 2>/dev/null; then
+        say "enabled linger: the daemon now survives logout"
+    else
+        say "WARNING: could not enable linger — the daemon will stop at logout."
+        say "         Run 'loginctl enable-linger $(id -un)' to fix it."
+    fi
+fi
+
 install -m 0644 "$SOURCE_DIR/packaging/lumen.service" "$UNITDIR/lumen.service"
 say "installed $UNITDIR/lumen.service"
 
