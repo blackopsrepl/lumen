@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.14.2](https://github.com/blackopsrepl/lumen/compare/v0.14.1...v0.14.2) (2026-10-04)
+
+
+### Bug Fixes
+
+* **accessibility:** accessibilityReady now means a walk would return a tree ([848d1f2](https://github.com/blackopsrepl/lumen/commit/848d1f22bd0aefc112ab5fb6017e5e736cde2eb8))
+
 ## [0.14.1](https://github.com/blackopsrepl/lumen/compare/v0.14.0...v0.14.1) (2026-10-04)
 
 
