@@ -1,18 +1,17 @@
-# Build output
+# Build output.
+#
+# CMake build trees. These are generated and enormous, and committing one also
+# feeds CMakeCache.txt to the secret scanner, which reads its package version
+# strings as keys.
 /target/
-
-# CMake build trees. These are generated and enormous; committing them would
-# also feed CMakeCache.txt to the secret scanner, which reads its package
-# version strings as keys.
 /build/
 /build-qt/
 
-# Runtime state, never committed.
+# Runtime state, never committed. The daemon owns <data_dir>/run and clears it
+# at startup; the feedback database beside it does persist and is still not
+# source.
 /runtime/
 /data/
-/.workspace/
-/node_modules/
-/test-results/
-/playwright-report/
+
 .env
 *.log
