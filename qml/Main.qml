@@ -276,6 +276,11 @@ ApplicationWindow {
         window.activeName = name
         window.humanControlling = false
         window.annotating = false
+        // Every session opens fitted. Without this, switching sessions carries
+        // the previous one's zoom and pan across, so a session can open at 400%
+        // and panned off its own edge — which reads as a broken view rather than
+        // as a zoom the human set on something else entirely.
+        canvas.resetView()
         daemon.setActiveName(name)
         daemon.refreshNotes(name)
     }

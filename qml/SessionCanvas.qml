@@ -28,12 +28,17 @@ Item {
     // --- zoom state ---------------------------------------------------------
 
     /// 1.0 is actual size. The old viewer clamped to 0.1–4.
-    property real scale: 1.0
+    ///
+    /// It starts at 0, not 1: nothing has been fitted yet, and the first frame
+    /// to arrive drives the fit. Starting at 1 would flash the frame at actual
+    /// size — 1920x1080 spilling out of a ~620px viewport — before the fit ran.
+    property real scale: 0.0
     /// Top-left of the drawn frame, in stage coordinates.
     property real panX: 0
     property real panY: 0
     /// True while the frame is being fitted to the stage; any manual zoom or
-    /// pan clears it, so an incoming frame does not yank the view back.
+    /// pan clears it, so an incoming frame does not yank the view back. It is
+    /// the default state: a session opens fitted to the window.
     property bool fitted: true
 
     readonly property real minScale: 0.1
@@ -74,6 +79,14 @@ Item {
         scale = 1
         fitted = false
         center()
+    }
+
+    /// The default view: fitted to the window, which is what every session opens
+    /// at. Called when the active session changes, so a zoom set on one session
+    /// is never inherited by the next.
+    function resetView() {
+        fitted = true
+        if (frameW > 0 && frameH > 0) fit()
     }
 
     function center() {
@@ -157,6 +170,9 @@ Item {
             id: frameImage
             // Positioned and scaled by the transform rather than by
             // fillMode: an explicit rectangle is what makes zoom and pan exact.
+            // Hidden until a fit has run, so a frame that has not been fitted
+            // yet is not painted at actual size over the whole stage.
+            visible: stage.scale > 0
             x: stage.panX
             y: stage.panY
             width: stage.frameW * stage.scale
