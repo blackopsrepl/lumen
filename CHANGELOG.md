@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.14.3](https://github.com/blackopsrepl/lumen/compare/v0.14.2...v0.14.3) (2026-10-04)
+
+
+### Bug Fixes
+
+* **build:** include QElapsedTimer and QRect explicitly ([d8c8901](https://github.com/blackopsrepl/lumen/commit/d8c89019aa21f7e2e1cda854692152992fff1297))
+
 ## [0.14.2](https://github.com/blackopsrepl/lumen/compare/v0.14.1...v0.14.2) (2026-10-04)
 
 
