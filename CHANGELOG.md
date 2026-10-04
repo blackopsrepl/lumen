@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.14.4](https://github.com/blackopsrepl/lumen/compare/v0.14.3...v0.14.4) (2026-10-04)
+
+
+### Bug Fixes
+
+* **annotation:** make the note workflow work end to end ([1785777](https://github.com/blackopsrepl/lumen/commit/17857772eeadc2a7ffbc8be889b90a951ee00268))
+* **annotation:** the overlay needs hover, not just a press ([41b8454](https://github.com/blackopsrepl/lumen/commit/41b845499c4dd9fe248235c4b14a4699e86246b1))
+
 ## [0.14.3](https://github.com/blackopsrepl/lumen/compare/v0.14.2...v0.14.3) (2026-10-04)
 
 
