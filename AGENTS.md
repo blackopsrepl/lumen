@@ -89,9 +89,9 @@ clang-format, the build and the suite on any change to source, QML or CMake.
 
 - Conventional commit subjects with scope: `fix(compositor): …`,
   `feat(viewer): …`, `test(input): …`.
-- The default branch is `main` on both remotes, and the CI push trigger names it
-  explicitly — changing the default branch means changing the workflow or the
-  gate stops firing.
+- The default branch is `main` on both remotes. The CI push trigger names no
+  branch and fires on every branch — a branch filter here is how a rename turns
+  the gate off silently.
 - `init-pre-commit` covers Python, Go and Rust, not C++. `.pre-commit-config.yaml`
   here is hand-written and owns the C++ gates — do not regenerate it with that
   tool.
