@@ -23,6 +23,10 @@ jobs:
       # The steps that reach the network retry: this runner has hit transient
       # external outages that fail package downloads for minutes at a time.
       #
+      # No `sudo`: act runs the job as root inside the runner image, and sudo
+      # is not installed there — the original Rust job called apt-get bare for
+      # the same reason.
+      #
       # Two packages beyond the base image, both load-bearing: the Wayland
       # Compositor module (headers plus the library the test binaries link
       # against) and the Qt SQLite driver (the feedback store's SQLite backend,
@@ -33,9 +37,9 @@ jobs:
       - name: Qt and build dependencies
         run: |
           retry() { for i in 1 2 3 4 5; do "$@" && return 0; echo "attempt $i failed: $*"; sleep 5; done; return 1; }
-          retry sudo zypper --no-refresh --non-interactive install -y \
+          retry zypper --no-refresh --non-interactive install -y \
             qt6-waylandcompositor-devel qt6-sql-sqlite
-          sudo ldconfig
+          ldconfig
 
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
