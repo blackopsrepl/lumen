@@ -43,16 +43,32 @@ ApplicationWindow {
     // The first session to appear is selected on its own: with nothing selected
     // there is no frame subscription and the view stays blank, which reads as
     // the stream being broken rather than as nothing having been chosen.
+    //
+    // A session that starts while another is on screen is followed too. An
+    // agent that starts work while the human is watching something else would
+    // otherwise be invisible: the list grows by a row nobody looks at, and the
+    // stage keeps showing the old session. The human's own choice wins only
+    // while they are using it — holding control or drawing a note.
+    property var knownSessions: null
     Connections {
         target: daemon
         function onSessionsChanged() {
+            const names = daemon.sessions.map(s => s.name)
+            const known = window.knownSessions
+            window.knownSessions = names
             if (window.activeName !== "" && !window.activeSession) {
                 // The session being watched is gone.
                 window.activeName = ""
                 daemon.setActiveName("")
             }
-            if (window.activeName === "" && daemon.sessions.length > 0) {
-                window.connectSession(daemon.sessions[0].name)
+            const busy = window.humanControlling || window.annotating
+            // `known` is null on the first reply, which lists sessions that
+            // already existed when the viewer opened; none of them is new.
+            const started = known === null ? [] : names.filter(n => !known.includes(n))
+            if (started.length > 0 && !busy) {
+                window.connectSession(started[started.length - 1])
+            } else if (window.activeName === "" && names.length > 0) {
+                window.connectSession(names[0])
             }
         }
     }

@@ -140,6 +140,12 @@ void DaemonClient::subscribe(const QString& session) {
         m_stream = nullptr;
     }
     m_streamBuffer.clear();
+    // The previous session's last frame must not stay up under the new name:
+    // a session that has not drawn yet would otherwise appear to be showing
+    // something it is not.
+    m_frame = QImage();
+    m_frameUrl.clear();
+    emit frameChanged();
     if (session.isEmpty()) {
         return;
     }
