@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(lumen VERSION 0.14.4 LANGUAGES CXX)
+project(lumen VERSION 0.14.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,9 +18,18 @@ qt_standard_project_setup(REQUIRES 6.6)
 # lumen-daemon: the resident service. It owns the compositor and every session,
 # shows no window, and is managed as a systemd user unit.
 # ---------------------------------------------------------------------------
+# The compositor, shared by the daemon and the tests that host a client. It
+# speaks wlr-layer-shell, which Qt does not ship, so the protocol's server glue
+# is generated here from the vendored XML — once, which is why this is a
+# library rather than a source list every target compiles for itself.
+add_library(lumen_compositor STATIC src/compositor.cpp src/layershell.cpp src/xdgshellextras.cpp)
+qt6_generate_wayland_protocol_server_sources(lumen_compositor
+    FILES ${CMAKE_SOURCE_DIR}/protocols/wlr-layer-shell-unstable-v1.xml)
+target_include_directories(lumen_compositor PUBLIC src ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(lumen_compositor PUBLIC Qt6::Core Qt6::Gui Qt6::WaylandCompositor)
+
 set(LUMEN_DAEMON_SOURCES
     src/daemon/main.cpp
-    src/compositor.cpp
     src/config.cpp
     src/session.cpp
     src/sessionmanager.cpp
@@ -33,6 +42,7 @@ set(LUMEN_DAEMON_SOURCES
 qt_add_executable(lumen-daemon ${LUMEN_DAEMON_SOURCES})
 target_include_directories(lumen-daemon PRIVATE src)
 target_link_libraries(lumen-daemon PRIVATE
+    lumen_compositor
     Qt6::Core Qt6::Gui Qt6::Qml
     Qt6::WaylandCompositor Qt6::Sql Qt6::DBus
 )
@@ -105,10 +115,14 @@ endfunction()
 
 lumen_test(test_config src/config.cpp)
 lumen_test(test_feedbackstore src/feedbackstore.cpp)
-lumen_test(test_sessionmodel src/config.cpp src/session.cpp src/sessionmanager.cpp src/compositor.cpp src/accessibility.cpp)
+lumen_test(test_sessionmodel src/config.cpp src/session.cpp src/sessionmanager.cpp src/accessibility.cpp)
+target_link_libraries(test_sessionmodel PRIVATE lumen_compositor)
 lumen_test(test_accessibility src/accessibility.cpp)
-lumen_test(test_integration src/compositor.cpp)
-lumen_test(test_framerender src/compositor.cpp)
+lumen_test(test_integration)
+lumen_test(test_framerender)
+target_link_libraries(test_integration PRIVATE lumen_compositor)
+target_link_libraries(test_framerender PRIVATE lumen_compositor)
+
 
 # ---------------------------------------------------------------------------
 # The session client the integration and frame tests host. It is an ordinary

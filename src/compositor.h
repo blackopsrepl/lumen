@@ -12,7 +12,7 @@
 // what a windowless daemon does not have.
 //
 // A session is every surface its application maps, not just the first one: a
-// dialog, a second window and a menu popup all belong to it.
+// dialog, a second window, a menu popup and a Quickshell panel all belong to it.
 // They are composited into one frame in the output's coordinates, and a click is
 // delivered to whichever surface is on top at that point — so what the human
 // sees, what the agent's coordinates mean and where input lands are one model.
@@ -22,6 +22,8 @@
 // window existing.
 
 #pragma once
+
+#include "layershell.h"
 
 #include <QtWaylandCompositor/QWaylandXdgPopup>
 #include <QtWaylandCompositor/QWaylandXdgSurface>
@@ -43,6 +45,7 @@ class QWaylandSeat;
 class QWaylandSurface;
 class QWaylandView;
 class QWaylandXdgShell;
+class XdgShellExtras;
 
 class LumenCompositor : public QObject {
     Q_OBJECT
@@ -62,7 +65,7 @@ class LumenCompositor : public QObject {
     /// drawn, its newest — or nullptr when it has no surface at all.
     QWaylandView* viewFor(const QString& session) const;
 
-    /// How many surfaces `session` currently has (windows and popups).
+    /// How many surfaces `session` currently has (toplevels, popups, layers).
     int surfaceCount(const QString& session) const;
 
     /// The session a client process id belongs to, when known.
@@ -101,7 +104,7 @@ class LumenCompositor : public QObject {
     void frameReady(const QString& session);
 
   private:
-    /// One mapped role on a session: a toplevel or a popup.
+    /// One mapped role on a session: a toplevel, a popup or a layer surface.
     /// The role objects are guarded: a client may destroy its role before the
     /// surface underneath it, and the entry lives until the surface goes.
     struct Entry {
@@ -114,7 +117,9 @@ class LumenCompositor : public QObject {
         /// The role's xdg_surface, and for a popup the one it opened from.
         QPointer<QWaylandXdgSurface> xdg;
         QPointer<QWaylandXdgSurface> parentXdg;
-        /// Paint order band: windows, then popups.
+        QPointer<LayerSurface> layer;
+        /// Paint order band: layers below windows, windows, layers above
+        /// windows, popups on top of everything.
         int band = 0;
         /// Creation order, which orders surfaces within a band.
         quint64 serial = 0;
@@ -122,6 +127,7 @@ class LumenCompositor : public QObject {
 
     void adoptToplevel(QWaylandXdgToplevel* toplevel);
     void adoptPopup(QWaylandXdgPopup* popup);
+    void adoptLayer(LayerSurface* layer);
     /// Shared bookkeeping for every role: view, frame callbacks, teardown.
     Entry* track(QWaylandSurface* surface, const QString& session, int band);
     /// Drop an entry, by serial: it may already be gone.
@@ -141,11 +147,15 @@ class LumenCompositor : public QObject {
     QWaylandCompositor* m_compositor = nullptr;
     QWaylandOutput* m_output = nullptr;
     QWaylandXdgShell* m_shell = nullptr;
+    LayerShell* m_layerShell = nullptr;
     /// Session name by client process id.
     QHash<qint64, QString> m_sessionByPid;
     /// Every session's surfaces.
     QHash<QString, QList<Entry*>> m_entries;
+    /// The layer surface a popup hangs from, keyed by the popup's surface.
+    QHash<QWaylandSurface*, QPointer<LayerSurface>> m_layerParent;
     /// The surface keyboard input goes to, per session: the last one clicked.
     QHash<QString, QWaylandSurface*> m_focus;
     quint64 m_serial = 0;
+    XdgShellExtras* m_xdgExtras = nullptr;
 };

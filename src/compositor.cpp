@@ -16,6 +16,9 @@
 
 #include "compositor.h"
 
+#include "layershell.h"
+#include "xdgshellextras.h"
+
 #include <QtWaylandCompositor/QWaylandClient>
 #include <QtWaylandCompositor/QWaylandCompositor>
 #include <QtWaylandCompositor/QWaylandOutput>
@@ -47,9 +50,13 @@ constexpr int kOutputWidth = 1920;
 constexpr int kOutputHeight = 1080;
 constexpr int kOutputRefresh = 60000;
 
-/// Paint order bands: windows, then the popups opened from them.
+/// Paint order bands. Background and bottom layers sit under windows, top and
+/// overlay layers over them, and popups over everything they could open from.
 constexpr int kBandWindow = 2;
 constexpr int kBandPopup = 5;
+int layerBand(uint32_t layer) {
+    return layer <= 1 ? int(layer) : int(layer) + 1;
+}
 
 /// A session's surface, as Lumen renders it.
 ///
@@ -135,6 +142,17 @@ LumenCompositor::LumenCompositor(QObject* parent) : QObject(parent) {
         [this](QWaylandXdgToplevel* toplevel, QWaylandXdgSurface*) { adoptToplevel(toplevel); });
     connect(m_shell, &QWaylandXdgShell::popupCreated, this,
             [this](QWaylandXdgPopup* popup, QWaylandXdgSurface*) { adoptPopup(popup); });
+
+    // Panels, bars and overlays — Quickshell's PanelWindow among them — are
+    // layer surfaces, a protocol Qt does not ship. Without it such a client
+    // finds nothing to map its window with and the session draws nothing.
+    m_layerShell = new LayerShell(m_compositor, QSize(kOutputWidth, kOutputHeight));
+    connect(m_layerShell, &LayerShell::layerSurfaceCreated, this,
+            [this](LayerSurface* layer) { adoptLayer(layer); });
+    connect(m_layerShell, &LayerShell::popupParented, this,
+            [this](QWaylandXdgSurface* popup, LayerSurface* parent) {
+                m_layerParent.insert(popup->surface(), parent);
+            });
 }
 
 LumenCompositor::~LumenCompositor() {
@@ -151,6 +169,10 @@ bool LumenCompositor::start(const QString& socketName) {
     if (!m_compositor->isCreated()) {
         return false;
     }
+    // Popup repositioning and layer-parented popups, which Qt's xdg-shell
+    // lacks; installed before any client can connect.
+    m_xdgExtras = new XdgShellExtras(m_compositor, this);
+    m_layerShell->setXdgShellExtras(m_xdgExtras);
     return true;
 }
 
@@ -277,6 +299,7 @@ void LumenCompositor::untrack(const QString& session, quint64 serial) {
     if (m_focus.value(session) == entry->surface) {
         m_focus.remove(session);
     }
+    m_layerParent.remove(entry->surface);
     entry->view->deleteLater();
     delete entry;
     if (entries.isEmpty()) {
@@ -343,12 +366,40 @@ void LumenCompositor::adoptPopup(QWaylandXdgPopup* popup) {
     emit surfaceReady(session);
 }
 
+void LumenCompositor::adoptLayer(LayerSurface* layer) {
+    QWaylandSurface* surface = layer->surface();
+    const QString session = sessionForClient(surface->client());
+    Entry* entry = track(surface, session, layerBand(layer->layer()));
+    entry->layer = layer;
+    const quint64 serial = entry->serial;
+    connect(layer, &QObject::destroyed, this,
+            [this, session, serial]() { untrack(session, serial); });
+    if (layer->wantsKeyboard() || !m_focus.contains(session)) {
+        m_focus.insert(session, surface);
+    }
+    emit surfaceReady(session);
+    announceTitle(session);
+}
+
 QPoint LumenCompositor::positionOf(const Entry* entry) const {
+    if (entry->layer) {
+        return entry->layer->position();
+    }
     if (entry->popup && entry->xdg) {
         // A popup's geometry is relative to its parent's window geometry, and
         // its own buffer may carry a margin outside its window geometry.
-        const QRect placed = entry->popup->configuredGeometry();
+        // A popup Lumen repositioned is where Lumen put it; Qt's configured
+        // geometry still holds the first placement.
+        QRect placed = entry->popup->configuredGeometry();
+        if (m_xdgExtras) {
+            m_xdgExtras->placement(entry->xdg, &placed);
+        }
         const QPoint offset = placed.topLeft() - entry->xdg->windowGeometry().topLeft();
+        // Opened from a panel: the parent is a layer surface, and the popup's
+        // xdg parent is itself (see XdgShellExtras).
+        if (LayerSurface* layer = m_layerParent.value(entry->surface)) {
+            return layer->position() + offset;
+        }
         QWaylandXdgSurface* parent = entry->parentXdg;
         if (!parent || parent == entry->xdg) {
             return offset;
@@ -393,11 +444,14 @@ LumenCompositor::Entry* LumenCompositor::hit(const QString& session, const QPoin
 
 void LumenCompositor::announceTitle(const QString& session) {
     // The topmost window names the session: a dialog in front is what the
-    // application is showing.
+    // application is showing. A session of panels only is named by namespace.
     QString title;
+    QString layerName;
     for (const Entry* entry : stacked(session)) {
         if (entry->toplevel) {
             title = entry->toplevel->title();
+        } else if (entry->layer && layerName.isEmpty()) {
+            layerName = entry->layer->nameSpace();
         }
     }
     if (title.isEmpty()) {
@@ -409,7 +463,7 @@ void LumenCompositor::announceTitle(const QString& session) {
             }
         }
     }
-    emit titleChanged(session, title);
+    emit titleChanged(session, title.isEmpty() ? layerName : title);
 }
 
 QImage LumenCompositor::frame(const QString& session) {
