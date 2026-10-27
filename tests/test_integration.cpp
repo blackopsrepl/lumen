@@ -46,6 +46,7 @@ class TestIntegration : public QObject {
 
     void click_reaches_the_client();
     void surface_is_attributed_through_a_launcher();
+    void closing_a_dialog_keeps_the_main_window();
 
   private:
     /// Start the fixture on `qml` with the environment a session gives it.
@@ -185,6 +186,40 @@ void TestIntegration::surface_is_attributed_through_a_launcher() {
     QProcess::execute("pkill", {"-P", QString::number(launcher.processId())});
     launcher.terminate();
     launcher.waitForFinished(5000);
+}
+
+// A dialog is a second toplevel of the same session. Closing it used to drop
+// the session's only view, taking the main window off screen while the
+// application kept running.
+void TestIntegration::closing_a_dialog_keeps_the_main_window() {
+    LumenCompositor compositor;
+    QVERIFY(compositor.start("lumen-test-dialog"));
+    QStringList titles;
+    connect(&compositor, &LumenCompositor::titleChanged, this,
+            [&](const QString&, const QString& title) { titles.append(title); });
+
+    QProcess fixture;
+    startFixture(fixture, "lumen-test-dialog", "dialog",
+                 QCoreApplication::applicationDirPath() + "/qt_fixture",
+                 {QCoreApplication::applicationDirPath() + "/../tests/fixtures/two_windows.qml"});
+    QVERIFY(fixture.waitForStarted(5000));
+    compositor.expectProcess("dialog", fixture.processId());
+
+    // Both windows up: the dialog is on top, and the frame shows both.
+    QVERIFY(waitUntil(
+        [&]() { return titles.contains("TWO-DIALOG") && !compositor.frame("dialog").isNull(); },
+        8000));
+    // The dialog closes itself; the main window must still be there.
+    QVERIFY(waitUntil([&]() { return !titles.isEmpty() && titles.last() == "TWO-MAIN"; }, 6000));
+    const QImage frame = compositor.frame("dialog");
+    QVERIFY(!frame.isNull());
+    // The main window's own colour, not the dialog's and not a blank frame.
+    QCOMPARE(frame.pixelColor(frame.width() / 2, frame.height() / 2), QColor("#203040"));
+    QVERIFY(compositor.viewFor("dialog") != nullptr);
+    QVERIFY(compositor.click("dialog", QPointF(240, 160)));
+
+    fixture.terminate();
+    fixture.waitForFinished(5000);
 }
 
 QTEST_MAIN(TestIntegration)

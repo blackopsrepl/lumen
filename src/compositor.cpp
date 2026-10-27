@@ -29,8 +29,12 @@
 #include <QFile>
 #include <QImage>
 #include <QKeyEvent>
+#include <QPainter>
 #include <QPointF>
+#include <QRect>
 #include <QRegion>
+
+#include <algorithm>
 
 namespace {
 
@@ -42,6 +46,10 @@ namespace {
 constexpr int kOutputWidth = 1920;
 constexpr int kOutputHeight = 1080;
 constexpr int kOutputRefresh = 60000;
+
+/// Paint order bands: windows, then the popups opened from them.
+constexpr int kBandWindow = 2;
+constexpr int kBandPopup = 5;
 
 /// A session's surface, as Lumen renders it.
 ///
@@ -58,12 +66,16 @@ class SessionView : public QWaylandView {
     /// Stores the buffer from the surface's bufferCommitted signal and returns
     /// its image. For SHM buffers (which software-rendered clients use) this
     /// needs no GL context and no render thread.
-    QImage frame() {
-        if (m_buffer.isNull()) {
+    QImage frame() const {
+        if (m_buffer.isNull() || !m_buffer.hasBuffer()) {
             return QImage();
         }
         return m_buffer.image();
     }
+
+    /// Whether the surface currently shows anything. A window that is hidden
+    /// commits a null buffer, which unmaps it without destroying it.
+    bool mapped() const { return !m_buffer.isNull() && m_buffer.hasBuffer(); }
 
     QSize size() const { return surface() ? surface()->destinationSize() : QSize(); }
 
@@ -78,6 +90,10 @@ class SessionView : public QWaylandView {
   private:
     QWaylandBufferRef m_buffer;
 };
+
+SessionView* asSessionView(QWaylandView* view) {
+    return static_cast<SessionView*>(view);
+}
 
 /// The session a process was started for, read from its environment.
 ///
@@ -117,16 +133,25 @@ LumenCompositor::LumenCompositor(QObject* parent) : QObject(parent) {
     connect(
         m_shell, &QWaylandXdgShell::toplevelCreated, this,
         [this](QWaylandXdgToplevel* toplevel, QWaylandXdgSurface*) { adoptToplevel(toplevel); });
+    connect(m_shell, &QWaylandXdgShell::popupCreated, this,
+            [this](QWaylandXdgPopup* popup, QWaylandXdgSurface*) { adoptPopup(popup); });
 }
 
-LumenCompositor::~LumenCompositor() = default;
+LumenCompositor::~LumenCompositor() {
+    for (const QList<Entry*>& entries : std::as_const(m_entries)) {
+        qDeleteAll(entries);
+    }
+}
 
 bool LumenCompositor::start(const QString& socketName) {
     m_compositor->setSocketName(socketName.toUtf8());
     // create() is what actually begins listening; it must run after the output
     // and shell exist, or the first client to connect sees no output.
     m_compositor->create();
-    return m_compositor->isCreated();
+    if (!m_compositor->isCreated()) {
+        return false;
+    }
+    return true;
 }
 
 QWaylandSeat* LumenCompositor::seat() const {
@@ -134,7 +159,17 @@ QWaylandSeat* LumenCompositor::seat() const {
 }
 
 QWaylandView* LumenCompositor::viewFor(const QString& session) const {
-    return m_viewBySession.value(session);
+    // The topmost surface on screen; before anything has drawn, the newest.
+    const QList<Entry*> entries = stacked(session);
+    if (!entries.isEmpty()) {
+        return entries.last()->view;
+    }
+    const QList<Entry*> all = m_entries.value(session);
+    return all.isEmpty() ? nullptr : all.last()->view;
+}
+
+int LumenCompositor::surfaceCount(const QString& session) const {
+    return m_entries.value(session).size();
 }
 
 void LumenCompositor::expectProcess(const QString& session, qint64 pid) {
@@ -168,19 +203,106 @@ QString LumenCompositor::sessionForClient(QWaylandClient* client) {
     return session;
 }
 
+QString LumenCompositor::sessionForSurface(QWaylandSurface* surface) const {
+    for (auto it = m_entries.constBegin(); it != m_entries.constEnd(); ++it) {
+        for (const Entry* entry : it.value()) {
+            if (entry->surface == surface) {
+                return it.key();
+            }
+        }
+    }
+    return QString();
+}
+
+LumenCompositor::Entry* LumenCompositor::entryFor(QWaylandSurface* surface) const {
+    for (const QList<Entry*>& entries : m_entries) {
+        for (Entry* entry : entries) {
+            if (entry->surface == surface) {
+                return entry;
+            }
+        }
+    }
+    return nullptr;
+}
+
+LumenCompositor::Entry* LumenCompositor::track(QWaylandSurface* surface, const QString& session,
+                                               int band) {
+    auto* view = new SessionView(this);
+    view->setSurface(surface);
+    view->setOutput(m_output);
+    view->setPrimary();
+
+    auto* entry = new Entry;
+    entry->view = view;
+    entry->surface = surface;
+    entry->band = band;
+    entry->serial = ++m_serial;
+    m_entries[session].append(entry);
+
+    // The entry ends with its surface — or with its role, when the client
+    // keeps the surface and gives it a new role (Qt re-uses a menu's surface
+    // for the next menu); the role objects are gone then, and an entry left
+    // pointing at them would be read after they are freed.
+    const quint64 serial = entry->serial;
+    connect(view, &QWaylandView::surfaceDestroyed, this,
+            [this, session, serial]() { untrack(session, serial); });
+    // Tell the client it may draw. Without frame callbacks a client draws once
+    // and then waits forever, so the compositor sends them on every commit.
+    connect(surface, &QWaylandSurface::damaged, this, [this]() {
+        if (m_output) {
+            m_output->frameStarted();
+            m_output->sendFrameCallbacks();
+        }
+    });
+    // A window shown or hidden changes what the session's title should say.
+    connect(surface, &QWaylandSurface::hasContentChanged, this,
+            [this, session]() { announceTitle(session); });
+    connect(surface, &QWaylandSurface::redraw, this,
+            [this, session]() { emit frameReady(session); });
+    return entry;
+}
+
+void LumenCompositor::untrack(const QString& session, quint64 serial) {
+    QList<Entry*>& entries = m_entries[session];
+    const auto it = std::find_if(entries.begin(), entries.end(),
+                                 [serial](const Entry* e) { return e->serial == serial; });
+    if (it == entries.end()) {
+        if (entries.isEmpty()) {
+            m_entries.remove(session);
+        }
+        return;
+    }
+    Entry* entry = *it;
+    entries.erase(it);
+    if (m_focus.value(session) == entry->surface) {
+        m_focus.remove(session);
+    }
+    entry->view->deleteLater();
+    delete entry;
+    if (entries.isEmpty()) {
+        // Only the last surface leaving ends the session's picture; a dialog
+        // closing must not take its main window with it.
+        m_entries.remove(session);
+        m_focus.remove(session);
+        emit surfaceGone(session);
+    } else {
+        announceTitle(session);
+    }
+}
+
 void LumenCompositor::adoptToplevel(QWaylandXdgToplevel* toplevel) {
     QWaylandSurface* surface = toplevel->xdgSurface()->surface();
     // A surface belongs to a session, and sessions are addressed by name. The
     // client's process is the only handle the compositor has on it, so it is
     // mapped back to the session that started that process.
     const QString session = sessionForClient(surface->client());
+    Entry* entry = track(surface, session, kBandWindow);
+    entry->toplevel = toplevel;
+    entry->xdg = toplevel->xdgSurface();
+    const quint64 serial = entry->serial;
+    connect(toplevel->xdgSurface(), &QObject::destroyed, this,
+            [this, session, serial]() { untrack(session, serial); });
 
-    auto* view = new SessionView(this);
-    view->setSurface(surface);
-    view->setOutput(m_output);
-    view->setPrimary();
-    m_viewBySession.insert(session, view);
-    m_sessionByView.insert(view, session);
     // The toplevel waits for the compositor's first configure before it draws.
     // Acknowledge it at once so the client starts committing frames. The
     // two-argument overload takes QList<State>, which an empty brace list
@@ -194,59 +316,183 @@ void LumenCompositor::adoptToplevel(QWaylandXdgToplevel* toplevel) {
                                 << QWaylandXdgToplevel::ActivatedState);
 
     connect(toplevel, &QWaylandXdgToplevel::titleChanged, this,
-            [this, session, toplevel]() { emit titleChanged(session, toplevel->title()); });
-    connect(view, &QWaylandView::surfaceDestroyed, this, [this, view]() {
-        const QString gone = m_sessionByView.take(view);
-        m_viewBySession.remove(gone);
-        view->deleteLater();
-        emit surfaceGone(gone);
-    });
-    // Tell the client it may draw. Without frame callbacks a client draws once
-    // and then waits forever, so the compositor sends them on every commit.
-    connect(surface, &QWaylandSurface::damaged, this, [this]() {
-        if (m_output) {
-            m_output->frameStarted();
-            m_output->sendFrameCallbacks();
-        }
-    });
-    // A client draws only when told to; without this it never commits its first
-    // buffer and never becomes interactive.
-    connect(surface, &QWaylandSurface::redraw, this,
-            [this, session]() { emit frameReady(session); });
+            [this, session]() { announceTitle(session); });
+    // The newest window takes the keyboard, as a dialog would on a desktop.
+    m_focus.insert(session, surface);
 
     emit surfaceReady(session);
-    emit titleChanged(session, toplevel->title());
+    announceTitle(session);
+}
+
+void LumenCompositor::adoptPopup(QWaylandXdgPopup* popup) {
+    QWaylandSurface* surface = popup->xdgSurface()->surface();
+    QWaylandXdgSurface* parent = popup->parentXdgSurface();
+    // A popup belongs to whatever opened it; its own client is the fallback.
+    QString session = parent ? sessionForSurface(parent->surface()) : QString();
+    if (session.isEmpty()) {
+        session = sessionForClient(surface->client());
+    }
+    Entry* entry = track(surface, session, kBandPopup);
+    entry->popup = popup;
+    entry->xdg = popup->xdgSurface();
+    entry->parentXdg = parent;
+    const quint64 serial = entry->serial;
+    connect(popup->xdgSurface(), &QObject::destroyed, this,
+            [this, session, serial]() { untrack(session, serial); });
+    m_focus.insert(session, surface);
+    emit surfaceReady(session);
+}
+
+QPoint LumenCompositor::positionOf(const Entry* entry) const {
+    if (entry->popup && entry->xdg) {
+        // A popup's geometry is relative to its parent's window geometry, and
+        // its own buffer may carry a margin outside its window geometry.
+        const QRect placed = entry->popup->configuredGeometry();
+        const QPoint offset = placed.topLeft() - entry->xdg->windowGeometry().topLeft();
+        QWaylandXdgSurface* parent = entry->parentXdg;
+        if (!parent || parent == entry->xdg) {
+            return offset;
+        }
+        const Entry* parentEntry = entryFor(parent->surface());
+        const QPoint parentOrigin = parentEntry ? positionOf(parentEntry) : QPoint();
+        return parentOrigin + parent->windowGeometry().topLeft() + offset;
+    }
+    // Windows sit at the output's origin, so an ordinary application's frame
+    // and click coordinates are its own window's.
+    return QPoint();
+}
+
+QList<LumenCompositor::Entry*> LumenCompositor::stacked(const QString& session) const {
+    QList<Entry*> entries;
+    for (Entry* entry : m_entries.value(session)) {
+        if (asSessionView(entry->view)->mapped()) {
+            entries.append(entry);
+        }
+    }
+    std::stable_sort(entries.begin(), entries.end(), [](const Entry* a, const Entry* b) {
+        return a->band != b->band ? a->band < b->band : a->serial < b->serial;
+    });
+    return entries;
+}
+
+LumenCompositor::Entry* LumenCompositor::hit(const QString& session, const QPointF& point,
+                                             QPointF* local) const {
+    const QList<Entry*> entries = stacked(session);
+    for (auto it = entries.crbegin(); it != entries.crend(); ++it) {
+        const QPoint origin = positionOf(*it);
+        const QRect rect(origin, asSessionView((*it)->view)->size());
+        if (rect.contains(point.toPoint())) {
+            if (local) {
+                *local = point - QPointF(origin);
+            }
+            return *it;
+        }
+    }
+    return nullptr;
+}
+
+void LumenCompositor::announceTitle(const QString& session) {
+    // The topmost window names the session: a dialog in front is what the
+    // application is showing.
+    QString title;
+    for (const Entry* entry : stacked(session)) {
+        if (entry->toplevel) {
+            title = entry->toplevel->title();
+        }
+    }
+    if (title.isEmpty()) {
+        // Before the first buffer nothing is stacked yet; the newest toplevel
+        // still has a title worth reporting.
+        for (const Entry* entry : m_entries.value(session)) {
+            if (entry->toplevel) {
+                title = entry->toplevel->title();
+            }
+        }
+    }
+    emit titleChanged(session, title);
 }
 
 QImage LumenCompositor::frame(const QString& session) {
-    auto* view = qobject_cast<SessionView*>(m_viewBySession.value(session));
-    return view ? view->frame() : QImage();
+    const QList<Entry*> entries = stacked(session);
+    if (entries.isEmpty()) {
+        return QImage();
+    }
+    // One window at the origin is the common case, and its buffer is already
+    // the frame: no copy, no painting.
+    if (entries.size() == 1 && positionOf(entries.first()).isNull()) {
+        return asSessionView(entries.first()->view)->frame();
+    }
+    QRect extent;
+    for (const Entry* entry : entries) {
+        extent |= QRect(positionOf(entry), asSessionView(entry->view)->size());
+    }
+    // The frame always starts at the output's origin, so a coordinate means the
+    // same thing however many surfaces the session has at the moment.
+    extent = QRect(QPoint(0, 0), extent.bottomRight())
+                 .intersected(QRect(0, 0, kOutputWidth, kOutputHeight));
+    if (extent.isEmpty()) {
+        return QImage();
+    }
+    QImage canvas(extent.size(), QImage::Format_RGB32);
+    canvas.fill(Qt::black);
+    QPainter painter(&canvas);
+    for (const Entry* entry : entries) {
+        const auto* view = asSessionView(entry->view);
+        painter.drawImage(QRect(positionOf(entry), view->size()), view->frame());
+    }
+    painter.end();
+    return canvas;
 }
 
 bool LumenCompositor::click(const QString& session, const QPointF& point) {
-    auto* view = m_viewBySession.value(session);
     QWaylandSeat* seat = this->seat();
-    if (!view || !view->surface() || !seat) {
+    if (!seat) {
+        return false;
+    }
+    QPointF local;
+    Entry* target = hit(session, point, &local);
+    if (!target && stacked(session).isEmpty() && !m_entries.value(session).isEmpty()) {
+        // Nothing has drawn yet, so there is nothing to hit-test against. The
+        // newest surface is the one about to appear; deliver to it as is.
+        target = m_entries.value(session).last();
+        local = point;
+    }
+    // A click outside an open popup dismisses it, as on any desktop: the
+    // client holds a grab and is waiting to be told the popup is done.
+    if (!target || !target->popup) {
+        for (Entry* entry : m_entries.value(session)) {
+            if (entry->popup && entry->xdg) {
+                entry->popup->sendPopupDone();
+            }
+        }
+    }
+    if (!target) {
         return false;
     }
     // Exactly the sequence Qt's own compositor uses: give the client keyboard
     // focus, tell it where the pointer is, then press and release. A press is
     // only delivered to the seat's current mouse focus, so the move must come
     // first — and it is expressed in the surface's own coordinates.
-    seat->setKeyboardFocus(view->surface());
-    seat->sendMouseMoveEvent(view, point);
+    QWaylandSurface* surface = target->surface;
+    m_focus.insert(session, surface);
+    seat->setKeyboardFocus(surface);
+    seat->sendMouseMoveEvent(target->view, local);
     seat->sendMousePressEvent(Qt::LeftButton);
     seat->sendMouseReleaseEvent(Qt::LeftButton);
     return true;
 }
 
 bool LumenCompositor::type(const QString& session, const QString& text) {
-    auto* view = m_viewBySession.value(session);
     QWaylandSeat* seat = this->seat();
-    if (!view || !view->surface() || !seat) {
+    QWaylandSurface* surface = m_focus.value(session);
+    if (!surface || !entryFor(surface)) {
+        QWaylandView* view = viewFor(session);
+        surface = view ? view->surface() : nullptr;
+    }
+    if (!surface || !seat) {
         return false;
     }
-    seat->setKeyboardFocus(view->surface());
+    seat->setKeyboardFocus(surface);
     // A full key event carries the text itself, so the client does not have to
     // map a scancode through its keymap to get the character. Plain unicode key
     // events depend on that translation, and a client whose keymap has not been
