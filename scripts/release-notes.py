@@ -3,8 +3,8 @@
 
 `gh release create --generate-notes` collects merged pull requests, and this
 repository pushes every release commit straight to main, so that generates a
-body holding nothing but a compare link. The section commit-and-tag-version
-already wrote when it cut the release is the real record, so it is read back
+body holding nothing but a compare link. The section csemver
+wrote when it cut the release is the real record, so it is read back
 from the tagged tree.
 
 Exits non-zero and prints nothing on stdout when the section is missing or

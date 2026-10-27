@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 0
 
       # Notes come from the tag's own CHANGELOG section, which
-      # commit-and-tag-version wrote when it cut the release. The extraction
+      # csemver wrote when it cut the release. The extraction
       # lives in scripts/release-notes.py rather than inline here: it fails
       # closed, so a release is never published with an empty body.
       - name: Publish release from the changelog

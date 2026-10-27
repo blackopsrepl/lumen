@@ -1,0 +1,41 @@
+# Release configuration for csemver, replacing commit-and-tag-version and its
+# .versionrc.cjs. The effective settings carry over unchanged.
+#
+# The application version is the `project(lumen VERSION ...)` value in
+# CMakeLists.txt, the only place a release number is written. The match is
+# anchored on the project name and stops at the version, so the LANGUAGES list
+# that follows can change without breaking the updater.
+#
+# Links point at the GitHub remote, which is where the release workflow
+# publishes; the Forgejo remote carries the same commits and tags.
+tagPrefix = "v"
+releaseCommitMessageFormat = "chore(release): {{currentTag}}"
+commitUrlFormat = "https://github.com/blackopsrepl/lumen/commit/{{hash}}"
+compareUrlFormat = "https://github.com/blackopsrepl/lumen/compare/{{previousTag}}...{{currentTag}}"
+issueUrlFormat = "https://github.com/blackopsrepl/lumen/issues/{{id}}"
+
+packageFiles = [
+  { filename = "CMakeLists.txt", type = "regex", pattern = '^project\(lumen VERSION ([0-9]+\.[0-9]+\.[0-9]+)', versionGroup = 1 },
+]
+
+# commit-and-tag-version's defaults: features, fixes and performance work are
+# the release notes; everything else stays out of them.
+types = [
+  { type = "feat", section = "Features" },
+  { type = "fix", section = "Bug Fixes" },
+  { type = "perf", section = "Performance Improvements" },
+  { type = "revert", section = "Reverts" },
+  { type = "refactor", section = "Code Refactoring", effect = "hidden" },
+  { type = "docs", section = "Documentation", effect = "hidden" },
+  { type = "test", section = "Tests", effect = "hidden" },
+  { type = "build", section = "Build System", effect = "hidden" },
+  { type = "ci", section = "Continuous Integration", effect = "hidden" },
+  { type = "chore", section = "Chores", effect = "hidden" },
+  { type = "style", section = "Styles", effect = "hidden" },
+]
+
+[[bumpFiles]]
+filename = "CMakeLists.txt"
+type = "regex"
+pattern = '^project\(lumen VERSION ([0-9]+\.[0-9]+\.[0-9]+)'
+versionGroup = 1
