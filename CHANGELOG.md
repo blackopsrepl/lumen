@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.15.0](https://github.com/blackopsrepl/lumen/compare/v0.14.4...v0.15.0) (2026-10-27)
+
+
+### Features
+
+* **compositor:** host Quickshell panels and their popups ([4f971c2](https://github.com/blackopsrepl/lumen/commit/4f971c207159291dfb188e4a3b551084ae8af586))
+
+
+### Bug Fixes
+
+* **agent:** make input that lands nowhere an error ([5dce087](https://github.com/blackopsrepl/lumen/commit/5dce087f9d1c720b022025c48b9c013f068d6f62))
+* **cli:** honour the published agent socket ([0f0fac1](https://github.com/blackopsrepl/lumen/commit/0f0fac1ac75056dfa9e85a3c910b643cf4cbac6a))
+* **compositor:** attribute surfaces through the session's environment ([27cf323](https://github.com/blackopsrepl/lumen/commit/27cf32330e53faefd6e1dc9fdac421ede0bd08a2))
+* **compositor:** keep every surface a session maps on screen ([3184420](https://github.com/blackopsrepl/lumen/commit/31844203efa00fc108808a5c4bf052165f68c632))
+* **daemon:** run the compositor on the offscreen platform ([9c53cf0](https://github.com/blackopsrepl/lumen/commit/9c53cf05de1b3bc1caa28776e6d4c5187e87a910))
+* **viewer:** show the session an agent starts ([0c011e8](https://github.com/blackopsrepl/lumen/commit/0c011e84af38f4668679deecfb9cc5527ac51a71))
+
+
 ## [0.14.4](https://github.com/blackopsrepl/lumen/compare/v0.14.3...v0.14.4) (2026-10-04)
 
 
