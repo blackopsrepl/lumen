@@ -23,8 +23,13 @@
 
 int main(int argc, char** argv) {
     // The compositor needs the GUI stack (Wayland protocol objects, QImage) but
-    // must never show a window. It is driven by an offscreen platform when the
-    // host has no display of its own.
+    // must never show a window, so it runs on the offscreen platform — always,
+    // not only when the host has no display. Left to choose, Qt picks the
+    // host's platform from the environment: before the desktop exports
+    // WAYLAND_DISPLAY it falls back to xcb, finds no display and aborts, and
+    // systemd restarts it in a loop until the desktop comes up; after, every
+    // session lives on a connection to the host compositor and dies with it.
+    qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("lumen-daemon"));
     app.setOrganizationName(QStringLiteral("lumen"));
