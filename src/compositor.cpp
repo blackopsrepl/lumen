@@ -16,6 +16,7 @@
 
 #include "compositor.h"
 
+#include <QtWaylandCompositor/QWaylandClient>
 #include <QtWaylandCompositor/QWaylandCompositor>
 #include <QtWaylandCompositor/QWaylandOutput>
 #include <QtWaylandCompositor/QWaylandSeat>
@@ -25,6 +26,7 @@
 #include <QtWaylandCompositor/QWaylandXdgSurface>
 #include <QtWaylandCompositor/QWaylandXdgToplevel>
 
+#include <QFile>
 #include <QImage>
 #include <QKeyEvent>
 #include <QPointF>
@@ -76,6 +78,25 @@ class SessionView : public QWaylandView {
   private:
     QWaylandBufferRef m_buffer;
 };
+
+/// The session a process was started for, read from its environment.
+///
+/// The environment survives fork, exec and daemonizing, which the process id
+/// does not: a launcher script, an application that re-executes itself, or one
+/// that detaches from its parent all connect from a pid nobody registered.
+QString sessionFromEnvironment(qint64 pid) {
+    QFile environ(QStringLiteral("/proc/%1/environ").arg(pid));
+    if (!environ.open(QIODevice::ReadOnly)) {
+        return QString();
+    }
+    const QByteArray prefix = QByteArray(LumenCompositor::kSessionEnvVar) + '=';
+    for (const QByteArray& entry : environ.readAll().split('\0')) {
+        if (entry.startsWith(prefix)) {
+            return QString::fromUtf8(entry.mid(prefix.size()));
+        }
+    }
+    return QString();
+}
 
 } // namespace
 
@@ -129,13 +150,30 @@ QString LumenCompositor::sessionForPid(const QString& pid) const {
     return m_sessionByPid.value(numeric);
 }
 
+QString LumenCompositor::sessionForClient(QWaylandClient* client) {
+    const qint64 pid = client ? client->processId() : 0;
+    if (pid <= 0) {
+        return QString();
+    }
+    QString session = m_sessionByPid.value(pid);
+    if (session.isEmpty()) {
+        session = sessionFromEnvironment(pid);
+        if (!session.isEmpty()) {
+            m_sessionByPid.insert(pid, session);
+        }
+    }
+    if (session.isEmpty()) {
+        qWarning("lumen: a client (pid %lld) connected that belongs to no session", pid);
+    }
+    return session;
+}
+
 void LumenCompositor::adoptToplevel(QWaylandXdgToplevel* toplevel) {
     QWaylandSurface* surface = toplevel->xdgSurface()->surface();
-    const qint64 pid = surface->client() ? surface->client()->processId() : 0;
     // A surface belongs to a session, and sessions are addressed by name. The
-    // client's process id is the only handle the compositor has on it, so it is
+    // client's process is the only handle the compositor has on it, so it is
     // mapped back to the session that started that process.
-    const QString session = m_sessionByPid.value(pid);
+    const QString session = sessionForClient(surface->client());
 
     auto* view = new SessionView(this);
     view->setSurface(surface);

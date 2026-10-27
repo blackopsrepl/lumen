@@ -14,6 +14,7 @@
 #include "compositor.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QProcess>
@@ -21,6 +22,8 @@
 #include <QStandardPaths>
 #include <QTimer>
 #include <QtTest>
+
+#include <functional>
 
 class TestIntegration : public QObject {
     Q_OBJECT
@@ -42,7 +45,38 @@ class TestIntegration : public QObject {
     }
 
     void click_reaches_the_client();
+    void surface_is_attributed_through_a_launcher();
+
+  private:
+    /// Start the fixture on `qml` with the environment a session gives it.
+    void startFixture(QProcess& process, const QString& socket, const QString& session,
+                      const QString& program, const QStringList& arguments);
+    /// Run the event loop until `done` holds or `ms` pass.
+    static bool waitUntil(const std::function<bool()>& done, int ms);
 };
+
+void TestIntegration::startFixture(QProcess& process, const QString& socket, const QString& session,
+                                   const QString& program, const QStringList& arguments) {
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QString runtimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    if (runtimeDir.isEmpty())
+        runtimeDir = QDir::tempPath();
+    env.insert("WAYLAND_DISPLAY", runtimeDir + "/" + socket);
+    env.insert("QT_QPA_PLATFORM", "wayland");
+    env.insert("XDG_RUNTIME_DIR", runtimeDir);
+    env.insert(LumenCompositor::kSessionEnvVar, session);
+    process.setProcessEnvironment(env);
+    process.start(program, arguments);
+}
+
+bool TestIntegration::waitUntil(const std::function<bool()>& done, int ms) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!done() && timer.elapsed() < ms) {
+        QTest::qWait(50);
+    }
+    return done();
+}
 
 void TestIntegration::click_reaches_the_client() {
     LumenCompositor compositor;
@@ -122,6 +156,35 @@ void TestIntegration::click_reaches_the_client() {
 
     fixture.terminate();
     fixture.waitForFinished(5000);
+}
+
+// A session's command is often not the process that draws: a launcher script
+// runs the application as a child, and some applications re-execute or
+// daemonize. The connecting pid is then one nobody registered, and the window
+// used to be filed under no session at all — the session reported "running",
+// clicks returned ok:false, and the viewer showed nothing.
+void TestIntegration::surface_is_attributed_through_a_launcher() {
+    LumenCompositor compositor;
+    QVERIFY(compositor.start("lumen-test-launcher"));
+
+    // `; true` stops the shell from exec'ing the fixture in its own place, so
+    // the fixture is a child with a pid of its own, as under a real launcher.
+    const QString fixture = QCoreApplication::applicationDirPath() + "/qt_fixture";
+    const QString qml = QCoreApplication::applicationDirPath() + "/../tests/fixtures/fixture.qml";
+    QProcess launcher;
+    startFixture(launcher, "lumen-test-launcher", "launched", "/bin/sh",
+                 {"-c", QStringLiteral("'%1' '%2'; true").arg(fixture, qml)});
+    QVERIFY(launcher.waitForStarted(5000));
+    compositor.expectProcess("launched", launcher.processId());
+
+    QVERIFY(waitUntil([&]() { return !compositor.frame("launched").isNull(); }, 8000));
+    QVERIFY(compositor.click("launched", QPointF(240, 160)));
+    QVERIFY(compositor.frame(QString()).isNull());
+
+    // The fixture is the shell's child, so it is ended by parent pid.
+    QProcess::execute("pkill", {"-P", QString::number(launcher.processId())});
+    launcher.terminate();
+    launcher.waitForFinished(5000);
 }
 
 QTEST_MAIN(TestIntegration)

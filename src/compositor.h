@@ -21,6 +21,7 @@
 #include <QObject>
 #include <QString>
 
+class QWaylandClient;
 class QWaylandCompositor;
 class QWaylandOutput;
 class QWaylandSeat;
@@ -64,6 +65,11 @@ class LumenCompositor : public QObject {
     /// Deliver text to the session's focused element.
     bool type(const QString& session, const QString& text);
 
+    /// The environment variable a session's processes carry their session name
+    /// in. Surfaces are attributed by it when the connecting process is not the
+    /// one the session started — a launcher script, a forked or daemonized child.
+    static constexpr const char* kSessionEnvVar = "LUMEN_SESSION";
+
   signals:
     void surfaceReady(const QString& session);
     void surfaceGone(const QString& session);
@@ -73,6 +79,7 @@ class LumenCompositor : public QObject {
 
   private:
     void adoptToplevel(QWaylandXdgToplevel* toplevel);
+    QString sessionForClient(QWaylandClient* client);
 
     QWaylandCompositor* m_compositor = nullptr;
     QWaylandOutput* m_output = nullptr;

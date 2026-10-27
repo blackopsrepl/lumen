@@ -1,6 +1,7 @@
 #include "session.h"
 
 #include "accessibility.h"
+#include "compositor.h"
 
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtDBus/QDBusConnection>
@@ -126,6 +127,13 @@ bool Session::start(const QString& socketName, const QString& profileDir, const 
     env.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("wayland"));
     env.insert(QStringLiteral("WAYLAND_DISPLAY"), display);
     env.insert(QStringLiteral("XDG_RUNTIME_DIR"), profileDir);
+    // The session's name travels in the environment, which every descendant
+    // inherits. The compositor attributes a surface by the connecting process,
+    // and that is often not the one started here: a launcher script, an
+    // application that re-executes itself, or one that daemonizes all connect
+    // from a pid nobody registered, and their windows would belong to no
+    // session — running, drivable in principle, and invisible.
+    env.insert(QString::fromLatin1(LumenCompositor::kSessionEnvVar), m_name);
     // The compositor reads a session's pixels out of the buffer the client
     // commits, and that only works for a shared-memory buffer. A client that
     // renders through GL commits a dmabuf, whose pixels the compositor cannot
