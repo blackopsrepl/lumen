@@ -6,6 +6,7 @@
 #include "session.h"
 #include "sessionmanager.h"
 
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -127,15 +128,44 @@ QJsonObject AgentServer::dispatch(const QJsonObject& request) {
         }
         return tree;
     }
-    if (command == QLatin1String("click")) {
-        response[QStringLiteral("ok")] =
-            m_compositor->click(name, QPointF(request[QStringLiteral("x")].toDouble(),
-                                              request[QStringLiteral("y")].toDouble()));
-        return response;
-    }
-    if (command == QLatin1String("type")) {
-        response[QStringLiteral("ok")] =
-            m_compositor->type(name, request[QStringLiteral("text")].toString());
+    if (command == QLatin1String("click") || command == QLatin1String("type")) {
+        // Input that lands nowhere is an error, not `ok: false` on exit 0: an
+        // agent reading only the exit status would otherwise carry on driving
+        // a session that is showing nothing, and the human would watch a view
+        // that never moves.
+        Session* session = m_sessions->session(name);
+        if (!session) {
+            response[QStringLiteral("error")] = QStringLiteral("no such session '%1'").arg(name);
+            return response;
+        }
+        if (!m_compositor->viewFor(name)) {
+            response[QStringLiteral("error")] =
+                QStringLiteral("session '%1' has no window on screen (state: %2); the "
+                               "application has not mapped a surface, or has exited — see "
+                               "its session.log")
+                    .arg(name, session->state());
+            return response;
+        }
+        if (command == QLatin1String("click")) {
+            const QPointF point(request[QStringLiteral("x")].toDouble(),
+                                request[QStringLiteral("y")].toDouble());
+            if (!m_compositor->click(name, point)) {
+                const QSize size = m_compositor->frame(name).size();
+                response[QStringLiteral("error")] =
+                    QStringLiteral("nothing drawn at (%1, %2) in session '%3'; its frame is %4x%5")
+                        .arg(point.x())
+                        .arg(point.y())
+                        .arg(name)
+                        .arg(size.width())
+                        .arg(size.height());
+                return response;
+            }
+        } else if (!m_compositor->type(name, request[QStringLiteral("text")].toString())) {
+            response[QStringLiteral("error")] =
+                QStringLiteral("session '%1' has no surface to type into").arg(name);
+            return response;
+        }
+        response[QStringLiteral("ok")] = true;
         return response;
     }
     if (command == QLatin1String("feedback")) {
