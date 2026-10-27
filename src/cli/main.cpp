@@ -14,6 +14,12 @@
 namespace {
 
 QString socketPath() {
+    // Inside a session the runtime directory is the session's own, so the
+    // daemon's published path is the only one that reaches it.
+    const QByteArray published = qgetenv("LUMEN_AGENT_SOCKET");
+    if (!published.isEmpty()) {
+        return QString::fromLocal8Bit(published);
+    }
     QString runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
     if (runtime.isEmpty()) {
         runtime = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
