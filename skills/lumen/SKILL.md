@@ -19,8 +19,8 @@ Three binaries:
 - `lumen-cli` — what you drive.
 
 Every session is one Qt application plus its own private D-Bus and AT-SPI
-registry. Only Qt applications are hosted: there is no browser, no terminal and
-no Quickshell path any more.
+registry. Any Qt application is hosted — Qt Widgets, QML, and **Quickshell**
+configurations, panels included. There is no browser and no terminal.
 
 ## The commands
 
@@ -28,7 +28,7 @@ no Quickshell path any more.
     lumen-cli ensure <name> "<command>" --owner <you>
     lumen-cli stop <name>
     lumen-cli accessibility <name>        # the structured control tree
-    lumen-cli click <name> <x> <y>        # a point in the session's own coordinates
+    lumen-cli click <name> <x> <y>        # a point in the session's frame
     lumen-cli type  <name> "<text>"
     lumen-cli feedback <name>             # pending human notes
     lumen-cli feedback <name> --consume   # read and acknowledge them
@@ -49,10 +49,22 @@ optional `bounds` (`x`, `y`, `width`, `height`) and `children`, plus a `stats`
 object (`applications`, `nodes`, `named`, `interior`, `max_depth`) so you can
 tell a populated tree from an empty one without guessing.
 
-Click by coordinate, in the session's own pixel space:
+Click by coordinate, in the session's frame:
 
     lumen-cli click <your-session-name> 240 160
     lumen-cli type  <your-session-name> "hello world"
+
+The frame is everything the application has on screen, composited the way the
+human sees it: windows at the top-left corner, dialogs and menus over them,
+Quickshell panels where their anchors put them on a 1920x1080 output. A click
+goes to whatever is on top at that point, so a menu you just opened takes the
+next click, and a click outside it closes it.
+
+`click` and `type` **fail with exit 1 and a reason** when they cannot land: no
+such session, nothing on screen yet (still starting, exited — the message names
+the state; the application's own output is in its `session.log`), or nothing
+drawn at that point (the message gives the frame size). Treat a non-zero exit
+as "the human saw nothing happen", never as done.
 
 Click first to focus a field, then `type` into it. **Re-read the tree after
 acting** — that is the verification loop. A session's window title reflects what
@@ -67,8 +79,21 @@ is no screenshot command — so for such an application, drive it by coordinate
 and confirm through whatever it does publish (`status` title, a file it writes,
 its own output), or ask the human what they see.
 
-The application must be a normal Qt program — Qt Widgets, or QML loaded through
-`QQmlApplicationEngine` or `QQuickView`.
+The application must be a Qt program — Qt Widgets, QML loaded through
+`QQmlApplicationEngine` or `QQuickView`, or a Quickshell configuration. A
+launcher script or an application that forks or daemonizes is fine: its windows
+are attributed to the session through the environment.
+
+## Quickshell
+
+    lumen-cli ensure <your-session-name> "/usr/bin/quickshell -p /absolute/shell.qml" --owner <you>
+
+`FloatingWindow`, `PanelWindow` (a layer surface) and `PopupWindow` all show and
+take input. The session's `status` title is the window title, or the layer
+namespace (`quickshell`) for a panel-only config. A panel whose `visible` is
+bound to state that starts false — opened by IPC or a keybind — maps nothing:
+`click` then says there is nothing on screen, which is correct. Quickshell's IPC
+socket lives in the session's own runtime directory, not yours.
 
 ## Human feedback
 
