@@ -58,10 +58,29 @@ Two traps when working on the Forgejo runner specifically:
   at all.
 - **The compositor owns no window.** `QWaylandOutput` is created with a null
   window and an explicit mode. Nothing in `compositor.*` may depend on a window:
-  the daemon must run with no viewer attached.
+  the daemon must run with no viewer attached. The daemon forces
+  `QT_QPA_PLATFORM=offscreen` itself; left to the environment it binds to the
+  host compositor (or crash-loops on xcb before the desktop exports
+  `WAYLAND_DISPLAY`).
+- **A session is every surface it maps.** Toplevels, xdg popups and layer
+  surfaces are separate `Entry`s, composited into one frame in output
+  coordinates and hit-tested top-down by `click`. An entry ends with its surface
+  *or its role* — Qt re-uses a menu's `wl_surface` for the next menu.
+- **Surfaces are attributed by `LUMEN_SESSION`** in the client's
+  `/proc/<pid>/environ`, after the registered pid. Launchers, re-exec and
+  daemonizing all connect from an unregistered pid.
+- **Qt's compositor lacks what Quickshell needs; Lumen adds it.** `layershell.*`
+  implements wlr-layer-shell (protocol vendored in `protocols/`, two arguments
+  renamed — see the XML comments). `xdgshellextras.*` re-advertises xdg-shell
+  at v3, answers `xdg_popup.reposition`, and rewrites a layer-parented popup's
+  null parent. Both hook libwayland's protocol logger, which sees each request
+  just before dispatch; Qt has no signal for a bufferless commit and rejects a
+  parentless popup. Verify changes here with a real `quickshell -p` session,
+  not only the suite — the suite has no layer-shell client.
 - **One input path.** `LumenCompositor::click`/`type` is the only place input is
   delivered; the agent socket and the viewer's human input both call it, so the
-  two cannot diverge.
+  two cannot diverge. Input that lands nowhere is an `error` reply (CLI exit 1),
+  never `ok: false` on exit 0.
 - **`QWaylandView`, not `QWaylandQuickItem`.** A view is a plain `QObject`;
   frames come from overriding the real virtual `QWaylandView::bufferCommitted`,
   not from a scene-graph item. A Quick item would need a live Quick scene, which
