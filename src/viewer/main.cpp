@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("lumen"));
     app.setOrganizationName(QStringLiteral("lumen"));
-    app.setApplicationVersion(QStringLiteral("0.14.0"));
+    app.setApplicationVersion(QStringLiteral(LUMEN_VERSION));
 
     const QString logPath =
         QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/viewer.log";

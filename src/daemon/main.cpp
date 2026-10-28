@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("lumen-daemon"));
     app.setOrganizationName(QStringLiteral("lumen"));
-    app.setApplicationVersion(QStringLiteral("0.14.0"));
+    app.setApplicationVersion(QStringLiteral(LUMEN_VERSION));
     // Closing a viewer must not stop the daemon; it has no windows to close.
     app.setQuitOnLastWindowClosed(false);
 
