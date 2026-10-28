@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.15.2](https://github.com/blackopsrepl/lumen/compare/v0.15.1...v0.15.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* **ci:** stop a tag's two ci runs from cancelling each other ([67f7e4d](https://github.com/blackopsrepl/lumen/commit/67f7e4d9ef697729d511e1782193716420201b36))
+
+
 ## [0.15.1](https://github.com/blackopsrepl/lumen/compare/v0.15.0...v0.15.1) (2026-10-28)
 
 
