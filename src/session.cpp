@@ -3,7 +3,6 @@
 #include "accessibility.h"
 #include "compositor.h"
 
-#include <QtConcurrent/QtConcurrentRun>
 #include <QtDBus/QDBusConnection>
 #include <QtDBus/QDBusReply>
 
@@ -15,6 +14,7 @@
 #include <QProcessEnvironment>
 #include <QStandardPaths>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 
 #include <csignal>
@@ -224,7 +224,9 @@ void Session::refreshAccessibility() {
         return;
     }
     const QString busAddress = m_busAddress;
-    QtConcurrent::run([this, busAddress]() {
+    // Nothing waits on the probe's result — it reports back through a queued
+    // call — so it goes straight to the pool rather than through a QFuture.
+    QThreadPool::globalInstance()->start([this, busAddress]() {
         // The `org.a11y.Bus` service is published by the client's own
         // accessibility bridge, which starts with the application — so there is
         // a window right after launch where the a11y bus socket exists but

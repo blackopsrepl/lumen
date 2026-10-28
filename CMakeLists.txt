@@ -14,6 +14,24 @@ find_package(Qt6 REQUIRED COMPONENTS Test)
 
 qt_standard_project_setup(REQUIRES 6.6)
 
+# The QML files live under qml/, which Qt 6.8+ wants its own qmldir for so the
+# files there resolve the module's other types. Older Qt does not know the
+# policy, so it is only set where it exists.
+if(QT_KNOWN_POLICY_QTP0004)
+    qt_policy(SET QTP0004 NEW)
+endif()
+
+# Every executable that links Qml is scanned for QML imports at configure time
+# so a *static* Qt can link the plugins it uses. Against a shared Qt the scan
+# links nothing — plugins load at run time — and where the distribution omits
+# the QmlPlugins CMake configs (openSUSE) it warns once per plugin per target.
+get_target_property(LUMEN_QT_CORE_TYPE Qt6::Core TYPE)
+function(lumen_skip_qml_import_scan target)
+    if(LUMEN_QT_CORE_TYPE STREQUAL "SHARED_LIBRARY")
+        set_target_properties(${target} PROPERTIES QT_QML_MODULE_NO_IMPORT_SCAN TRUE)
+    endif()
+endfunction()
+
 # ---------------------------------------------------------------------------
 # lumen-daemon: the resident service. It owns the compositor and every session,
 # shows no window, and is managed as a systemd user unit.
@@ -46,6 +64,8 @@ target_link_libraries(lumen-daemon PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml
     Qt6::WaylandCompositor Qt6::Sql Qt6::DBus
 )
+target_compile_definitions(lumen-daemon PRIVATE LUMEN_VERSION="${PROJECT_VERSION}")
+lumen_skip_qml_import_scan(lumen-daemon)
 install(TARGETS lumen-daemon RUNTIME DESTINATION bin)
 
 # ---------------------------------------------------------------------------
@@ -87,6 +107,8 @@ target_link_libraries(lumen PRIVATE
     Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2
     Qt6::Network Qt6::DBus
 )
+target_compile_definitions(lumen PRIVATE LUMEN_VERSION="${PROJECT_VERSION}")
+lumen_skip_qml_import_scan(lumen)
 install(TARGETS lumen RUNTIME DESTINATION bin)
 
 # ---------------------------------------------------------------------------
@@ -110,6 +132,7 @@ function(lumen_test name)
     qt_add_executable(${name} tests/${name}.cpp ${ARGN})
     target_include_directories(${name} PRIVATE src)
     target_link_libraries(${name} PRIVATE Qt6::Core Qt6::Sql Qt6::DBus Qt6::Test Qt6::WaylandCompositor Qt6::Concurrent)
+    lumen_skip_qml_import_scan(${name})
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
@@ -132,3 +155,4 @@ target_link_libraries(test_framerender PRIVATE lumen_compositor)
 # ---------------------------------------------------------------------------
 qt_add_executable(qt_fixture tests/fixtures/qt_fixture.cpp)
 target_link_libraries(qt_fixture PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick)
+lumen_skip_qml_import_scan(qt_fixture)
