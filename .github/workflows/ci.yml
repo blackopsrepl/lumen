@@ -7,8 +7,12 @@ on:
   # Reused by release.yml so a tag cannot publish without passing these gates.
   workflow_call:
 
+# A tag push starts this workflow twice: directly, and through release.yml's
+# workflow_call. Keyed on the ref alone both runs share one group and one cancels
+# the other — the release itself, or the tag's own check. `github.workflow` is
+# the caller's name inside a reusable workflow, so the two get separate groups.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
