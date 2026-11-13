@@ -19,8 +19,8 @@ reaches Lumen over a unix socket in the user's runtime directory.
 - **Viewer** — `lumen` renders the active session's frames and forwards human
   input. It owns no sessions; closing it ends nothing but the view.
 - **Agent CLI** — `lumen-cli` speaks JSON lines to the daemon's socket:
-  `ensure`, `status`, `stop`, `click`, `type`, `accessibility`, `feedback`,
-  `ack`.
+  `ensure`, `status`, `stop`, `click`, `type`, `frame`, `accessibility`,
+  `feedback`, `ack`.
 - **Input** — the human's click and an agent's click travel the *same* route:
   the daemon's seat. They cannot diverge.
 - **Feedback** — humans drag a rectangle over the frame and type a note; it lands
@@ -66,6 +66,7 @@ agent reads a structured tree instead of guessing from pixels:
 lumen-cli accessibility gitnaga
 lumen-cli click gitnaga 240 160
 lumen-cli type  gitnaga "hello"
+lumen-cli frame gitnaga /tmp/gitnaga.png   # the composited frame the viewer shows
 ```
 
 ### Hosting Lumen inside Lumen

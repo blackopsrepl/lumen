@@ -145,6 +145,11 @@ lumen_test(test_integration)
 lumen_test(test_framerender)
 target_link_libraries(test_integration PRIVATE lumen_compositor)
 target_link_libraries(test_framerender PRIVATE lumen_compositor)
+lumen_test(test_agentframe src/config.cpp src/session.cpp src/sessionmanager.cpp
+    src/accessibility.cpp src/feedbackstore.cpp src/agentserver.cpp)
+target_link_libraries(test_agentframe PRIVATE lumen_compositor Qt6::Network)
+# It drives the real CLI against a real session.
+add_dependencies(test_agentframe lumen-cli qt_fixture)
 
 
 # ---------------------------------------------------------------------------

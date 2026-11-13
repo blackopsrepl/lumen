@@ -6,6 +6,7 @@
 #include "session.h"
 #include "sessionmanager.h"
 
+#include <QBuffer>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -14,6 +15,17 @@
 #include <QLocalSocket>
 #include <QPointF>
 #include <QSharedPointer>
+
+namespace {
+
+/// Why a session has nothing on screen to act on or to read.
+QString nothingOnScreen(const QString& name, const QString& state) {
+    return QStringLiteral("session '%1' has no window on screen (state: %2); the application has "
+                          "not mapped a surface, or has exited — see its session.log")
+        .arg(name, state);
+}
+
+} // namespace
 
 AgentServer::AgentServer(SessionManager* sessions, FeedbackStore* feedback,
                          LumenCompositor* compositor, QObject* parent)
@@ -139,11 +151,7 @@ QJsonObject AgentServer::dispatch(const QJsonObject& request) {
             return response;
         }
         if (!m_compositor->viewFor(name)) {
-            response[QStringLiteral("error")] =
-                QStringLiteral("session '%1' has no window on screen (state: %2); the "
-                               "application has not mapped a surface, or has exited — see "
-                               "its session.log")
-                    .arg(name, session->state());
+            response[QStringLiteral("error")] = nothingOnScreen(name, session->state());
             return response;
         }
         if (command == QLatin1String("click")) {
@@ -166,6 +174,34 @@ QJsonObject AgentServer::dispatch(const QJsonObject& request) {
             return response;
         }
         response[QStringLiteral("ok")] = true;
+        return response;
+    }
+    if (command == QLatin1String("frame")) {
+        // The session's composited frame — exactly what the viewer shows the
+        // human — as a base64 PNG. It is read from the compositor's own
+        // buffers, so an agent verifies what it drew in the session the human
+        // watches instead of standing up a private compositor to screenshot.
+        Session* session = m_sessions->session(name);
+        if (!session) {
+            response[QStringLiteral("error")] = QStringLiteral("no such session '%1'").arg(name);
+            return response;
+        }
+        const QImage frame = m_compositor->frame(name);
+        if (frame.isNull()) {
+            response[QStringLiteral("error")] = nothingOnScreen(name, session->state());
+            return response;
+        }
+        QByteArray png;
+        QBuffer buffer(&png);
+        buffer.open(QIODevice::WriteOnly);
+        if (!frame.save(&buffer, "PNG")) {
+            response[QStringLiteral("error")] =
+                QStringLiteral("could not encode the frame of session '%1'").arg(name);
+            return response;
+        }
+        response[QStringLiteral("image")] = QString::fromLatin1(png.toBase64());
+        response[QStringLiteral("width")] = frame.width();
+        response[QStringLiteral("height")] = frame.height();
         return response;
     }
     if (command == QLatin1String("feedback")) {

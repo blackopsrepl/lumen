@@ -5,6 +5,9 @@
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDeadlineTimer>
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
@@ -27,7 +30,10 @@ QString socketPath() {
     return runtime + QStringLiteral("/lumen-agent.sock");
 }
 
-int send(const QJsonObject& request) {
+/// Send one request and read its reply into `reply`. Returns the exit status:
+/// 0 on a reply without an error, 1 on an error reply, 2 when the daemon is
+/// not running, 3 when it does not answer.
+int exchange(const QJsonObject& request, QJsonObject* reply) {
     QLocalSocket socket;
     socket.connectToServer(socketPath());
     if (!socket.waitForConnected(3000)) {
@@ -36,18 +42,59 @@ int send(const QJsonObject& request) {
     }
     socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + "\n");
     socket.flush();
-    if (!socket.waitForReadyRead(10000)) {
-        QTextStream(stderr) << "lumen: no response\n";
-        return 3;
+    // The reply is one newline-terminated line, and a large one — a frame, a
+    // note's image — arrives over many reads. Parsing the first read alone
+    // would see a truncated document.
+    QByteArray response;
+    const QDeadlineTimer deadline(10000);
+    while (!response.contains('\n')) {
+        if (!socket.waitForReadyRead(int(deadline.remainingTime()))) {
+            QTextStream(stderr) << "lumen: no response\n";
+            return 3;
+        }
+        response += socket.readAll();
     }
-    const QByteArray response = socket.readAll().trimmed();
     socket.disconnectFromServer();
-    const QJsonObject object = QJsonDocument::fromJson(response).object();
-    if (object.contains(QStringLiteral("error"))) {
-        QTextStream(stderr) << "lumen: " << object[QStringLiteral("error")].toString() << "\n";
+    *reply = QJsonDocument::fromJson(response.left(response.indexOf('\n'))).object();
+    if (reply->contains(QStringLiteral("error"))) {
+        QTextStream(stderr) << "lumen: " << (*reply)[QStringLiteral("error")].toString() << "\n";
         return 1;
     }
+    return 0;
+}
+
+void print(const QJsonObject& object) {
     QTextStream(stdout) << QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Indented));
+}
+
+int send(const QJsonObject& request) {
+    QJsonObject reply;
+    const int status = exchange(request, &reply);
+    if (status == 0) {
+        print(reply);
+    }
+    return status;
+}
+
+/// Write a session's composited frame to `path` as a PNG. The image goes to
+/// the file, never to stdout; what is printed is where it went and its size.
+int saveFrame(const QJsonObject& request, const QString& path) {
+    QJsonObject reply;
+    const int status = exchange(request, &reply);
+    if (status != 0) {
+        return status;
+    }
+    const QByteArray png =
+        QByteArray::fromBase64(reply[QStringLiteral("image")].toString().toLatin1());
+    QFile file(path);
+    if (png.isEmpty() || !file.open(QIODevice::WriteOnly) || file.write(png) != png.size()) {
+        QTextStream(stderr) << "lumen: could not write the frame to " << path << "\n";
+        return 1;
+    }
+    file.close();
+    print(QJsonObject{{QStringLiteral("path"), QFileInfo(file).absoluteFilePath()},
+                      {QStringLiteral("width"), reply[QStringLiteral("width")]},
+                      {QStringLiteral("height"), reply[QStringLiteral("height")]}});
     return 0;
 }
 
@@ -60,10 +107,10 @@ int main(int argc, char** argv) {
     parser.addHelpOption();
     parser.addPositionalArgument(
         QStringLiteral("command"),
-        QStringLiteral("ensure|status|stop|accessibility|click|type|feedback|ack"));
+        QStringLiteral("ensure|status|stop|accessibility|click|type|frame|feedback|ack"));
     parser.addPositionalArgument(QStringLiteral("name"), QStringLiteral("session name"));
     parser.addPositionalArgument(QStringLiteral("argument"),
-                                 QStringLiteral("command, text, or reference"));
+                                 QStringLiteral("command, text, output PNG, or reference"));
     QCommandLineOption ownerOption(QStringLiteral("owner"), QStringLiteral("agent label"),
                                    QStringLiteral("owner"));
     QCommandLineOption consumeOption(QStringLiteral("consume"),
@@ -108,6 +155,12 @@ int main(int argc, char** argv) {
         request[QStringLiteral("consume")] = parser.isSet(consumeOption);
     } else if (command == QLatin1String("ack")) {
         request[QStringLiteral("id")] = parser.value(idOption).toLongLong();
+    } else if (command == QLatin1String("frame")) {
+        if (name.isEmpty() || argument.isEmpty()) {
+            QTextStream(stderr) << "usage: lumen-cli frame <name> <output.png>\n";
+            return 2;
+        }
+        return saveFrame(request, argument);
     }
     return send(request);
 }
