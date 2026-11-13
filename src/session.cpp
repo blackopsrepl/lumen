@@ -6,6 +6,7 @@
 #include <QtDBus/QDBusConnection>
 #include <QtDBus/QDBusReply>
 
+#include <QCoreApplication>
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QElapsedTimer>
@@ -37,6 +38,17 @@ bool waitForFile(const QString& path, QProcess* child, int timeoutMs) {
 }
 
 } // namespace
+
+QString Session::probePluginRoot() {
+    const QString binDir = QCoreApplication::applicationDirPath();
+    for (const QString& root :
+         {binDir + QStringLiteral("/plugins"), binDir + QStringLiteral("/../lib/lumen/plugins")}) {
+        if (QFileInfo::exists(root + QStringLiteral("/generic/liblumenprobe.so"))) {
+            return QDir(root).canonicalPath();
+        }
+    }
+    return QString();
+}
 
 Session::Session(const QString& name, const QString& command, Origin origin, const QString& owner,
                  QObject* parent)
@@ -147,6 +159,26 @@ bool Session::start(const QString& socketName, const QString& profileDir, const 
     // sessions off the GPU, which is the right default for applications being
     // driven headlessly.
     env.insert(QStringLiteral("QT_QUICK_BACKEND"), QStringLiteral("software"));
+    // The probe: a generic plugin Qt loads into the application at startup,
+    // which serves the complete item tree from inside the process. Qt finds
+    // it through the plugin path; the application is not modified.
+    const QString probeRoot = probePluginRoot();
+    if (!probeRoot.isEmpty()) {
+        m_probeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) +
+                     QStringLiteral("/lumen-probe/") + m_name;
+        QDir(m_probeDir).removeRecursively();
+        QDir().mkpath(m_probeDir);
+        QFile::setPermissions(m_probeDir, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                              QFileDevice::ExeOwner);
+        env.insert(QStringLiteral("LUMEN_PROBE_DIR"), m_probeDir);
+        const QString pluginPath = env.value(QStringLiteral("QT_PLUGIN_PATH"));
+        env.insert(QStringLiteral("QT_PLUGIN_PATH"),
+                   pluginPath.isEmpty() ? probeRoot : probeRoot + QLatin1Char(':') + pluginPath);
+        const QString generic = env.value(QStringLiteral("QT_QPA_GENERIC_PLUGINS"));
+        env.insert(QStringLiteral("QT_QPA_GENERIC_PLUGINS"),
+                   generic.isEmpty() ? QStringLiteral("lumenprobe")
+                                     : generic + QStringLiteral(",lumenprobe"));
+    }
     if (!m_busAddress.isEmpty()) {
         env.insert(QStringLiteral("DBUS_SESSION_BUS_ADDRESS"), m_busAddress);
         // Qt only keeps its AT-SPI bridge alive when told to; on a headless
@@ -270,5 +302,8 @@ void Session::stop() {
     m_process = nullptr;
     m_registryd = nullptr;
     m_dbus = nullptr;
+    if (!m_probeDir.isEmpty()) {
+        QDir(m_probeDir).removeRecursively();
+    }
     setState(QStringLiteral("stopped"));
 }

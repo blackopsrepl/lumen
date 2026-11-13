@@ -3,6 +3,7 @@
 #include "accessibility.h"
 #include "compositor.h"
 #include "feedbackstore.h"
+#include "itemtree.h"
 #include "session.h"
 #include "sessionmanager.h"
 
@@ -203,6 +204,30 @@ QJsonObject AgentServer::dispatch(const QJsonObject& request) {
         response[QStringLiteral("width")] = frame.width();
         response[QStringLiteral("height")] = frame.height();
         return response;
+    }
+    if (command == QLatin1String("tree")) {
+        // The complete item tree, from the probe inside each of the session's
+        // processes, in frame coordinates. Where the accessibility tree names
+        // controls, this has every item — plain shapes and text included —
+        // with the geometry, visibility, clipping and properties that decide
+        // how the session looks.
+        Session* session = m_sessions->session(name);
+        if (!session) {
+            response[QStringLiteral("error")] = QStringLiteral("no such session '%1'").arg(name);
+            return response;
+        }
+        const QList<QJsonObject> processes =
+            ItemTree::query(session->probeDir(), request[QStringLiteral("all")].toBool());
+        if (processes.isEmpty()) {
+            response[QStringLiteral("error")] =
+                Session::probePluginRoot().isEmpty()
+                    ? QStringLiteral("the item probe is not installed beside lumen-daemon")
+                    : QStringLiteral("session '%1' has no Qt process answering (state: %2); it "
+                                     "is still starting, has exited, or is not a Qt application")
+                          .arg(name, session->state());
+            return response;
+        }
+        return ItemTree::place(processes, m_compositor->placements(name));
     }
     if (command == QLatin1String("feedback")) {
         const bool consume = request[QStringLiteral("consume")].toBool();

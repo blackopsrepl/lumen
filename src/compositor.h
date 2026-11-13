@@ -35,6 +35,7 @@
 #include <QPoint>
 #include <QPointF>
 #include <QPointer>
+#include <QSize>
 #include <QString>
 
 class QImage;
@@ -80,6 +81,16 @@ class LumenCompositor : public QObject {
     /// as far as the session has drawn: an ordinary application's window sits
     /// at the origin, so its frame is exactly its window.
     QImage frame(const QString& session);
+
+    /// One drawn surface of a session: whose it is, where it sits in the frame
+    /// and how big its buffer is.
+    struct Placement {
+        qint64 pid = 0;
+        QPoint origin;
+        QSize size;
+    };
+    /// Every drawn surface of `session`, bottom first.
+    QList<Placement> placements(const QString& session) const;
 
     /// Deliver a click at a point in the session's frame coordinates.
     ///

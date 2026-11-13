@@ -107,7 +107,7 @@ int main(int argc, char** argv) {
     parser.addHelpOption();
     parser.addPositionalArgument(
         QStringLiteral("command"),
-        QStringLiteral("ensure|status|stop|accessibility|click|type|frame|feedback|ack"));
+        QStringLiteral("ensure|status|stop|accessibility|tree|click|type|frame|feedback|ack"));
     parser.addPositionalArgument(QStringLiteral("name"), QStringLiteral("session name"));
     parser.addPositionalArgument(QStringLiteral("argument"),
                                  QStringLiteral("command, text, output PNG, or reference"));
@@ -121,7 +121,9 @@ int main(int argc, char** argv) {
                                QStringLiteral("y"));
     QCommandLineOption idOption(QStringLiteral("id"), QStringLiteral("note id"),
                                 QStringLiteral("id"));
-    parser.addOptions({ownerOption, consumeOption, xOption, yOption, idOption});
+    QCommandLineOption allOption(QStringLiteral("all"),
+                                 QStringLiteral("tree: include hidden items and windows"));
+    parser.addOptions({ownerOption, consumeOption, xOption, yOption, idOption, allOption});
     parser.process(app);
 
     const QStringList args = parser.positionalArguments();
@@ -155,6 +157,8 @@ int main(int argc, char** argv) {
         request[QStringLiteral("consume")] = parser.isSet(consumeOption);
     } else if (command == QLatin1String("ack")) {
         request[QStringLiteral("id")] = parser.value(idOption).toLongLong();
+    } else if (command == QLatin1String("tree")) {
+        request[QStringLiteral("all")] = parser.isSet(allOption);
     } else if (command == QLatin1String("frame")) {
         if (name.isEmpty() || argument.isEmpty()) {
             QTextStream(stderr) << "usage: lumen-cli frame <name> <output.png>\n";

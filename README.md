@@ -20,7 +20,7 @@ reaches Lumen over a unix socket in the user's runtime directory.
   input. It owns no sessions; closing it ends nothing but the view.
 - **Agent CLI** — `lumen-cli` speaks JSON lines to the daemon's socket:
   `ensure`, `status`, `stop`, `click`, `type`, `frame`, `accessibility`,
-  `feedback`, `ack`.
+  `tree`, `feedback`, `ack`.
 - **Input** — the human's click and an agent's click travel the *same* route:
   the daemon's seat. They cannot diverge.
 - **Feedback** — humans drag a rectangle over the frame and type a note; it lands
@@ -59,11 +59,14 @@ hosted by Lumen's compositor. The command is an absolute program plus arguments:
 lumen-cli ensure gitnaga "/opt/gitnaga/bin/gitnaga" --owner desktop-agent
 ```
 
-The application publishes its controls on its private accessibility bus, so an
-agent reads a structured tree instead of guessing from pixels:
+The application publishes its controls on its private accessibility bus, and a
+probe Lumen loads into it (a Qt plugin; the application is not modified) serves
+its complete item tree. An agent reads structure instead of guessing from pixels,
+in the same frame coordinates `click` takes:
 
 ```bash
-lumen-cli accessibility gitnaga
+lumen-cli accessibility gitnaga            # named controls: role, name, bounds
+lumen-cli tree gitnaga                     # every item: geometry, clipping, text, font, colour
 lumen-cli click gitnaga 240 160
 lumen-cli type  gitnaga "hello"
 lumen-cli frame gitnaga /tmp/gitnaga.png   # the composited frame the viewer shows
@@ -136,6 +139,8 @@ src/session*           one session: process, private bus, AT-SPI registry
 src/agentserver.*      the agent socket (JSON lines)
 src/framestream.*      the viewer's frame socket (length-prefixed JPEG)
 src/accessibility.*    the AT-SPI tree walk
+src/itemtree.*         queries the probes and places their windows in the frame
+src/probe/             the item probe, a Qt plugin loaded into every session
 src/feedbackstore.*    the SQLite note store
 src/daemon/            the daemon entry point
 src/viewer/            the viewer: client, controls, frame provider, palette

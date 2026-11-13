@@ -77,6 +77,13 @@ Two traps when working on the Forgejo runner specifically:
   just before dispatch; Qt has no signal for a bufferless commit and rejects a
   parentless popup. Verify changes here with a real `quickshell -p` session,
   not only the suite — the suite has no layer-shell client.
+- **The item tree comes from inside the client.** `src/probe/` is a Qt
+  generic plugin; `Session::start` loads it into every session through
+  `QT_PLUGIN_PATH` + `QT_QPA_GENERIC_PLUGINS`, and it listens in
+  `LUMEN_PROBE_DIR` (`<runtime>/lumen-probe/<session>/`, not the profile dir:
+  a unix socket path is capped at 107 bytes). The probe knows only window
+  coordinates; `ItemTree::place` matches each window to a drawn surface by pid
+  and size (plus decoration margins) and moves it into frame coordinates..
 - **One input path.** `LumenCompositor::click`/`type` is the only place input is
   delivered; the agent socket and the viewer's human input both call it, so the
   two cannot diverge. Input that lands nowhere is an `error` reply (CLI exit 1),

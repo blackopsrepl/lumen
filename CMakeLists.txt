@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 find_package(Qt6 6.6 REQUIRED COMPONENTS
-    Core Gui Qml Quick QuickControls2
+    Core Gui Qml Quick QuickControls2 Widgets
     WaylandCompositor WaylandCompositorXdgShell
     Sql DBus Network Concurrent)
 find_package(Qt6 REQUIRED COMPONENTS Test)
@@ -54,6 +54,7 @@ set(LUMEN_DAEMON_SOURCES
     src/accessibility.cpp
     src/feedbackstore.cpp
     src/agentserver.cpp
+    src/itemtree.cpp
     src/framestream.cpp
 )
 
@@ -67,6 +68,21 @@ target_link_libraries(lumen-daemon PRIVATE
 target_compile_definitions(lumen-daemon PRIVATE LUMEN_VERSION="${PROJECT_VERSION}")
 lumen_skip_qml_import_scan(lumen-daemon)
 install(TARGETS lumen-daemon RUNTIME DESTINATION bin)
+
+# ---------------------------------------------------------------------------
+# lumenprobe: a Qt generic plugin the daemon loads into every session's
+# application (QT_QPA_GENERIC_PLUGINS). From inside the process it serves the
+# complete item tree — geometry, visibility, clipping, properties — that the
+# accessibility tree leaves out. It is built into plugins/generic/ so the
+# daemon finds it beside itself in the build tree and in the installed layout.
+# ---------------------------------------------------------------------------
+qt_add_plugin(lumenprobe SHARED PLUGIN_TYPE generic CLASS_NAME LumenProbePlugin
+    src/probe/lumenprobe.cpp)
+target_link_libraries(lumenprobe PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Widgets Qt6::Network)
+set_target_properties(lumenprobe PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/plugins/generic)
+install(TARGETS lumenprobe LIBRARY DESTINATION lib/lumen/plugins/generic)
 
 # ---------------------------------------------------------------------------
 # lumen: the viewer and settings application. It renders frames the daemon sends
@@ -146,10 +162,10 @@ lumen_test(test_framerender)
 target_link_libraries(test_integration PRIVATE lumen_compositor)
 target_link_libraries(test_framerender PRIVATE lumen_compositor)
 lumen_test(test_agentframe src/config.cpp src/session.cpp src/sessionmanager.cpp
-    src/accessibility.cpp src/feedbackstore.cpp src/agentserver.cpp)
+    src/accessibility.cpp src/feedbackstore.cpp src/agentserver.cpp src/itemtree.cpp)
 target_link_libraries(test_agentframe PRIVATE lumen_compositor Qt6::Network)
 # It drives the real CLI against a real session.
-add_dependencies(test_agentframe lumen-cli qt_fixture)
+add_dependencies(test_agentframe lumen-cli qt_fixture lumenprobe)
 
 
 # ---------------------------------------------------------------------------

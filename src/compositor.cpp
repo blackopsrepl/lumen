@@ -466,6 +466,16 @@ void LumenCompositor::announceTitle(const QString& session) {
     emit titleChanged(session, title.isEmpty() ? layerName : title);
 }
 
+QList<LumenCompositor::Placement> LumenCompositor::placements(const QString& session) const {
+    QList<Placement> result;
+    for (const Entry* entry : stacked(session)) {
+        QWaylandClient* client = entry->surface ? entry->surface->client() : nullptr;
+        result.append({client ? client->processId() : 0, positionOf(entry),
+                       asSessionView(entry->view)->size()});
+    }
+    return result;
+}
+
 QImage LumenCompositor::frame(const QString& session) {
     const QList<Entry*> entries = stacked(session);
     if (entries.isEmpty()) {

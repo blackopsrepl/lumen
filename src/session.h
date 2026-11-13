@@ -46,6 +46,16 @@ class Session : public QObject {
     QString state() const { return m_state; }
     QString title() const { return m_title; }
     QString busAddress() const { return m_busAddress; }
+    /// Where the session's item probes listen: one socket per Qt process.
+    /// It sits under the daemon's runtime directory rather than the session's
+    /// profile, because a unix socket path is limited to 107 bytes and a
+    /// profile path under the data directory can exceed it.
+    QString probeDir() const { return m_probeDir; }
+
+    /// The directory holding Lumen's Qt plugins (`generic/liblumenprobe.so`),
+    /// beside the running binary in a build tree or an installed prefix, or an
+    /// empty string when none is there.
+    static QString probePluginRoot();
     bool accessibilityReady() const { return m_accessibilityReady; }
     qint64 processId() const;
 
@@ -73,6 +83,7 @@ class Session : public QObject {
     QString m_title;
     QString m_busAddress;
     QString m_profileDir;
+    QString m_probeDir;
     bool m_accessibilityReady = false;
 
     QProcess* m_process = nullptr;

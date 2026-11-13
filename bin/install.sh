@@ -27,6 +27,13 @@ for binary in lumen-daemon lumen lumen-cli; do
     say "installed $BINDIR/$binary"
 done
 
+# The item probe the daemon loads into every session: lumen-daemon looks for
+# it in ../lib/lumen/plugins beside its own binary.
+PLUGINDIR="$PREFIX/lib/lumen/plugins/generic"
+install -d "$PLUGINDIR"
+install -m 0755 "$BUILD_DIR/plugins/generic/liblumenprobe.so" "$PLUGINDIR/liblumenprobe.so"
+say "installed $PLUGINDIR/liblumenprobe.so"
+
 # A running instance holds the compositor socket and the profile tree; replacing
 # the binary underneath it would leave the old process serving stale code.
 if systemctl --user is-active --quiet lumen.service; then
