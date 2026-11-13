@@ -1,6 +1,6 @@
 ---
 name: lumen
-description: Use when you need to drive a Qt desktop application as an agent — read its controls, click them, type into it — or to leave and read human feedback on a session, or to run a GUI app in a hosted session on a Linux desktop. Covers the lumen-cli commands (ensure, status, click, type, frame, accessibility, feedback).
+description: Use when you need to drive a Qt desktop application as an agent — read its controls, click them, type into it — or to leave and read human feedback on a session, or to run a GUI app in a hosted session on a Linux desktop. Covers the lumen-cli commands (ensure, status, click, type, frame, accessibility, tree, feedback).
 ---
 
 # Lumen
@@ -27,7 +27,8 @@ configurations, panels included. There is no browser and no terminal.
     lumen-cli status                      # every session: name, state, title, owner
     lumen-cli ensure <name> "<command>" --owner <you>
     lumen-cli stop <name>
-    lumen-cli accessibility <name>        # the structured control tree
+    lumen-cli accessibility <name>        # the named controls, in frame coordinates
+    lumen-cli tree <name> [--all]         # every item, with geometry and properties
     lumen-cli click <name> <x> <y>        # a point in the session's frame
     lumen-cli type  <name> "<text>"
     lumen-cli frame <name> <out.png>      # the session's frame, as the human sees it
@@ -48,7 +49,50 @@ because the CLI takes exactly one positional for it:
 The tree is JSON. Each node has `ref`, `role`, `name`, `description`, `states`,
 optional `bounds` (`x`, `y`, `width`, `height`) and `children`, plus a `stats`
 object (`applications`, `nodes`, `named`, `interior`, `max_depth`) so you can
-tell a populated tree from an empty one without guessing.
+tell a populated tree from an empty one without guessing. `coordinates` is
+`frame` when the bounds were moved onto the session's frame — the coordinates
+`click` takes — and `window` when Lumen could not place the window (no probe
+answered); window bounds are only right for a window at the frame's origin.
+Controls that are not on screen report 0x0 bounds.
+
+Quickshell panels publish this tree too: every `Button`, field and label with an
+accessible name. Find a control there and click the centre of its bounds.
+
+## The item tree
+
+    lumen-cli tree <your-session-name>          # visible items
+    lumen-cli tree <your-session-name> --all    # hidden items and windows too
+
+Lumen loads a probe into every Qt process of the session (a Qt plugin; the
+application is not modified), so this is the application's own view of itself:
+every item of every window, including what the accessibility tree leaves out —
+plain `Rectangle`s, unnamed `Text`, layouts, delegates. Each window has `pid`,
+`title`, `size`, `mapped` and `origin` (where its content sits in the frame);
+each item has:
+
+- `type` (`Text`, `Rectangle`, or the QML component's name), `id` (its QML id),
+  `objectName`;
+- `rect`: `[x, y, width, height]` in frame coordinates when the window is
+  mapped — click the centre of it;
+- `visible: false`, `opacity`, `z`, `clip`, `enabled: false` when they differ
+  from the default;
+- `props`: `text`, `color`, `font` (`family`, `pixelSize`/`pointSize`, `bold`),
+  `elide`, `wrapMode`, `truncated`, `contentWidth`/`contentHeight`,
+  `implicitWidth`/`implicitHeight`, `checked`, `currentIndex`, `radius`,
+  `spacing`, `padding` — whichever the item has;
+- `clipped`: the id (or type) of the clipping ancestor, or `window`, that cuts
+  part of the item off;
+- `overflow: [dx, dy]`: text larger than its box by that many pixels, not
+  elided; `elided: true` when Qt shortened it.
+
+Read layout defects here instead of measuring pixels: text that overflows its
+card, an item clipped by a `ListView`, a button that is `enabled: false`, two
+siblings whose rects overlap. `hidden` counts the invisible items left out
+(use `--all` to see them). The frame stays the verdict for how it *looks*
+(colour, rendering); the tree is the verdict for where things *are*.
+
+`tree` fails with exit 1 when no Qt process answers: the session is still
+starting, has exited, or runs no Qt application.
 
 Click by coordinate, in the session's frame:
 
@@ -67,16 +111,15 @@ the state; the application's own output is in its `session.log`), or nothing
 drawn at that point (the message gives the frame size). Treat a non-zero exit
 as "the human saw nothing happen", never as done.
 
-Click first to focus a field, then `type` into it. **Re-read the tree after
+Click first to focus a field, then `type` into it. **Re-read `tree` after
 acting** — that is the verification loop. A session's window title reflects what
 the client itself calls the window, so `status` is a cheap check that an action
 landed.
 
-Reading the boundary: the tree is empty while no application is publishing
-(still starting, or already exited — retry). An application that paints its own
-controls and sets no `Accessible.name` publishes structural containers only, and
-there is nothing here to address: drive it by coordinate and read the result
-with `frame`.
+Reading the boundary: the accessibility tree is empty while no application is
+publishing (still starting, or already exited — retry). An application that
+paints its own controls and sets no `Accessible.name` publishes structural
+containers only; `tree` still has every item it draws.
 
 ## Reading pixels
 
@@ -112,7 +155,16 @@ Pass the panel's own environment through `/usr/bin/env`, still as one argument:
     lumen-cli frame <app>-panel /abs/panel.png
 
 A load failure is in the session's `session.log` under
-`~/.local/share/lumen/lumen-daemon/run/<session>/`.
+`~/.local/share/lumen/lumen-daemon/run/<session>/` (`Configuration Loaded` /
+`Failed to load configuration`); QuickShell keeps showing the last config that
+loaded, so read it after every edit.
+
+Isolate the panel's state before you click anything: its actions write wherever
+its config says. A copied config whose `stateDir` (or similar) still names the
+live directory sends every click to the user's real panel state, even when the
+environment variable points at scratch. Point the config itself at scratch, and
+pass the real CLI on that isolated state, never a stub — the human watches the
+session, and an action that never completes leaves it stuck on screen.
 
 ## Human feedback
 
