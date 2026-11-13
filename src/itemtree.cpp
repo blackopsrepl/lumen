@@ -49,6 +49,82 @@ QJsonObject translated(QJsonObject node, int dx, int dy) {
 
 } // namespace
 
+namespace {
+
+QJsonObject movedBounds(QJsonObject node, int dx, int dy) {
+    QJsonObject bounds = node.value(QStringLiteral("bounds")).toObject();
+    // 0x0 bounds belong to controls that are not on screen; there is no
+    // place to move them to.
+    if (bounds.value(QStringLiteral("width")).toInt() > 0 ||
+        bounds.value(QStringLiteral("height")).toInt() > 0) {
+        bounds[QStringLiteral("x")] = bounds.value(QStringLiteral("x")).toInt() + dx;
+        bounds[QStringLiteral("y")] = bounds.value(QStringLiteral("y")).toInt() + dy;
+        node[QStringLiteral("bounds")] = bounds;
+    }
+    const QJsonArray children = node.value(QStringLiteral("children")).toArray();
+    if (!children.isEmpty()) {
+        QJsonArray moved;
+        for (const QJsonValue& child : children) {
+            moved.append(movedBounds(child.toObject(), dx, dy));
+        }
+        node[QStringLiteral("children")] = moved;
+    }
+    return node;
+}
+
+struct Origin {
+    QSize size;
+    QPoint origin;
+    bool used = false;
+};
+
+/// Walk to each window-level node and move its subtree onto its placed origin.
+QJsonObject placeFrames(QJsonObject node, QList<Origin>* origins, int* translated) {
+    static const QStringList windowRoles{QStringLiteral("frame"), QStringLiteral("window"),
+                                         QStringLiteral("dialog")};
+    if (windowRoles.contains(node.value(QStringLiteral("role")).toString())) {
+        const QJsonObject bounds = node.value(QStringLiteral("bounds")).toObject();
+        const QSize size(bounds.value(QStringLiteral("width")).toInt(),
+                         bounds.value(QStringLiteral("height")).toInt());
+        for (Origin& origin : *origins) {
+            if (!origin.used && origin.size == size && !size.isEmpty()) {
+                origin.used = true;
+                ++*translated;
+                return movedBounds(node, origin.origin.x(), origin.origin.y());
+            }
+        }
+        return node;
+    }
+    const QJsonArray children = node.value(QStringLiteral("children")).toArray();
+    if (!children.isEmpty()) {
+        QJsonArray placed;
+        for (const QJsonValue& child : children) {
+            placed.append(placeFrames(child.toObject(), origins, translated));
+        }
+        node[QStringLiteral("children")] = placed;
+    }
+    return node;
+}
+
+} // namespace
+
+int ItemTree::translateAccessibility(QJsonObject* tree, const QJsonObject& placed) {
+    QList<Origin> origins;
+    for (const QJsonValue& value : placed.value(QStringLiteral("windows")).toArray()) {
+        const QJsonObject window = value.toObject();
+        if (!window.value(QStringLiteral("mapped")).toBool()) {
+            continue;
+        }
+        const QJsonArray size = window.value(QStringLiteral("size")).toArray();
+        const QJsonArray origin = window.value(QStringLiteral("origin")).toArray();
+        origins.append({QSize(size.at(0).toInt(), size.at(1).toInt()),
+                        QPoint(origin.at(0).toInt(), origin.at(1).toInt())});
+    }
+    int translated = 0;
+    *tree = placeFrames(*tree, &origins, &translated);
+    return translated;
+}
+
 QList<QJsonObject> ItemTree::query(const QString& probeDir, bool all, int timeoutMs) {
     QList<QJsonObject> replies;
     if (probeDir.isEmpty()) {

@@ -134,11 +134,18 @@ QJsonObject AgentServer::dispatch(const QJsonObject& request) {
             return response;
         }
         QString error;
-        const QJsonObject tree = Accessibility::tree(session->busAddress(), &error);
+        QJsonObject tree = Accessibility::tree(session->busAddress(), &error);
         if (tree.isEmpty()) {
             response[QStringLiteral("error")] = error;
             return response;
         }
+        // AT-SPI bounds are window-relative; `click` takes frame coordinates.
+        // The probes say where each window sits, so the bounds are moved there.
+        const QJsonObject placed = ItemTree::place(ItemTree::query(session->probeDir(), false),
+                                                   m_compositor->placements(name));
+        const int translated = ItemTree::translateAccessibility(&tree, placed);
+        tree[QStringLiteral("coordinates")] =
+            translated > 0 ? QStringLiteral("frame") : QStringLiteral("window");
         return tree;
     }
     if (command == QLatin1String("click") || command == QLatin1String("type")) {

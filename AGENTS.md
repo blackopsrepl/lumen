@@ -83,7 +83,9 @@ Two traps when working on the Forgejo runner specifically:
   `LUMEN_PROBE_DIR` (`<runtime>/lumen-probe/<session>/`, not the profile dir:
   a unix socket path is capped at 107 bytes). The probe knows only window
   coordinates; `ItemTree::place` matches each window to a drawn surface by pid
-  and size (plus decoration margins) and moves it into frame coordinates..
+  and size (plus decoration margins) and moves it into frame coordinates. The
+  accessibility tree's window-relative bounds are moved the same way — without
+  it a panel's controls are clicked hundreds of pixels off.
 - **One input path.** `LumenCompositor::click`/`type` is the only place input is
   delivered; the agent socket and the viewer's human input both call it, so the
   two cannot diverge. Input that lands nowhere is an `error` reply (CLI exit 1),

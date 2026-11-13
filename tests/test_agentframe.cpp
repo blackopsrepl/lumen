@@ -253,6 +253,41 @@ void TestAgentFrame::windows_are_placed_by_pid_and_decorated_size() {
                         .first()
                         .toObject()),
              QRect(10, 20, 30, 40));
+
+    // The accessibility tree's window-relative bounds follow the same window.
+    const auto bounds = [](int x, int y, int w, int h) {
+        return QJsonObject{{QStringLiteral("x"), x},
+                           {QStringLiteral("y"), y},
+                           {QStringLiteral("width"), w},
+                           {QStringLiteral("height"), h}};
+    };
+    QJsonObject tree{
+        {QStringLiteral("role"), QStringLiteral("desktop frame")},
+        {QStringLiteral("children"),
+         QJsonArray{QJsonObject{
+             {QStringLiteral("role"), QStringLiteral("application")},
+             {QStringLiteral("children"),
+              QJsonArray{QJsonObject{
+                  {QStringLiteral("role"), QStringLiteral("frame")},
+                  {QStringLiteral("bounds"), bounds(0, 0, 1280, 1068)},
+                  {QStringLiteral("children"),
+                   QJsonArray{QJsonObject{{QStringLiteral("role"), QStringLiteral("push button")},
+                                          {QStringLiteral("bounds"), bounds(1138, 16, 65, 26)}},
+                              QJsonObject{{QStringLiteral("role"), QStringLiteral("push button")},
+                                          {QStringLiteral("bounds"), bounds(0, 0, 0, 0)}}}}}}}}}}};
+    QCOMPARE(ItemTree::translateAccessibility(&tree, ItemTree::place({process}, placements)), 1);
+    const QJsonArray buttons = tree[QStringLiteral("children")]
+                                   .toArray()
+                                   .first()
+                                   .toObject()[QStringLiteral("children")]
+                                   .toArray()
+                                   .first()
+                                   .toObject()[QStringLiteral("children")]
+                                   .toArray();
+    QCOMPARE(buttons.at(0).toObject()[QStringLiteral("bounds")].toObject(),
+             bounds(1458, 68, 65, 26));
+    // A control that is not on screen has nowhere to move to.
+    QCOMPARE(buttons.at(1).toObject()[QStringLiteral("bounds")].toObject(), bounds(0, 0, 0, 0));
 }
 
 QTEST_MAIN(TestAgentFrame)

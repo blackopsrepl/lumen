@@ -28,4 +28,13 @@ QList<QJsonObject> query(const QString& probeDir, bool all, int timeoutMs = 3000
 QJsonObject place(const QList<QJsonObject>& processes,
                   const QList<LumenCompositor::Placement>& placements);
 
+/// Translate an accessibility tree's bounds from window to frame coordinates.
+///
+/// AT-SPI reports bounds relative to each window — a Wayland client does not
+/// know where it sits — so a panel's control would otherwise be clicked at
+/// the wrong place. Each top-level frame is matched by size to a window the
+/// probes placed (`placed` is `place()`'s result) and its subtree moved by
+/// that window's origin. Returns how many windows were translated.
+int translateAccessibility(QJsonObject* tree, const QJsonObject& placed);
+
 } // namespace ItemTree
