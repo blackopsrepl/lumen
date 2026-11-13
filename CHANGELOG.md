@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.17.0](https://github.com/blackopsrepl/lumen/compare/v0.16.0...v0.17.0) (2026-11-13)
+
+
+### Features
+
+* **cli:** read every item of a session from inside the client ([bbcb7b1](https://github.com/blackopsrepl/lumen/commit/bbcb7b14bbc364569e122a1dc7c8d6ae506950dc))
+
+
+### Bug Fixes
+
+* **accessibility:** report bounds in frame coordinates ([a080ffd](https://github.com/blackopsrepl/lumen/commit/a080ffd14e6dbf476b303c25ecad62541f31293c))
+
+
 ## [0.16.0](https://github.com/blackopsrepl/lumen/compare/v0.15.2...v0.16.0) (2026-11-13)
 
 
