@@ -1,6 +1,14 @@
 # Changelog
 
-All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
+All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
+
+## [0.16.0](https://github.com/blackopsrepl/lumen/compare/v0.15.2...v0.16.0) (2026-11-13)
+
+
+### Features
+
+* **cli:** read a session's frame ([9264c4f](https://github.com/blackopsrepl/lumen/commit/9264c4f27cdc9be194419079c359bbdd308eb8fa))
+
 
 ## [0.15.2](https://github.com/blackopsrepl/lumen/compare/v0.15.1...v0.15.2) (2026-10-28)
 
