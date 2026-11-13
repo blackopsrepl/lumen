@@ -1,6 +1,6 @@
 ---
 name: lumen
-description: Use when you need to drive a Qt desktop application as an agent — read its controls, click them, type into it — or to leave and read human feedback on a session, or to run a GUI app in a hosted session on a Linux desktop. Covers the lumen-cli commands (ensure, status, click, type, accessibility, feedback).
+description: Use when you need to drive a Qt desktop application as an agent — read its controls, click them, type into it — or to leave and read human feedback on a session, or to run a GUI app in a hosted session on a Linux desktop. Covers the lumen-cli commands (ensure, status, click, type, frame, accessibility, feedback).
 ---
 
 # Lumen
@@ -30,6 +30,7 @@ configurations, panels included. There is no browser and no terminal.
     lumen-cli accessibility <name>        # the structured control tree
     lumen-cli click <name> <x> <y>        # a point in the session's frame
     lumen-cli type  <name> "<text>"
+    lumen-cli frame <name> <out.png>      # the session's frame, as the human sees it
     lumen-cli feedback <name>             # pending human notes
     lumen-cli feedback <name> --consume   # read and acknowledge them
     lumen-cli ack <name> --id <id>        # acknowledge one note
@@ -60,7 +61,7 @@ Quickshell panels where their anchors put them on a 1920x1080 output. A click
 goes to whatever is on top at that point, so a menu you just opened takes the
 next click, and a click outside it closes it.
 
-`click` and `type` **fail with exit 1 and a reason** when they cannot land: no
+`click`, `type` and `frame` **fail with exit 1 and a reason** when they cannot land: no
 such session, nothing on screen yet (still starting, exited — the message names
 the state; the application's own output is in its `session.log`), or nothing
 drawn at that point (the message gives the frame size). Treat a non-zero exit
@@ -74,10 +75,20 @@ landed.
 Reading the boundary: the tree is empty while no application is publishing
 (still starting, or already exited — retry). An application that paints its own
 controls and sets no `Accessible.name` publishes structural containers only, and
-there is nothing here to address. **The CLI has no way to read pixels** — there
-is no screenshot command — so for such an application, drive it by coordinate
-and confirm through whatever it does publish (`status` title, a file it writes,
-its own output), or ask the human what they see.
+there is nothing here to address: drive it by coordinate and read the result
+with `frame`.
+
+## Reading pixels
+
+    lumen-cli frame <your-session-name> /abs/out.png
+
+writes the session's composited frame — exactly what the viewer shows the human
+— as a PNG and prints `path`, `width` and `height`. This is the visual verdict
+for anything you render: a Quickshell panel, a QML layout, a redraw after a
+click. **Never stand up a private compositor (headless Sway, `grim`, a scratch
+`XDG_RUNTIME_DIR`) to screenshot a Qt or Quickshell UI.** The human watches the
+Lumen viewer; work done in a private compositor is invisible to them, and the
+viewer shows an empty session list while you work.
 
 The application must be a Qt program — Qt Widgets, QML loaded through
 `QQmlApplicationEngine` or `QQuickView`, or a Quickshell configuration. A
@@ -92,8 +103,16 @@ are attributed to the session through the environment.
 take input. The session's `status` title is the window title, or the layer
 namespace (`quickshell`) for a panel-only config. A panel whose `visible` is
 bound to state that starts false — opened by IPC or a keybind — maps nothing:
-`click` then says there is nothing on screen, which is correct. Quickshell's IPC
-socket lives in the session's own runtime directory, not yours.
+`click` and `frame` then say there is nothing on screen, which is correct.
+Quickshell's IPC socket lives in the session's own runtime directory, not yours.
+
+Pass the panel's own environment through `/usr/bin/env`, still as one argument:
+
+    lumen-cli ensure <app>-panel "/usr/bin/env APP_CONFIG=/abs/config.json APP_STATE_DIR=/abs/state /usr/bin/quickshell -p /abs/shell.qml" --owner <you>
+    lumen-cli frame <app>-panel /abs/panel.png
+
+A load failure is in the session's `session.log` under
+`~/.local/share/lumen/lumen-daemon/run/<session>/`.
 
 ## Human feedback
 
@@ -143,9 +162,14 @@ anything the session held. Read what you still need first.
 
 - Sessions are isolated per agent; do not drive another agent's session name.
 - The viewer is for the human, not for you. Do not narrate at them or paste
-  screenshots at them; look at the frame only when *you* need to verify
-  something.
+  screenshots at them; read the frame with `lumen-cli frame` when *you* need
+  to verify something.
 - If `lumen-cli` is not on your PATH it is at `~/.local/bin/lumen-cli`.
+- If the viewer shows no sessions while agents report verifying UIs, the work is in
+  a private compositor: look for `~/.hermes/cache/scratch/*/run{,time}/quickshell`,
+  `sway.conf` and `grim` scripts, and move that work into `lumen-cli ensure`/`frame`.
+  The in-repo copy of this skill is `skills/lumen/SKILL.md` in the lumen checkout;
+  keep the two identical.
 - If the daemon is down there is no socket: `systemctl --user status
   lumen.service`, or the human can start it from the viewer's Settings.
 - The viewer is for watching: it opens fitted to the window, and the human can
